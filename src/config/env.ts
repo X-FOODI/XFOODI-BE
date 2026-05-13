@@ -1,0 +1,46 @@
+import dotenv from 'dotenv';
+import path from 'path';
+import fs from 'fs';
+
+const envLocalPath = path.resolve(process.cwd(), '.env.local');
+if (fs.existsSync(envLocalPath)) {
+  dotenv.config({ path: envLocalPath });
+} else {
+  dotenv.config();
+}
+
+export const ENV = {
+  PORT: process.env.PORT || 5000,
+  DATABASE_URL: process.env.DATABASE_URL as string,
+  DIRECT_URL: process.env.DIRECT_URL as string,
+  REDIS_URL: process.env.REDIS_URL as string,
+  
+  SENDGRID: {
+    API_KEY: process.env.SENDGRID_API_KEY as string,
+    EMAIL_FROM: process.env.EMAIL_FROM as string,
+    EMAIL_REPLY_TO: process.env.EMAIL_REPLY_TO as string,
+    EMAIL_FROM_NAME: process.env.EMAIL_FROM_NAME as string,
+  },
+  
+  JWT: {
+    ACCESS_SECRET: process.env.JWT_ACCESS_SECRET as string,
+    REFRESH_SECRET: process.env.JWT_REFRESH_SECRET as string,
+  }
+};
+
+// Validate required environment variables
+const validateEnv = () => {
+  const required = [
+    'DATABASE_URL', 
+    'JWT_ACCESS_SECRET', 
+    'JWT_REFRESH_SECRET'
+  ];
+  
+  const missing = required.filter(key => !process.env[key]);
+  
+  if (missing.length > 0) {
+    console.warn(`⚠️ Warning: Missing required environment variables: ${missing.join(', ')}`);
+  }
+};
+
+validateEnv();
