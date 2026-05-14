@@ -11,6 +11,8 @@ if (fs.existsSync(envLocalPath)) {
 
 export const ENV = {
   PORT: process.env.PORT || 5000,
+  FRONTEND_URL: process.env.FRONTEND_URL || 'http://localhost:3000',
+  API_URL: process.env.API_URL || 'http://localhost:5000/api',
   DATABASE_URL: process.env.DATABASE_URL as string,
   DIRECT_URL: process.env.DIRECT_URL as string,
   REDIS_URL: process.env.REDIS_URL as string,

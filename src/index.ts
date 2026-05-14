@@ -9,7 +9,10 @@ const app = express();
 const PORT = ENV.PORT;
 
 // Middleware
-app.use(cors());
+app.use(cors({
+  origin: [ENV.FRONTEND_URL, 'http://localhost:3000', /\.xfoodi\.website$/],
+  credentials: true
+}));
 app.use(express.json());
 
 // Request logging middleware
