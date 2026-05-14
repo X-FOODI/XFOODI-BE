@@ -1,36 +1,19 @@
 import { Router } from 'express';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
-import { randomUUID } from 'crypto';
 import crypto from 'crypto';
 import { prisma } from '../lib/prisma';
 import redisClient from '../lib/redis';
 import { API_ROUTES } from '../constants/routes';
 import { sendConfirmationEmail } from '../lib/email';
+import { postGoogleAuth } from '../controllers/googleAuth.controller';
+import { generateAccessAndRefreshTokens } from '../services/authToken.service';
 
 import { ENV } from '../config/env';
 
 const router = Router();
 const ACCESS_SECRET = ENV.JWT.ACCESS_SECRET;
 const REFRESH_SECRET = ENV.JWT.REFRESH_SECRET;
-
-// Helper to generate tokens
-const generateTokens = (user: any, roles: string[] = []) => {
-  const payload = {
-    jti: randomUUID(),
-    sub: user.id,
-    email: user.email,
-    role: roles.length > 0 ? roles[0] : 'Customer', // Simplified for MVP
-    nameid: user.id,
-    unique_name: user.email,
-    fullName: user.fullName
-  };
-  
-  const accessToken = jwt.sign(payload, ACCESS_SECRET, { expiresIn: '15m' }); // 15 mins expiry
-  const refreshToken = jwt.sign({ sub: user.id }, REFRESH_SECRET, { expiresIn: '7d' }); // 7 days expiry
-  
-  return { accessToken, refreshToken };
-};
 
 // Middleware to protect routes and check blacklist
 export const authMiddleware = async (req: any, res: any, next: any) => {
@@ -176,10 +159,10 @@ router.post(API_ROUTES.AUTH.LOGIN, async (req, res) => {
     });
 
     // Extract roles (if any)
-    const roles = user.roles.map((ur) => ur.role.name || '');
+    const roles = user.roles.map((ur: any) => ur.role.name || '');
 
     // Generate JWT
-    const { accessToken, refreshToken } = generateTokens(user, roles);
+    const { accessToken, refreshToken } = generateAccessAndRefreshTokens(user, roles);
 
     // Lưu Refresh Token trong Redis (TTL: 7 ngày)
     await redisClient.setEx(`refresh_token:${user.id}`, 7 * 24 * 60 * 60, refreshToken);
@@ -203,6 +186,9 @@ router.post(API_ROUTES.AUTH.LOGIN, async (req, res) => {
     res.status(500).json({ success: false, message: 'Internal server error during login' });
   }
 });
+
+// 2b. POST /api/auth/google
+router.post(API_ROUTES.AUTH.GOOGLE, postGoogleAuth);
 
 // 3. POST /api/auth/refresh-token
 router.post(API_ROUTES.AUTH.REFRESH_TOKEN, async (req, res) => {
@@ -238,8 +224,8 @@ router.post(API_ROUTES.AUTH.REFRESH_TOKEN, async (req, res) => {
       return res.status(401).json({ success: false, message: 'User not found' });
     }
 
-    const roles = user.roles.map((ur) => ur.role.name || '');
-    const tokens = generateTokens(user, roles);
+    const roles = user.roles.map((ur: any) => ur.role.name || '');
+    const tokens = generateAccessAndRefreshTokens(user, roles);
 
     // Update Redis with new Refresh Token
     await redisClient.setEx(`refresh_token:${user.id}`, 7 * 24 * 60 * 60, tokens.refreshToken);
