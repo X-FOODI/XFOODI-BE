@@ -1,231 +1,149 @@
-# RestX-API Documentation Generator
+<div align="center">
 
-A comprehensive documentation generator system that analyzes the RestX Evolution multi-service architecture to extract architectural patterns, design decisions, and best practices.
+<img src="./logo.png" alt="FoodX Logo" width="200" />
 
-## Overview
+# 🍔 FoodX Backend API
 
-This system analyzes a 4-service Node.js architecture (Core SaaS API, RAG Chatbot, AI Builder Editor, AI Builder Renderer) with dual database design (MySQL + MongoDB) to generate structured documentation across 15 domain areas.
+**The Core API Server for FoodX — Multi-tenant Restaurant Management Platform**
 
-### Target Architecture
+[![CI/CD](https://img.shields.io/badge/CI%2FCD-GitHub_Actions-2088FF?style=flat-square&logo=githubactions)](#)
+[![Node.js](https://img.shields.io/badge/Node.js-%E2%89%A520.x-green?style=flat-square&logo=node.js)](https://nodejs.org/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6?style=flat-square&logo=typescript)](https://www.typescriptlang.org/)
+[![Express.js](https://img.shields.io/badge/Express.js-5.x-000000?style=flat-square&logo=express)](https://expressjs.com/)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16.x-4169E1?style=flat-square&logo=postgresql)](https://www.postgresql.org/)
+[![Prisma](https://img.shields.io/badge/Prisma-6.x-2D3748?style=flat-square&logo=prisma)](https://www.prisma.io/)
+[![Redis](https://img.shields.io/badge/Redis-5.x-DC382D?style=flat-square&logo=redis)](https://redis.io/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=flat-square)](./LICENSE)
 
-- **Core SaaS Service**: Restaurant operations (menu, orders, reservations, inventory, HR)
-- **RAG Chatbot Service**: Retrieval-Augmented Generation chatbot with vector embeddings
-- **AI Builder Editor**: Visual website builder with 200+ components
-- **AI Builder Renderer**: Static site generation with custom domain routing
-- **YARP Gateway**: Reverse proxy for subdomain-based routing
-- **Nginx Edge**: DDoS protection, SSL termination, rate limiting
+[📖 API Docs](./docs/API.md) · [⚙️ Setup Guide](./docs/SETUP.md) · [🤝 Contributing](./docs/CONTRIBUTING.md) · [🏗️ Architecture](./docs/ARCHITECTURE.md)
 
-### Database Architecture
+</div>
 
-- **MySQL**: Admin database + per-tenant databases (transactional data)
-- **MongoDB**: restx_builder (AI Builder data) + restx_rag (RAG data with vector embeddings)
+---
 
-## Project Structure
+## 📑 Table of Contents
 
-```
-RestX-API/
-├── src/
-│   ├── interfaces/          # Core interfaces
-│   │   ├── ICodeAnalyzer.ts
-│   │   ├── IPatternExtractor.ts
-│   │   ├── IDocumentationGenerator.ts
-│   │   ├── IRecommendationEngine.ts
-│   │   └── IErrorHandler.ts
-│   ├── models/              # Data models
-│   │   ├── RepositoryStructure.ts
-│   │   ├── ServiceInfo.ts
-│   │   ├── CodeFile.ts
-│   │   ├── PackageInfo.ts
-│   │   ├── CodeMetadata.ts
-│   │   ├── patterns/        # Pattern models
-│   │   │   ├── MultiServicePattern.ts
-│   │   │   ├── DualDatabasePattern.ts
-│   │   │   ├── ServicePattern.ts
-│   │   │   ├── RAGPattern.ts
-│   │   │   ├── AIBuilderPattern.ts
-│   │   │   ├── AuthenticationPattern.ts
-│   │   │   ├── InfrastructurePattern.ts
-│   │   │   ├── DomainModelPattern.ts
-│   │   │   └── IntegrationPattern.ts
-│   │   ├── CodeExample.ts
-│   │   ├── DocumentationSection.ts
-│   │   ├── Recommendation.ts
-│   │   ├── DocumentationException.ts
-│   │   └── ErrorReport.ts
-│   ├── services/            # Service implementations
-│   │   ├── CodeAnalyzer.ts
-│   │   ├── PatternExtractor.ts
-│   │   ├── DocumentationGenerator.ts
-│   │   ├── RecommendationEngine.ts
-│   │   └── ErrorHandler.ts
-│   ├── utils/               # Utility functions
-│   │   └── logger.ts
-│   ├── container.ts         # Dependency injection setup
-│   └── index.ts             # Main entry point
-├── dist/                    # Compiled JavaScript output
-├── logs/                    # Application logs
-├── package.json
-├── tsconfig.json
-└── README.md
-```
+1. [✨ Highlights](#-highlights)
+2. [🏗️ Tech Stack](#️-tech-stack)
+3. [🚀 Quick Start](#-quick-start)
+4. [📚 Detailed Documentation](#-detailed-documentation)
+5. [🤝 Contributing](#-contributing)
+6. [📄 License](#-license)
 
-## Installation
+---
+
+## ✨ Highlights
+
+- 🔐 **Advanced Authentication & Security** — Robust JWT-based auth integrated with Redis for efficient refresh token rotation, access token blacklisting, and secure session management.
+- 🏢 **Multi-Tenancy Support** — Advanced data isolation and schema strategies using Prisma to seamlessly manage multiple restaurant tenants under a single unified platform.
+- 🚀 **High Performance ORM** — Utilizes Prisma Client for strict type safety and optimized database interactions with PostgreSQL, replacing legacy triggers with efficient application-layer logic.
+- 📧 **Integrated Email Services** — SendGrid integration for transactional emails, including registration confirmations, password resets, and notifications.
+- 🛡️ **Enterprise Security** — Integrated rate-limiting against brute-force attacks, secure HTTP headers, CORS configurations, and separate secret keys for access/refresh tokens.
+- 🔄 **Real-time Synchronization** — Scalable real-time event broadcasting architecture suitable for live order tracking and instant restaurant dashboard updates.
+- ⚡ **Fully Type-Safe Ecosystem** — End-to-end type safety with TypeScript strict mode, preventing runtime errors and maximizing developer productivity.
+
+---
+
+## 🏗️ Tech Stack
+
+| Component | Technology |
+|---|---|
+| **Runtime** | Node.js (≥ 20.x) |
+| **Framework** | Express.js 5.x |
+| **Language** | TypeScript 5.x |
+| **Database ORM** | Prisma 6.x |
+| **Relational DB** | PostgreSQL |
+| **Caching & Auth** | Redis 5.x |
+| **Security** | JWT, bcryptjs, CORS |
+| **Mail Service** | SendGrid |
+
+---
+
+## 🚀 Quick Start
+
+> System Requirements: **Node.js ≥ 20**, **PostgreSQL**, **Redis**.
+
+### 1. Clone & Install
 
 ```bash
-cd RestX-API
+git clone <your-repo-url>
+cd XFoodi-BE
 npm install
 ```
 
-## Usage
+### 2. Environment Configuration
 
-### Development
+Copy the `.env.example` file to create a `.env` file (or `.env.local` depending on your environment):
 
+```bash
+cp .env.example .env
+```
+
+Update the necessary environment variables:
+- `DATABASE_URL` (PostgreSQL connection string)
+- `REDIS_URL`
+- `JWT_ACCESS_SECRET` / `JWT_REFRESH_SECRET`
+- `SENDGRID_API_KEY`
+
+### 3. Database Migration
+
+Run Prisma migrations to sync your schema with the database:
+
+```bash
+npx prisma migrate dev
+npx prisma generate
+```
+
+### 4. Start the Server
+
+**Run in Development mode:**
 ```bash
 npm run dev
 ```
 
-### Build
-
+**Run in Production mode:**
 ```bash
 npm run build
-```
-
-### Run
-
-```bash
 npm start
 ```
 
-### Testing
+---
+
+## 📚 Detailed Documentation
+
+All detailed documentation is organized in the `docs/` directory:
+
+| Document | Description |
+|---|---|
+| [📖 **API Reference**](./docs/API.md) | Endpoint lists, API structures, request & response patterns |
+| [⚙️ **Setup Guide**](./docs/SETUP.md) | Database initialization, Redis setup, and environment variables |
+| [🏗️ **Architecture**](./docs/ARCHITECTURE.md) | Prisma schema design, multi-tenant strategies, auth flows |
+| [🤝 **Contributing**](./docs/CONTRIBUTING.md) | Linting standards (ESLint/Prettier), and code quality rules |
+
+---
+
+## 🤝 Contributing
+
+We enforce rigorous code quality standards. Please ensure you run the CI checks locally before submitting any Pull Request.
 
 ```bash
-npm test
-npm run test:watch
+# Check for linting errors and type issues
+npm run check
 ```
 
-### Linting
+**Workflow Summary:**
+1. Create a descriptive branch: `feature/<username>/<feature-name>`
+2. Follow Conventional Commits format for your commits.
+3. Keep the codebase clean and resolve ESLint warnings before merging.
 
-```bash
-npm run lint
-npm run format
-```
+---
 
-## Core Components
+## 📄 License
 
-### Code Analyzer
+This project is proprietary and protected. It is designed specifically for the FoodX Platform ecosystem.
 
-Analyzes repository structure and extracts code files:
-- Traverses multi-service directory structure
-- Identifies TypeScript/JavaScript source files
-- Extracts metadata and service context
-- Parses package.json from each service
+---
 
-### Pattern Extractor
-
-Extracts architectural patterns:
-- Multi-service architecture patterns
-- Dual database patterns (MySQL + MongoDB)
-- Service layer patterns
-- RAG pipeline patterns
-- AI Builder patterns
-- Authentication patterns
-- Infrastructure patterns
-- Domain model patterns
-- Integration patterns
-
-### Documentation Generator
-
-Generates structured markdown documentation:
-- Multi-service architecture documentation
-- Dual database documentation
-- Service layer documentation
-- RAG pipeline documentation
-- AI Builder documentation
-- Complete documentation with table of contents
-
-### Recommendation Engine
-
-Generates actionable recommendations:
-- Code duplication identification
-- Missing validation detection
-- Inconsistency detection
-- Security vulnerability identification
-- Performance bottleneck identification
-- Recommendation prioritization
-
-### Error Handler
-
-Handles errors during documentation generation:
-- Categorizes errors (FileSystem, Parsing, Analysis, Generation)
-- Logs errors with context
-- Generates error summary reports
-
-## Dependency Injection
-
-The system uses Awilix for dependency injection:
-
-```typescript
-const container = setupContainer();
-const codeAnalyzer = container.resolve<ICodeAnalyzer>('codeAnalyzer');
-```
-
-## Logging
-
-Winston logger with structured logging:
-- JSON format for production
-- Colorized console output for development
-- Separate error.log and combined.log files
-
-## Configuration
-
-Environment variables:
-- `LOG_LEVEL`: Logging level (default: 'info')
-- `NODE_ENV`: Environment (development/production)
-
-## Requirements Coverage
-
-This system addresses 15 requirement domains:
-
-1. Multi-Service Architecture (YARP + Nginx)
-2. Dual Database Architecture (MySQL + MongoDB)
-3. Service Layer Architecture
-4. RAG Pipeline Implementation
-5. AI Builder Component Architecture
-6. Static Site Generation and Custom Domain Routing
-7. Authentication and Authorization
-8. Core SaaS Domain Models
-9. Third-Party Integration Patterns
-10. Infrastructure and Docker Orchestration
-11. Code Organization and Project Structure
-12. Performance Optimization Patterns
-13. Security Best Practices
-14. Error Handling, Logging, and Monitoring
-15. Template Improvement Recommendations
-
-## Development Status
-
-**Current Status**: Minimal template infrastructure created
-
-This is a minimal template with:
-- ✅ Project structure and configuration
-- ✅ Core interfaces defined
-- ✅ Data models created
-- ✅ Skeleton service classes
-- ✅ Dependency injection setup
-- ✅ Logging configuration
-- ⏳ Business logic implementation (pending)
-- ⏳ Pattern extraction logic (pending)
-- ⏳ Documentation generation logic (pending)
-
-## Next Steps
-
-1. Implement repository traversal logic in CodeAnalyzer
-2. Implement pattern extraction logic in PatternExtractor
-3. Implement documentation generation logic in DocumentationGenerator
-4. Implement recommendation logic in RecommendationEngine
-5. Add unit tests for all components
-6. Add integration tests for end-to-end workflow
-
-## License
-
-MIT
+<div align="center">
+  <sub>Built with ❤️ by the FoodX Backend Team</sub>
+</div>
