@@ -31,6 +31,7 @@ export const ENV = {
 
   GOOGLE: {
     CLIENT_ID: process.env.GOOGLE_CLIENT_ID as string | undefined,
+    CLIENT_SECRET: process.env.GOOGLE_CLIENT_SECRET as string | undefined,
   },
 };
 

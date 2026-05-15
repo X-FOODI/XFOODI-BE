@@ -187,8 +187,19 @@ router.post(API_ROUTES.AUTH.LOGIN, async (req, res) => {
   }
 });
 
-// 2b. POST /api/auth/google
+// 2b. POST /api/auth/google - Google OAuth sign-in
 router.post(API_ROUTES.AUTH.GOOGLE, postGoogleAuth);
+
+// GET /api/auth/google - Info endpoint (for testing)
+router.get(API_ROUTES.AUTH.GOOGLE, (req, res) => {
+  res.status(200).json({
+    success: true,
+    message: 'Google authentication endpoint',
+    method: 'POST',
+    body: '{ "googleToken": "<ID_TOKEN_FROM_GOOGLE>" }',
+    configured: !!process.env.GOOGLE_CLIENT_ID,
+  });
+});
 
 // 3. POST /api/auth/refresh-token
 router.post(API_ROUTES.AUTH.REFRESH_TOKEN, async (req, res) => {
