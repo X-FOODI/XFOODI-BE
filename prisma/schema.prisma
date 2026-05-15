@@ -58,6 +58,8 @@ model User {
   email         String?   @unique
   emailVerified Boolean   @default(false)
   passwordHash  String?
+  /// "local" | "google" — how the account was created / primary auth
+  provider      String    @default("local")
   phoneNumber   String?
   avatarUrl     String?
   fullName      String?
