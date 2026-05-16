@@ -17,7 +17,10 @@ app.use(express.json());
 
 // Request logging middleware
 app.use((req, res, next) => {
-  console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
+  const timestamp = new Date().toISOString();
+  console.log(`\n>>> [${timestamp}] ${req.method} ${req.url}`);
+  console.log('>>> Headers:', JSON.stringify(req.headers, null, 2));
+  console.log('>>> Body:', JSON.stringify(req.body, null, 2));
   next();
 });
 

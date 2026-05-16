@@ -2,6 +2,7 @@ export const API_ROUTES = {
   AUTH: {
     BASE: '/api/auth',
     LOGIN: '/login',
+    GOOGLE: '/google',
     REGISTER: '/register',
     REFRESH_TOKEN: '/refresh-token',
     LOGOUT: '/logout',
