@@ -7,6 +7,7 @@ import { prisma } from '../lib/prisma';
 import redisClient from '../lib/redis';
 import { ENV } from '../config/env';
 import { generateAccessAndRefreshTokens } from './authToken.service';
+import { assignDefaultRole } from './role.service';
 
 export class GoogleAuthHttpError extends Error {
   constructor(
@@ -187,6 +188,16 @@ export async function signInWithGoogle(googleToken: string): Promise<GoogleSignI
         include: userWithRolesInclude,
       });
       console.log('[GoogleAuth] ✓ New user created, ID:', user.id);
+
+      // Assign default "Customer" role
+      await assignDefaultRole(user.id);
+      console.log('[GoogleAuth] ✓ Default role assigned');
+
+      // Reload user with roles to include the newly assigned role
+      user = await prisma.user.findUniqueOrThrow({
+        where: { id: user.id },
+        include: userWithRolesInclude,
+      });
     } catch (createErr) {
       logPrismaError('create user', createErr);
       throw new GoogleAuthHttpError(500, 'Database error during user creation');

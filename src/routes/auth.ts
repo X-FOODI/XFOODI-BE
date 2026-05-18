@@ -8,6 +8,7 @@ import { API_ROUTES } from '../constants/routes';
 import { sendConfirmationEmail } from '../lib/email';
 import { postGoogleAuth } from '../controllers/googleAuth.controller';
 import { generateAccessAndRefreshTokens } from '../services/authToken.service';
+import { assignDefaultRole } from '../services/role.service';
 
 import { ENV } from '../config/env';
 
@@ -74,6 +75,9 @@ router.post(API_ROUTES.AUTH.REGISTER, async (req, res) => {
         isActive: true
       }
     });
+
+    // Assign default "Customer" role
+    await assignDefaultRole(newUser.id);
 
     // Generate confirmation token and save to Redis
     const token = crypto.randomUUID();
