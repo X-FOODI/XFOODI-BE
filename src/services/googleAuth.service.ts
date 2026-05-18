@@ -1,8 +1,8 @@
 import { OAuth2Client, type TokenPayload } from 'google-auth-library';
 import bcrypt from 'bcryptjs';
 import { randomBytes } from 'crypto';
-import { Prisma } from '@prisma/client';
-import type { Prisma as PrismaTypes } from '@prisma/client';
+import { PrismaClientKnownRequestError } from '@prisma/client/runtime/library';
+import type { Prisma } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import redisClient from '../lib/redis';
 import { ENV } from '../config/env';
@@ -28,10 +28,10 @@ const userWithRolesInclude = {
       role: true,
     },
   },
-} satisfies PrismaTypes.UserInclude;
+} satisfies Prisma.UserInclude;
 
 function logPrismaError(step: string, err: unknown): void {
-  if (err instanceof Prisma.PrismaClientKnownRequestError) {
+  if (err instanceof PrismaClientKnownRequestError) {
     console.error(`[GoogleAuth] ❌ Prisma ${step}: code=${err.code}`, err.meta);
     if (err.code === 'P2022') {
       console.error(
@@ -227,7 +227,7 @@ export async function signInWithGoogle(googleToken: string): Promise<GoogleSignI
     console.log('[GoogleAuth] JWT_ACCESS_SECRET exists:', !!ENV.JWT.ACCESS_SECRET);
     console.log('[GoogleAuth] JWT_REFRESH_SECRET exists:', !!ENV.JWT.REFRESH_SECRET);
     
-    const roles = (user.roles ?? []).map((ur) => ur.role?.name || '');
+    const roles = (user.roles ?? []).map((ur: { role?: { name?: string | null } | null }) => ur.role?.name || '');
     const tokens = generateAccessAndRefreshTokens(
       { id: user.id, email: user.email, fullName: user.fullName },
       roles
@@ -260,7 +260,7 @@ export async function signInWithGoogle(googleToken: string): Promise<GoogleSignI
       email: user.email,
       fullName: user.fullName,
       avatarUrl: user.avatarUrl,
-      roles: (user.roles ?? []).map((ur) => ur.role?.name || ''),
+      roles: (user.roles ?? []).map((ur: { role?: { name?: string | null } | null }) => ur.role?.name || ''),
     },
   };
 }

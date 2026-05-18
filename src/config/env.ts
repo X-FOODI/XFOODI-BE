@@ -33,6 +33,10 @@ export const ENV = {
     CLIENT_ID: process.env.GOOGLE_CLIENT_ID as string | undefined,
     CLIENT_SECRET: process.env.GOOGLE_CLIENT_SECRET as string | undefined,
   },
+
+  TURNSTILE: {
+    SECRET_KEY: process.env.TURNSTILE_SECRET_KEY as string | undefined,
+  },
 };
 
 // Validate required environment variables
