@@ -21,7 +21,7 @@ const mockTenant = {
   status: true,
   aboutUs: "We are the best restaurant in town.",
   businessPrimaryPhone: "0123456789",
-  businessEmailAddress: "contact@demo.restx.food",
+  businessEmailAddress: "contact@demo.xfoodi.com",
   businessAddressLine1: "123 Main St",
   businessCountry: "VN",
   createdDate: new Date().toISOString(),
