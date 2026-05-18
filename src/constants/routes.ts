@@ -9,6 +9,8 @@ export const API_ROUTES = {
     ME: '/me',
     RESEND_CONFIRMATION_EMAIL: '/resend-confirmation-email',
     CONFIRM_EMAIL: '/confirm-email',
+    FORGOT_PASSWORD: '/forgot-password',
+    RESET_PASSWORD: '/reset-password',
   },
   TENANTS: {
     BASE: '/api/tenants',
