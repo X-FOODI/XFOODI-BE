@@ -14,7 +14,7 @@ Before getting started, ensure that your system has the following installed:
 
 Navigate to the application folder and run:
 ```bash
-npm install
+pnpm install
 ```
 
 ### 2. Environment Setup
@@ -47,9 +47,12 @@ npx prisma migrate dev
 
 ```bash
 # Development: Run the dev server with file watching and auto hot-reload
-npm run dev
+pnpm run dev
 
 # Production: Code must be transpiled to Javascript before running
-npm run build
-npm start
+pnpm run build
+pnpm start
 ```
+
+
+

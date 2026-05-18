@@ -1,5 +1,4 @@
-// Forgot password feature - ready for pull request into dev branch
-import { Router } from 'express';
+import { Router, type Router as ExpressRouter } from 'express';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
@@ -12,7 +11,7 @@ import { postGoogleAuth } from '../controllers/googleAuth.controller';
 
 import { ENV } from '../config/env';
 
-const router = Router();
+const router: ExpressRouter = Router();
 const ACCESS_SECRET = ENV.JWT.ACCESS_SECRET;
 const REFRESH_SECRET = ENV.JWT.REFRESH_SECRET;
 
