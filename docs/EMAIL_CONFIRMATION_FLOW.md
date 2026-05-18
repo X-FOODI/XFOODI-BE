@@ -719,3 +719,6 @@ To migrate from auto-login to email confirmation:
 - ASP.NET Core Identity Email Confirmation: https://docs.microsoft.com/en-us/aspnet/core/security/authentication/accconfirm
 - SendGrid Email Service: https://sendgrid.com/docs/
 - SMTP Configuration: https://docs.microsoft.com/en-us/dotnet/api/system.net.mail.smtpclient
+
+
+

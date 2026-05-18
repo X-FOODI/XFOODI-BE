@@ -39,7 +39,7 @@ Thank you for your interest in contributing source code to the FoodX backend sys
 - Ensure the code passes linter checks without any red warnings. Command:
 ```bash
 # MUST PASS before pushing code
-npm run check
+pnpm run check
 ```
 
 ## 4. PRESERVATION CODING RULES (TYPESCRIPT & PRISMA)
@@ -47,3 +47,6 @@ npm run check
 - Fully utilize TypeScript properties for Interfaces/Types; **limit the use of type `any` as much as possible**.
 - Never submit/commit files containing security information (`.env`, Actual API Keys).
 - Leverage application-layer logic instead of creating manual database triggers whenever migrating schema structures via Prisma.
+
+
+

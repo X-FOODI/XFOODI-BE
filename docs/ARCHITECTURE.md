@@ -23,3 +23,6 @@ src/
 ├── prisma/         # Schema definitions and migration histories
 └── lib/            # External integration clients (SendGrid, Redis)
 ```
+
+
+
