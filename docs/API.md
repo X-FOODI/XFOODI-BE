@@ -26,3 +26,6 @@ If you are operating against tenant-specific routes, the system automatically ch
 
 ## Tenant Routes
 Tenant logic operations heavily depend on route prefixes or domain parsing (e.g. handled via the reverse proxy/frontend mapping to API). See the implementation inside `src/routes/` for granular documentation of specific entity paths like Orders, Menu, etc.
+
+
+
