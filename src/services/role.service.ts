@@ -21,7 +21,8 @@ const DEFAULT_ROLE_NAME = 'Customer';
  */
 export async function assignDefaultRole(
   userId: string,
-  roleName: string = DEFAULT_ROLE_NAME
+  roleName: string = DEFAULT_ROLE_NAME,
+  restaurantId?: string
 ): Promise<void> {
   // Prevent assigning protected roles via API
   if (PROTECTED_ROLES.includes(roleName)) {
@@ -30,29 +31,28 @@ export async function assignDefaultRole(
 
   // Find or create the role
   let role = await prisma.role.findFirst({
-    where: { normalizedName: roleName.toUpperCase() },
+    where: { name: { equals: roleName, mode: 'insensitive' } },
   });
 
   if (!role) {
     role = await prisma.role.create({
-      data: {
-        name: roleName,
-        normalizedName: roleName.toUpperCase(),
-      },
+      data: { name: roleName },
     });
     console.log(`[RoleService] Created new role: ${roleName}`);
   }
 
   // Check if user already has this role
-  const existing = await prisma.userRole.findUnique({
+  const existing = await prisma.userRole.findFirst({
     where: {
-      userId_roleId: { userId, roleId: role.id },
+      userId,
+      roleId: role.id,
+      restaurantId: restaurantId ?? null,
     },
   });
 
   if (!existing) {
     await prisma.userRole.create({
-      data: { userId, roleId: role.id },
+      data: { userId, roleId: role.id, ...(restaurantId && { restaurantId }) },
     });
     console.log(`[RoleService] Assigned role "${roleName}" to user ${userId}`);
   }
