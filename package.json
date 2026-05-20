@@ -1,6 +1,7 @@
 {
   "name": "restx-api-documentation-generator",
   "version": "1.0.0",
+  "packageManager": "pnpm@11.1.2",
   "description": "Documentation generator system that analyzes RestX Evolution architecture to extract patterns and generate comprehensive documentation",
   "main": "dist/index.js",
   "scripts": {
