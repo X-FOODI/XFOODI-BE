@@ -3,7 +3,7 @@
  *
  * Responsibilities:
  *  - Fetch user profile (strips passwordHash)
- *  - Update profile fields (fullName, phoneNumber, avatarUrl)
+ *  - Update profile fields (fullName, phoneNumber, avatarUrl, gender, dateOfBirth, address)
  *  - Change password (verify current → hash new → save)
  */
 
@@ -24,7 +24,25 @@ export class UserServiceError extends Error {
   }
 }
 
-// ─── Helper: map Prisma user → safe response (no passwordHash) ───────────────
+// ─── Prisma select — reused to avoid selecting passwordHash ──────────────────
+
+const USER_SAFE_SELECT = {
+  id: true,
+  email: true,
+  fullName: true,
+  phoneNumber: true,
+  avatarUrl: true,
+  gender: true,
+  dateOfBirth: true,
+  address: true,
+  provider: true,
+  emailVerified: true,
+  isActive: true,
+  createdDate: true,
+  modifiedDate: true,
+} as const;
+
+// ─── Helper: map Prisma result → safe response (no passwordHash) ─────────────
 
 function toProfileResponse(user: {
   id: string;
@@ -32,6 +50,9 @@ function toProfileResponse(user: {
   fullName: string | null;
   phoneNumber: string | null;
   avatarUrl: string | null;
+  gender: string | null;
+  dateOfBirth: Date | null;
+  address: string | null;
   provider: string;
   emailVerified: boolean;
   isActive: boolean;
@@ -44,6 +65,9 @@ function toProfileResponse(user: {
     fullName: user.fullName,
     phoneNumber: user.phoneNumber,
     avatarUrl: user.avatarUrl,
+    gender: user.gender,
+    dateOfBirth: user.dateOfBirth,
+    address: user.address,
     provider: user.provider,
     emailVerified: user.emailVerified,
     isActive: user.isActive,
@@ -51,21 +75,6 @@ function toProfileResponse(user: {
     modifiedDate: user.modifiedDate,
   };
 }
-
-// ─── Prisma select — reused to avoid selecting passwordHash ──────────────────
-
-const USER_SAFE_SELECT = {
-  id: true,
-  email: true,
-  fullName: true,
-  phoneNumber: true,
-  avatarUrl: true,
-  provider: true,
-  emailVerified: true,
-  isActive: true,
-  createdDate: true,
-  modifiedDate: true,
-} as const;
 
 // ─── Service functions ────────────────────────────────────────────────────────
 
@@ -87,7 +96,8 @@ export async function getUserProfile(userId: string): Promise<UserProfileRespons
 }
 
 /**
- * Update a user's profile (fullName, phoneNumber, avatarUrl).
+ * Update a user's profile.
+ * Allowed fields: fullName, phoneNumber, avatarUrl, gender, dateOfBirth, address.
  * Email is intentionally excluded — it cannot be changed here.
  * Throws 404 if the user does not exist.
  */
@@ -110,13 +120,19 @@ export async function updateUserProfile(
     fullName?: string;
     phoneNumber?: string;
     avatarUrl?: string;
+    gender?: string;
+    dateOfBirth?: Date;
+    address?: string;
   } = {};
 
   if (body.fullName !== undefined) updateData.fullName = body.fullName.trim();
   if (body.phoneNumber !== undefined) updateData.phoneNumber = body.phoneNumber.trim();
   if (body.avatarUrl !== undefined) updateData.avatarUrl = body.avatarUrl.trim();
+  if (body.gender !== undefined) updateData.gender = body.gender;
+  if (body.dateOfBirth !== undefined) updateData.dateOfBirth = new Date(body.dateOfBirth);
+  if (body.address !== undefined) updateData.address = body.address.trim();
 
-  // If nothing was provided, just return the current profile
+  // If nothing was provided, just return the current profile unchanged
   if (Object.keys(updateData).length === 0) {
     return getUserProfile(userId);
   }
@@ -133,7 +149,7 @@ export async function updateUserProfile(
 /**
  * Change a user's password.
  *  1. Verifies currentPassword against stored hash
- *  2. Hashes newPassword
+ *  2. Hashes newPassword with bcrypt
  *  3. Saves the new hash
  *
  * Throws:

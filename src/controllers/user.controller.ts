@@ -2,13 +2,18 @@
  * User Controller — handles HTTP layer for profile management.
  *
  * Routes handled:
- *  GET  /api/users/me            → getMyProfile
- *  PUT  /api/users/me            → updateMyProfile
+ *  GET  /api/users/me              → getMyProfile
+ *  PUT  /api/users/me              → updateMyProfile
  *  PUT  /api/users/change-password → changePassword
  */
 
 import type { RequestHandler } from 'express';
-import { getUserProfile, updateUserProfile, changeUserPassword, UserServiceError } from '../services/user.service';
+import {
+  getUserProfile,
+  updateUserProfile,
+  changeUserPassword,
+  UserServiceError,
+} from '../services/user.service';
 import { validateUpdateProfile, validateChangePassword } from '../validators/user.validator';
 import type { UpdateProfileBody, ChangePasswordBody } from '../types/user.types';
 
