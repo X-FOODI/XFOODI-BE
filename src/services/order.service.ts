@@ -7,7 +7,7 @@ export class OrderService {
    * Hardcoded logic to replace the legacy trigger system.
    * When an order's status changes, we update all its order details to the new status.
    */
-  async onOrderStatusChanged(orderId: string, newStatusId: number): Promise<void> {
+  async onOrderStatusChanged(orderId: string, newStatusId: string): Promise<void> {
     await prisma.orderDetail.updateMany({
       where: { orderId },
       data: { itemStatusId: newStatusId },

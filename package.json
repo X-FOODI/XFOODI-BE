@@ -1,7 +1,7 @@
 {
-  "name": "restx-api-documentation-generator",
+  "name": "xfoodi-api",
   "version": "1.0.0",
-  "description": "Documentation generator system that analyzes RestX Evolution architecture to extract patterns and generate comprehensive documentation",
+  "description": "XFoodi Backend API",
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc",
