@@ -10,6 +10,11 @@ export const API_ROUTES = {
     RESEND_CONFIRMATION_EMAIL: '/resend-confirmation-email',
     CONFIRM_EMAIL: '/confirm-email',
   },
+  USERS: {
+    BASE: '/api/users',
+    ME: '/me',
+    CHANGE_PASSWORD: '/change-password',
+  },
   TENANTS: {
     BASE: '/api/tenants',
   },
