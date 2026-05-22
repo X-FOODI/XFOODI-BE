@@ -85,7 +85,7 @@ if (response.data.requireEmailConfirmation) {
   "EmailSettings": {
     "SmtpServer": "smtp.gmail.com",
     "SmtpPort": 587,
-    "SenderEmail": "noreply@restx.food",
+    "SenderEmail": "noreply@XFoodi.food",
     "Username": "your-email@gmail.com",
     "Password": "your-app-password"
   },
