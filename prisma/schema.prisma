@@ -69,6 +69,10 @@ model User {
   phoneNumber   String?
   avatarUrl     String?
   fullName      String?
+  /// "MALE" | "FEMALE" | "OTHER"
+  gender        String?
+  dateOfBirth   DateTime?
+  address       String?   @db.VarChar(255)
   isActive      Boolean   @default(true)
   lastLoginAt   DateTime?
   createdAt     DateTime  @default(now())
