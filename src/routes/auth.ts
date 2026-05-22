@@ -5,15 +5,19 @@ import crypto from 'crypto';
 import { prisma } from '../lib/prisma';
 import redisClient from '../lib/redis';
 import { API_ROUTES } from '../constants/routes';
-import { sendConfirmationEmail } from '../lib/email';
-import { postGoogleAuth } from '../controllers/googleAuth.controller';
+import { sendConfirmationEmail, sendResetPasswordEmail } from '../lib/email';
 import { generateAccessAndRefreshTokens } from '../services/authToken.service';
+import { assignDefaultRole } from '../services/role.service';
+import { verifyTurnstileToken } from '../utils/turnstile';
+import { postGoogleAuth } from '../controllers/googleAuth.controller';
 
 import { ENV } from '../config/env';
 
 const router: ExpressRouter = Router();
 const ACCESS_SECRET = ENV.JWT.ACCESS_SECRET;
 const REFRESH_SECRET = ENV.JWT.REFRESH_SECRET;
+
+
 
 // Middleware to protect routes and check blacklist
 export const authMiddleware = async (req: any, res: any, next: any) => {
@@ -25,7 +29,7 @@ export const authMiddleware = async (req: any, res: any, next: any) => {
   const token = authHeader.split(' ')[1];
   try {
     const decoded: any = jwt.verify(token, ACCESS_SECRET);
-    
+
     if (decoded.jti) {
       const isBlacklisted = await redisClient.get(`blacklist:${decoded.jti}`);
       if (isBlacklisted) {
@@ -43,7 +47,13 @@ export const authMiddleware = async (req: any, res: any, next: any) => {
 // 1. POST /api/auth/register
 router.post(API_ROUTES.AUTH.REGISTER, async (req, res) => {
   try {
-    const { email, password, fullName, phoneNumber } = req.body;
+    const { email, password, fullName, phoneNumber, turnstileToken } = req.body;
+
+    // Verify Turnstile (bot protection)
+    const isHuman = await verifyTurnstileToken(turnstileToken, req.ip || undefined);
+    if (!isHuman) {
+      return res.status(403).json({ success: false, message: 'Bot verification failed. Please try again.' });
+    }
 
     if (!email || !password) {
       return res.status(400).json({ success: false, message: 'Email and password are required' });
@@ -75,6 +85,9 @@ router.post(API_ROUTES.AUTH.REGISTER, async (req, res) => {
       }
     });
 
+    // Assign default "Customer" role
+    await assignDefaultRole(newUser.id);
+
     // Generate confirmation token and save to Redis
     const token = crypto.randomUUID();
     await redisClient.setEx(`email_confirm:${token}`, 86400, email.toLowerCase()); // 24 hours
@@ -101,14 +114,20 @@ router.post(API_ROUTES.AUTH.REGISTER, async (req, res) => {
 // 2. POST /api/auth/login
 router.post(API_ROUTES.AUTH.LOGIN, async (req, res) => {
   try {
-    const { email, password } = req.body;
+    const { email, password, turnstileToken } = req.body;
+
+    // Verify Turnstile (bot protection)
+    const isHuman = await verifyTurnstileToken(turnstileToken, req.ip || undefined);
+    if (!isHuman) {
+      return res.status(403).json({ success: false, message: 'Bot verification failed. Please try again.' });
+    }
 
     if (!email || !password) {
       return res.status(400).json({ success: false, message: 'Email and password are required' });
     }
 
     const loginFailKey = `login_fail:${email.toLowerCase()}`;
-    
+
     // Check rate limit
     const fails = await redisClient.get(loginFailKey);
     if (fails && parseInt(fails) >= 5) {
@@ -153,13 +172,13 @@ router.post(API_ROUTES.AUTH.LOGIN, async (req, res) => {
     // Update last login time on successful login
     await prisma.user.update({
       where: { id: user.id },
-      data: { 
+      data: {
         lastLoginAt: new Date()
       }
     });
 
     // Extract roles (if any)
-    const roles = user.roles.map((ur: any) => ur.role.name || '');
+    const roles = user.roles.map((ur: { role: { name: string | null } }) => ur.role.name || '');
 
     // Generate JWT
     const { accessToken, refreshToken } = generateAccessAndRefreshTokens(user, roles);
@@ -235,7 +254,7 @@ router.post(API_ROUTES.AUTH.REFRESH_TOKEN, async (req, res) => {
       return res.status(401).json({ success: false, message: 'User not found' });
     }
 
-    const roles = user.roles.map((ur: any) => ur.role.name || '');
+    const roles = (user.roles || []).map((ur: any) => ur.role?.name).filter(Boolean) as string[];
     const tokens = generateAccessAndRefreshTokens(user, roles);
 
     // Update Redis with new Refresh Token
@@ -263,15 +282,15 @@ router.post(API_ROUTES.AUTH.LOGOUT, async (req, res) => {
     }
 
     const token = authHeader.split(' ')[1];
-    
+
     // Decode without verifying just to get jti and exp
-    const decoded: any = jwt.decode(token); 
-    
+    const decoded: any = jwt.decode(token);
+
     if (decoded) {
       if (decoded.jti && decoded.exp) {
         const now = Math.floor(Date.now() / 1000);
         const ttl = decoded.exp - now;
-        
+
         // Thêm accessToken vào blacklist Redis nếu còn hạn
         if (ttl > 0) {
           await redisClient.setEx(`blacklist:${decoded.jti}`, ttl, "1");
@@ -321,7 +340,7 @@ router.get(API_ROUTES.AUTH.ME, authMiddleware, async (req: any, res: any) => {
 router.post(API_ROUTES.AUTH.RESEND_CONFIRMATION_EMAIL, async (req: any, res: any) => {
   try {
     const { email } = req.body;
-    
+
     if (!email) {
       return res.status(400).json({ success: false, message: 'Email is required' });
     }
@@ -376,6 +395,72 @@ router.get(API_ROUTES.AUTH.CONFIRM_EMAIL, async (req: any, res: any) => {
     res.json({ success: true, message: 'Email confirmed successfully. You can now log in.' });
   } catch (error) {
     console.error('Confirm email error:', error);
+    res.status(500).json({ success: false, message: 'Internal server error' });
+  }
+});
+
+// Endpoint to request password reset
+router.post(API_ROUTES.AUTH.FORGOT_PASSWORD, async (req: any, res: any) => {
+  try {
+    const { email } = req.body;
+
+    if (!email) {
+      return res.status(400).json({ success: false, message: 'Email is required' });
+    }
+
+    const user = await prisma.user.findFirst({
+      where: { email: email.toLowerCase() }
+    });
+
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'Email không tồn tại trong hệ thống.' });
+    }
+
+    // Generate password reset token
+    const token = crypto.randomUUID();
+    // Save to Redis with 15 minutes expiration
+    await redisClient.setEx(`pwd_reset:${token}`, 900, email.toLowerCase());
+
+    // Send the email
+    await sendResetPasswordEmail(email.toLowerCase(), token);
+
+    res.json({ success: true, message: 'Password reset email sent successfully' });
+  } catch (error) {
+    console.error('Forgot password error:', error);
+    res.status(500).json({ success: false, message: 'Internal server error' });
+  }
+});
+
+// Endpoint to reset password
+router.post(API_ROUTES.AUTH.RESET_PASSWORD, async (req: any, res: any) => {
+  try {
+    const { token, email, newPassword } = req.body;
+
+    if (!token || !email || !newPassword) {
+      return res.status(400).json({ success: false, message: 'Token, email, and new password are required' });
+    }
+
+    const redisEmail = await redisClient.get(`pwd_reset:${token}`);
+    if (!redisEmail || redisEmail !== email.toLowerCase()) {
+      return res.status(400).json({ success: false, message: 'Invalid or expired password reset link' });
+    }
+
+    // Hash the new password
+    const salt = await bcrypt.genSalt(10);
+    const passwordHash = await bcrypt.hash(newPassword, salt);
+
+    // Update user password
+    await prisma.user.updateMany({
+      where: { email: email.toLowerCase() },
+      data: { passwordHash }
+    });
+
+    // Delete token from Redis
+    await redisClient.del(`pwd_reset:${token}`);
+
+    res.json({ success: true, message: 'Password has been reset successfully. You can now log in.' });
+  } catch (error) {
+    console.error('Reset password error:', error);
     res.status(500).json({ success: false, message: 'Internal server error' });
   }
 });
