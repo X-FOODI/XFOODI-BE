@@ -1,7 +1,7 @@
 {
   "name": "xfoodi-api",
   "version": "1.0.0",
-  "packageManager": "pnpm@11.1.2",
+  "packageManager": "pnpm@9.15.4",
   "description": "XFoodi Backend API",
   "main": "dist/index.js",
   "scripts": {
