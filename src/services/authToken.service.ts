@@ -10,13 +10,21 @@ export type AuthTokenUser = {
 
 export function generateAccessAndRefreshTokens(
   user: AuthTokenUser,
-  roles: string[]
+  roles: string[],
+  restaurantId?: string | null
 ): { accessToken: string; refreshToken: string } {
+  const primaryRole = roles.length > 0 ? roles[0] : 'Customer';
+
   const payload = {
     jti: randomUUID(),
     sub: user.id,
     email: user.email,
-    role: roles.length > 0 ? roles[0] : 'Customer',
+    // Legacy: single role (backward compat)
+    role: primaryRole,
+    // New: full roles array
+    roles,
+    // If owner, which restaurant they manage
+    restaurantId: restaurantId ?? null,
     nameid: user.id,
     unique_name: user.email,
     fullName: user.fullName,

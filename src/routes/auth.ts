@@ -178,10 +178,14 @@ router.post(API_ROUTES.AUTH.LOGIN, async (req, res) => {
     });
 
     // Extract roles (if any)
-    const roles = user.roles.map((ur: { role: { name: string | null } }) => ur.role.name || '');
+    const roles = user.roles.map((ur: any) => ur.role.name || '');
 
-    // Generate JWT
-    const { accessToken, refreshToken } = generateAccessAndRefreshTokens(user, roles);
+    // If user is Owner, get their restaurantId from UserRole
+    const ownerUserRole = user.roles.find((ur: any) => ur.role.name === 'Owner');
+    const ownerRestaurantId: string | null = ownerUserRole?.restaurantId ?? null;
+
+    // Generate JWT (includes roles[] and restaurantId)
+    const { accessToken, refreshToken } = generateAccessAndRefreshTokens(user, roles, ownerRestaurantId);
 
     // Lưu Refresh Token trong Redis (TTL: 7 ngày)
     await redisClient.setEx(`refresh_token:${user.id}`, 7 * 24 * 60 * 60, refreshToken);
@@ -195,7 +199,8 @@ router.post(API_ROUTES.AUTH.LOGIN, async (req, res) => {
           id: user.id,
           email: user.email,
           fullName: user.fullName,
-          roles: roles
+          roles,
+          restaurantId: ownerRestaurantId,
         }
       }
     });
@@ -255,7 +260,9 @@ router.post(API_ROUTES.AUTH.REFRESH_TOKEN, async (req, res) => {
     }
 
     const roles = (user.roles || []).map((ur: any) => ur.role?.name).filter(Boolean) as string[];
-    const tokens = generateAccessAndRefreshTokens(user, roles);
+    const ownerUserRole = user.roles.find((ur: any) => ur.role?.name === 'Owner');
+    const ownerRestaurantId: string | null = ownerUserRole?.restaurantId ?? null;
+    const tokens = generateAccessAndRefreshTokens(user, roles, ownerRestaurantId);
 
     // Update Redis with new Refresh Token
     await redisClient.setEx(`refresh_token:${user.id}`, 7 * 24 * 60 * 60, tokens.refreshToken);

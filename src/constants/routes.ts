@@ -20,7 +20,16 @@ export const API_ROUTES = {
   TENANTS: {
     BASE: '/api/tenants',
   },
+  RESTAURANT_APPLICATIONS: {
+    BASE: '/api/restaurant-applications',
+    MY: '/my',                // GET  - customer xem đơn của mình
+    LIST: '/',                // GET  - admin xem tất cả
+    CREATE: '/',              // POST - customer tạo đơn
+    DETAIL: '/:id',           // GET  - admin xem chi tiết
+    APPROVE: '/:id/approve',  // POST - admin duyệt
+    REJECT: '/:id/reject',    // POST - admin từ chối
+  },
   HEALTH: {
     BASE: '/api/health',
-  }
+  },
 };
