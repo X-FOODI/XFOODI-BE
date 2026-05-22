@@ -1,0 +1,8 @@
+# Single-package repo — "." tells pnpm this workspace contains only the root package.
+packages:
+  - "."
+
+allowBuilds:
+  '@prisma/client': true
+  '@prisma/engines': true
+  prisma: true

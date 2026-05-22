@@ -12,6 +12,11 @@ export const API_ROUTES = {
     FORGOT_PASSWORD: '/forgot-password',
     RESET_PASSWORD: '/reset-password',
   },
+  USERS: {
+    BASE: '/api/users',
+    ME: '/me',
+    CHANGE_PASSWORD: '/change-password',
+  },
   TENANTS: {
     BASE: '/api/tenants',
   },
