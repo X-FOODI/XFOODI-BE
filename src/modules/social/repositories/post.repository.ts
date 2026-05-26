@@ -77,4 +77,26 @@ export const postRepository = {
   delete(id: string) {
     return prisma.socialPost.delete({ where: { id } });
   },
+
+  findSavedByUser(userId: string, limit: number, cursor: CursorPayload | null) {
+    return prisma.socialPost.findMany({
+      where: {
+        savedBy: { some: { userId } },
+        ...(cursor
+          ? {
+              OR: [
+                { createdAt: { lt: new Date(cursor.createdAt) } },
+                {
+                  createdAt: new Date(cursor.createdAt),
+                  id: { lt: cursor.id },
+                },
+              ],
+            }
+          : {}),
+      },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      take: limit + 1,
+      include: postInclude,
+    });
+  },
 };

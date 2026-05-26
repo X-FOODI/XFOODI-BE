@@ -79,3 +79,14 @@ export async function deletePost(postId: string, userId: string) {
   assertOwner(existing.authorId, userId, 'post');
   await postRepository.delete(postId);
 }
+
+export async function listSavedPosts(query: ListPostsQuery, userId: string) {
+  const limit = parseLimit(query.limit);
+  const cursor = decodeCursor(query.cursor);
+
+  const rows = await postRepository.findSavedByUser(userId, limit, cursor);
+  const hasMore = rows.length > limit;
+  const items = hasMore ? rows.slice(0, limit) : rows;
+
+  return mapPostList(items, userId, hasMore);
+}

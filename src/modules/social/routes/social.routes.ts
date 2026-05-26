@@ -39,6 +39,7 @@ import {
   createReaction,
   sharePost,
   savePost,
+  listSavedPosts,
 } from '../controllers/social.controller';
 
 const router: ExpressRouter = Router();
@@ -58,6 +59,8 @@ router.patch('/comments/:id', authMiddleware, updateComment);
 router.delete('/comments/:id', authMiddleware, deleteComment);
 
 router.post('/reactions', authMiddleware, createReaction);
+
+router.get('/saved', authMiddleware, listSavedPosts);
 
 router.post('/share/:postId', authMiddleware, sharePost);
 router.post('/save/:postId', authMiddleware, savePost);

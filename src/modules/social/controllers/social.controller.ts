@@ -233,3 +233,18 @@ export const savePost: RequestHandler = async (req, res) => {
     handleError(res, err);
   }
 };
+
+export const listSavedPosts: RequestHandler = async (req: any, res) => {
+  try {
+    const query = req.query as ListPostsQuery;
+    const { valid, errors } = validateListPosts(query);
+    if (!valid) {
+      return res.status(400).json({ success: false, message: errors.join('; ') });
+    }
+
+    const data = await postService.listSavedPosts(query, getUserId(req));
+    res.json({ success: true, data });
+  } catch (err) {
+    handleError(res, err);
+  }
+};
