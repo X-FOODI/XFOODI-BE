@@ -76,6 +76,11 @@ model User {
   ownedRestaurants Restaurant[]  @relation("RestaurantOwner")
   roles            UserRole[]
   sessions         UserSession[]
+  socialPosts      SocialPost[]
+  socialComments   SocialComment[]
+  socialReactions  SocialReaction[]
+  socialShares     SocialShare[]
+  savedPosts       SavedPost[]
 
   @@map("Users")
 }
@@ -916,4 +921,97 @@ model AIChatMessage {
   session         AIChatSession @relation(fields: [aiChatSessionId], references: [id], onDelete: Cascade)
 
   @@map("AIChatMessages")
+}
+
+model SocialPost {
+  id        String   @id @default(uuid())
+  authorId  String
+  content   String   @db.Text
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  author    User              @relation(fields: [authorId], references: [id])
+  images    SocialImage[]
+  comments  SocialComment[]
+  reactions SocialReaction[]
+  shares    SocialShare[]
+  savedBy   SavedPost[]
+
+  @@index([authorId])
+  @@index([createdAt])
+  @@map("SocialPosts")
+}
+
+model SocialImage {
+  id       String @id @default(uuid())
+  postId   String
+  imageUrl String
+
+  post SocialPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  @@index([postId])
+  @@map("SocialImages")
+}
+
+model SocialComment {
+  id        String   @id @default(uuid())
+  postId    String
+  userId    String
+  parentId  String?
+  content   String   @db.Text
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  post   SocialPost      @relation(fields: [postId], references: [id], onDelete: Cascade)
+  user   User            @relation(fields: [userId], references: [id])
+  parent SocialComment?  @relation("CommentReplies", fields: [parentId], references: [id])
+  replies SocialComment[] @relation("CommentReplies")
+
+  @@index([postId])
+  @@index([userId])
+  @@index([parentId])
+  @@map("SocialComments")
+}
+
+model SocialReaction {
+  id        String   @id @default(uuid())
+  postId    String
+  userId    String
+  type      String
+  createdAt DateTime @default(now())
+
+  post SocialPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+  user User       @relation(fields: [userId], references: [id])
+
+  @@unique([postId, userId])
+  @@index([postId])
+  @@map("SocialReactions")
+}
+
+model SocialShare {
+  id        String   @id @default(uuid())
+  postId    String
+  userId    String
+  createdAt DateTime @default(now())
+
+  post SocialPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+  user User       @relation(fields: [userId], references: [id])
+
+  @@index([postId])
+  @@index([userId])
+  @@map("SocialShares")
+}
+
+model SavedPost {
+  id        String   @id @default(uuid())
+  postId    String
+  userId    String
+  createdAt DateTime @default(now())
+
+  post SocialPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+  user User       @relation(fields: [userId], references: [id])
+
+  @@unique([postId, userId])
+  @@index([userId])
+  @@map("SavedPosts")
 }

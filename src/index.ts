@@ -3,6 +3,7 @@ import cors from 'cors';
 import authRoutes from './routes/auth';
 import tenantRoutes from './routes/tenants';
 import userRoutes from './routes/users';
+import { registerSocialModule } from './modules/social/social.module';
 import { API_ROUTES } from './constants/routes';
 import { ENV } from './config/env';
 
@@ -29,6 +30,7 @@ app.use((req, res, next) => {
 app.use(API_ROUTES.AUTH.BASE, authRoutes);
 app.use(API_ROUTES.USERS.BASE, userRoutes);
 app.use(API_ROUTES.TENANTS.BASE, tenantRoutes);
+registerSocialModule(app);
 
 // Health check endpoint
 app.get(API_ROUTES.HEALTH.BASE, (req, res) => {
@@ -41,4 +43,5 @@ app.listen(PORT, () => {
   console.log(`- Auth API:  http://localhost:${PORT}${API_ROUTES.AUTH.BASE}`);
   console.log(`- User API:  http://localhost:${PORT}${API_ROUTES.USERS.BASE}`);
   console.log(`- Tenant API: http://localhost:${PORT}${API_ROUTES.TENANTS.BASE}`);
+  console.log(`- Social API: http://localhost:${PORT}${API_ROUTES.SOCIAL.BASE}`);
 });

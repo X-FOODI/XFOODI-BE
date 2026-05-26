@@ -22,5 +22,13 @@ export const API_ROUTES = {
   },
   HEALTH: {
     BASE: '/api/health',
-  }
+  },
+  SOCIAL: {
+    BASE: '/api/social',
+    POSTS: '/posts',
+    COMMENTS: '/comments',
+    REACTIONS: '/reactions',
+    SHARE: '/share',
+    SAVE: '/save',
+  },
 };
