@@ -33,6 +33,18 @@ export const ENV = {
     CLIENT_ID: process.env.GOOGLE_CLIENT_ID as string | undefined,
     CLIENT_SECRET: process.env.GOOGLE_CLIENT_SECRET as string | undefined,
   },
+
+  TURNSTILE: {
+    SECRET_KEY: process.env.TURNSTILE_SECRET_KEY as string | undefined,
+  },
+
+  CLOUDINARY: {
+    CLOUD_NAME: process.env.CLOUDINARY_CLOUD_NAME as string,
+    API_KEY: process.env.CLOUDINARY_API_KEY as string,
+    API_SECRET: process.env.CLOUDINARY_API_SECRET as string,
+  },
+
+  DOCUMENT_ENCRYPTION_KEY: process.env.DOCUMENT_ENCRYPTION_KEY as string,
 };
 
 // Validate required environment variables

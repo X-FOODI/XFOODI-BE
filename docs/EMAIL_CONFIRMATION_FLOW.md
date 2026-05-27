@@ -2,11 +2,11 @@
 
 ## Overview
 
-This document describes how to implement email confirmation for user registration in RestX API.
+This document describes how to implement email confirmation for user registration in XFoodi API.
 
 ## Current State
 
-The existing backend (`RestX-API-ex`) uses **auto-login** after registration:
+The existing backend (`XFoodi-API-ex`) uses **auto-login** after registration:
 - Endpoint: `POST /api/auth/customer/phone-register`
 - Flow: Register → Auto-login → Return tokens immediately
 - No email confirmation required
@@ -353,7 +353,7 @@ private async Task SendConfirmationEmailAsync(ApplicationUser user)
     var confirmationLink = $"{frontendUrl}/confirm-email?email={user.Email}&token={user.EmailConfirmationToken}";
     
     var emailBody = $@"
-        <h2>Welcome to RestX!</h2>
+        <h2>Welcome to XFoodi!</h2>
         <p>Hi {user.FullName},</p>
         <p>Thank you for registering. Please confirm your email address by clicking the link below:</p>
         <p><a href='{confirmationLink}'>Confirm Email</a></p>
@@ -626,13 +626,13 @@ Configure SMTP settings in `appsettings.json`:
   "EmailSettings": {
     "SmtpServer": "smtp.gmail.com",
     "SmtpPort": 587,
-    "SenderEmail": "noreply@restx.food",
-    "SenderName": "RestX",
+    "SenderEmail": "noreply@XFoodi.food",
+    "SenderName": "XFoodi",
     "Username": "your-email@gmail.com",
     "Password": "your-app-password",
     "EnableSsl": true
   },
-  "FrontendUrl": "https://demo.restx.food"
+  "FrontendUrl": "https://demo.XFoodi.food"
 }
 ```
 

@@ -7,6 +7,8 @@ import redisClient from '../lib/redis';
 import { API_ROUTES } from '../constants/routes';
 import { sendConfirmationEmail, sendResetPasswordEmail } from '../lib/email';
 import { generateAccessAndRefreshTokens } from '../services/authToken.service';
+import { assignDefaultRole } from '../services/role.service';
+import { verifyTurnstileToken } from '../utils/turnstile';
 import { postGoogleAuth } from '../controllers/googleAuth.controller';
 
 import { ENV } from '../config/env';
@@ -45,7 +47,13 @@ export const authMiddleware = async (req: any, res: any, next: any) => {
 // 1. POST /api/auth/register
 router.post(API_ROUTES.AUTH.REGISTER, async (req, res) => {
   try {
-    const { email, password, fullName, phoneNumber } = req.body;
+    const { email, password, fullName, phoneNumber, turnstileToken } = req.body;
+
+    // Verify Turnstile (bot protection)
+    const isHuman = await verifyTurnstileToken(turnstileToken, req.ip || undefined);
+    if (!isHuman) {
+      return res.status(403).json({ success: false, message: 'Bot verification failed. Please try again.' });
+    }
 
     if (!email || !password) {
       return res.status(400).json({ success: false, message: 'Email and password are required' });
@@ -77,6 +85,9 @@ router.post(API_ROUTES.AUTH.REGISTER, async (req, res) => {
       }
     });
 
+    // Assign default "Customer" role
+    await assignDefaultRole(newUser.id);
+
     // Generate confirmation token and save to Redis
     const token = crypto.randomUUID();
     await redisClient.setEx(`email_confirm:${token}`, 86400, email.toLowerCase()); // 24 hours
@@ -103,7 +114,13 @@ router.post(API_ROUTES.AUTH.REGISTER, async (req, res) => {
 // 2. POST /api/auth/login
 router.post(API_ROUTES.AUTH.LOGIN, async (req, res) => {
   try {
-    const { email, password } = req.body;
+    const { email, password, turnstileToken } = req.body;
+
+    // Verify Turnstile (bot protection)
+    const isHuman = await verifyTurnstileToken(turnstileToken, req.ip || undefined);
+    if (!isHuman) {
+      return res.status(403).json({ success: false, message: 'Bot verification failed. Please try again.' });
+    }
 
     if (!email || !password) {
       return res.status(400).json({ success: false, message: 'Email and password are required' });
@@ -161,10 +178,14 @@ router.post(API_ROUTES.AUTH.LOGIN, async (req, res) => {
     });
 
     // Extract roles (if any)
-    const roles = user.roles.map((ur) => ur.role.name || '');
+    const roles = user.roles.map((ur: any) => ur.role.name || '');
 
-    // Generate JWT
-    const { accessToken, refreshToken } = generateAccessAndRefreshTokens(user, roles);
+    // If user is Owner, get their restaurantId from UserRole
+    const ownerUserRole = user.roles.find((ur: any) => ur.role.name === 'Owner');
+    const ownerRestaurantId: string | null = ownerUserRole?.restaurantId ?? null;
+
+    // Generate JWT (includes roles[] and restaurantId)
+    const { accessToken, refreshToken } = generateAccessAndRefreshTokens(user, roles, ownerRestaurantId);
 
     // Lưu Refresh Token trong Redis (TTL: 7 ngày)
     await redisClient.setEx(`refresh_token:${user.id}`, 7 * 24 * 60 * 60, refreshToken);
@@ -178,7 +199,8 @@ router.post(API_ROUTES.AUTH.LOGIN, async (req, res) => {
           id: user.id,
           email: user.email,
           fullName: user.fullName,
-          roles: roles
+          roles,
+          restaurantId: ownerRestaurantId,
         }
       }
     });
@@ -238,7 +260,9 @@ router.post(API_ROUTES.AUTH.REFRESH_TOKEN, async (req, res) => {
     }
 
     const roles = (user.roles || []).map((ur: any) => ur.role?.name).filter(Boolean) as string[];
-    const tokens = generateAccessAndRefreshTokens(user, roles);
+    const ownerUserRole = user.roles.find((ur: any) => ur.role?.name === 'Owner');
+    const ownerRestaurantId: string | null = ownerUserRole?.restaurantId ?? null;
+    const tokens = generateAccessAndRefreshTokens(user, roles, ownerRestaurantId);
 
     // Update Redis with new Refresh Token
     await redisClient.setEx(`refresh_token:${user.id}`, 7 * 24 * 60 * 60, tokens.refreshToken);
