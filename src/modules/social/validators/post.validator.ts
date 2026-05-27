@@ -5,7 +5,7 @@ import type {
   ValidationResult,
 } from '../interfaces/social.types';
 import { validateImageUrls } from '../utils/image.util';
-import { decodeCursor } from '../utils/pagination.util';
+import { coerceQueryString, decodeCursor } from '../utils/pagination.util';
 
 const MAX_CONTENT_LENGTH = 10000;
 
@@ -51,24 +51,20 @@ export function validateUpdatePost(body: UpdatePostBody): ValidationResult {
   return { valid: errors.length === 0, errors };
 }
 
+export function normalizeListPostsQuery(query: Record<string, unknown>): ListPostsQuery {
+  return {
+    cursor: coerceQueryString(query.cursor as string | string[] | undefined),
+    limit: coerceQueryString(query.limit as string | string[] | undefined),
+    hashtag: coerceQueryString(query.hashtag as string | string[] | undefined),
+    authorId: coerceQueryString(query.authorId as string | string[] | undefined),
+  };
+}
+
 export function validateListPosts(query: ListPostsQuery): ValidationResult {
   const errors: string[] = [];
 
-  if (query.cursor) {
-    if (!decodeCursor(query.cursor)) {
-      errors.push('Invalid pagination cursor');
-    }
-  }
-
-  if (query.limit !== undefined) {
-    const n = parseInt(query.limit, 10);
-    if (isNaN(n) || n < 1) {
-      errors.push('limit must be a positive integer');
-    }
-  }
-
-  if (query.hashtag !== undefined && typeof query.hashtag !== 'string') {
-    errors.push('hashtag must be a string');
+  if (query.cursor && !decodeCursor(query.cursor)) {
+    errors.push('Invalid pagination cursor');
   }
 
   return { valid: errors.length === 0, errors };

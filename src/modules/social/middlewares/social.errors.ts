@@ -1,3 +1,17 @@
+import { Prisma } from '@prisma/client';
+
+export const EMPTY_POST_LIST = {
+  items: [],
+  pagination: { nextCursor: null, hasMore: false },
+} as const;
+
+export function isSocialSchemaUnavailable(err: unknown): boolean {
+  return (
+    err instanceof Prisma.PrismaClientKnownRequestError &&
+    (err.code === 'P2021' || err.code === 'P2022')
+  );
+}
+
 export class SocialServiceError extends Error {
   constructor(
     message: string,

@@ -1,13 +1,16 @@
 import express from 'express';
+import http from 'http';
 import cors from 'cors';
 import authRoutes from './routes/auth';
 import tenantRoutes from './routes/tenants';
 import userRoutes from './routes/users';
 import { registerSocialModule } from './modules/social/social.module';
+import { initSocialRealtime } from './modules/social/realtime/social-socket';
 import { API_ROUTES } from './constants/routes';
 import { ENV } from './config/env';
 
 const app = express();
+const httpServer = http.createServer(app);
 const PORT = ENV.PORT;
 
 // Middleware
@@ -37,11 +40,13 @@ app.get(API_ROUTES.HEALTH.BASE, (req, res) => {
   res.json({ status: 'ok', message: 'XFoodi API is running' });
 });
 
-// Start server
-app.listen(PORT, () => {
+initSocialRealtime(httpServer);
+
+httpServer.listen(PORT, () => {
   console.log(`🚀 XFoodi API Server running on http://localhost:${PORT}`);
   console.log(`- Auth API:  http://localhost:${PORT}${API_ROUTES.AUTH.BASE}`);
   console.log(`- User API:  http://localhost:${PORT}${API_ROUTES.USERS.BASE}`);
   console.log(`- Tenant API: http://localhost:${PORT}${API_ROUTES.TENANTS.BASE}`);
   console.log(`- Social API: http://localhost:${PORT}${API_ROUTES.SOCIAL.BASE}`);
+  console.log(`- Social realtime: http://localhost:${PORT}/hubs/social (Socket.io)`);
 });

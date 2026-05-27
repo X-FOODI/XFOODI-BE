@@ -5,7 +5,12 @@ import * as commentService from '../services/comment.service';
 import * as reactionService from '../services/reaction.service';
 import * as shareService from '../services/share.service';
 import * as savedPostService from '../services/savedPost.service';
-import { validateCreatePost, validateUpdatePost, validateListPosts } from '../validators/post.validator';
+import {
+  validateCreatePost,
+  validateUpdatePost,
+  validateListPosts,
+  normalizeListPostsQuery,
+} from '../validators/post.validator';
 import { validateCreateComment, validateUpdateComment } from '../validators/comment.validator';
 import { validateCreateReaction } from '../validators/reaction.validator';
 import type {
@@ -55,7 +60,7 @@ export const createPost: RequestHandler = async (req, res) => {
 
 export const listPosts: RequestHandler = async (req: any, res) => {
   try {
-    const query = req.query as ListPostsQuery;
+    const query = normalizeListPostsQuery(req.query as Record<string, unknown>);
     const { valid, errors } = validateListPosts(query);
     if (!valid) {
       return res.status(400).json({ success: false, message: errors.join('; ') });
@@ -122,7 +127,7 @@ export const deletePost: RequestHandler = async (req, res) => {
 
 export const listPostComments: RequestHandler = async (req: any, res) => {
   try {
-    const query = req.query as ListPostsQuery;
+    const query = normalizeListPostsQuery(req.query as Record<string, unknown>);
     const { valid, errors } = validateListPosts(query);
     if (!valid) {
       return res.status(400).json({ success: false, message: errors.join('; ') });
@@ -236,7 +241,7 @@ export const savePost: RequestHandler = async (req, res) => {
 
 export const listSavedPosts: RequestHandler = async (req: any, res) => {
   try {
-    const query = req.query as ListPostsQuery;
+    const query = normalizeListPostsQuery(req.query as Record<string, unknown>);
     const { valid, errors } = validateListPosts(query);
     if (!valid) {
       return res.status(400).json({ success: false, message: errors.join('; ') });

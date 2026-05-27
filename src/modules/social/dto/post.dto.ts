@@ -42,7 +42,7 @@ export function mapAuthor(author: AuthorSummary) {
 }
 
 export function mapPost(post: PostWithRelations, viewerId?: string) {
-  const meta = parseContentMeta(post.content);
+  const meta = parseContentMeta(post.content ?? '');
   const reactionCounts = post.reactions.reduce<Record<string, number>>((acc, r) => {
     acc[r.type] = (acc[r.type] || 0) + 1;
     return acc;

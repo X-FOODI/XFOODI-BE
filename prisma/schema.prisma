@@ -81,6 +81,13 @@ model User {
   socialReactions  SocialReaction[]
   socialShares     SocialShare[]
   savedPosts       SavedPost[]
+  /// Social community extensions (additive)
+  bio                        String?              @db.VarChar(500)
+  coverImageUrl              String?
+  socialFollowers            SocialFollow[]       @relation("UserSocialFollowers")
+  socialFollowing            SocialFollow[]       @relation("UserSocialFollowing")
+  socialNotificationsReceived SocialNotification[] @relation("NotificationRecipient")
+  socialNotificationsSent     SocialNotification[] @relation("NotificationActor")
 
   @@map("Users")
 }
@@ -924,21 +931,29 @@ model AIChatMessage {
 }
 
 model SocialPost {
-  id        String   @id @default(uuid())
-  authorId  String
-  content   String   @db.Text
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id          String   @id @default(uuid())
+  authorId    String
+  content     String   @db.Text
+  /// public | followers | private
+  visibility  String   @default("public")
+  repostOfId  String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
-  author    User              @relation(fields: [authorId], references: [id])
-  images    SocialImage[]
-  comments  SocialComment[]
-  reactions SocialReaction[]
-  shares    SocialShare[]
-  savedBy   SavedPost[]
+  author       User                @relation(fields: [authorId], references: [id])
+  repostOf     SocialPost?         @relation("PostReposts", fields: [repostOfId], references: [id], onDelete: SetNull)
+  reposts      SocialPost[]        @relation("PostReposts")
+  images       SocialImage[]
+  comments     SocialComment[]
+  reactions    SocialReaction[]
+  shares       SocialShare[]
+  savedBy      SavedPost[]
+  postHashtags SocialPostHashtag[]
 
   @@index([authorId])
   @@index([createdAt])
+  @@index([visibility])
+  @@index([repostOfId])
   @@map("SocialPosts")
 }
 
@@ -1014,4 +1029,66 @@ model SavedPost {
   @@unique([postId, userId])
   @@index([userId])
   @@map("SavedPosts")
+}
+
+/// Alias concept: SocialPostImage — persisted as SocialImage (legacy table)
+model SocialFollow {
+  id          String   @id @default(uuid())
+  followerId  String
+  followingId String
+  createdAt   DateTime @default(now())
+
+  follower  User @relation("UserSocialFollowers", fields: [followerId], references: [id], onDelete: Cascade)
+  following User @relation("UserSocialFollowing", fields: [followingId], references: [id], onDelete: Cascade)
+
+  @@unique([followerId, followingId])
+  @@index([followerId])
+  @@index([followingId])
+  @@map("SocialFollows")
+}
+
+model SocialHashtag {
+  id        String   @id @default(uuid())
+  tag       String   @unique
+  postCount Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  posts SocialPostHashtag[]
+
+  @@index([postCount])
+  @@map("SocialHashtags")
+}
+
+model SocialPostHashtag {
+  postId    String
+  hashtagId String
+  createdAt DateTime @default(now())
+
+  post    SocialPost    @relation(fields: [postId], references: [id], onDelete: Cascade)
+  hashtag SocialHashtag @relation(fields: [hashtagId], references: [id], onDelete: Cascade)
+
+  @@id([postId, hashtagId])
+  @@index([hashtagId])
+  @@map("SocialPostHashtags")
+}
+
+/// Alias concept: SocialBookmark — persisted as SavedPost (legacy table)
+model SocialNotification {
+  id        String   @id @default(uuid())
+  userId    String
+  actorId   String
+  type      String
+  postId    String?
+  commentId String?
+  message   String?  @db.VarChar(500)
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  recipient User @relation("NotificationRecipient", fields: [userId], references: [id], onDelete: Cascade)
+  actor     User @relation("NotificationActor", fields: [actorId], references: [id], onDelete: Cascade)
+
+  @@index([userId, read, createdAt])
+  @@index([actorId])
+  @@map("SocialNotifications")
 }

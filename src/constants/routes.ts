@@ -30,5 +30,13 @@ export const API_ROUTES = {
     REACTIONS: '/reactions',
     SHARE: '/share',
     SAVE: '/save',
+    FEED: '/feed',
+    FOLLOWS: '/follows',
+    NOTIFICATIONS: '/notifications',
+    SEARCH: '/search',
+    HASHTAGS: '/hashtags',
+    PROFILE: '/profile',
+    MEDIA: '/media',
+    V2: '/v2',
   },
 };

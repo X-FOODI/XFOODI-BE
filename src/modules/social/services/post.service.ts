@@ -2,8 +2,13 @@ import { postRepository } from '../repositories/post.repository';
 import { mapPost, mapPostList } from '../dto/post.dto';
 import { sanitizeContent, contentMatchesHashtag } from '../utils/content.util';
 import { validateImageUrls } from '../utils/image.util';
-import { decodeCursor, parseLimit } from '../utils/pagination.util';
-import { SocialServiceError, assertOwner } from '../middlewares/social.errors';
+import { coerceQueryString, decodeCursor, parseLimit } from '../utils/pagination.util';
+import {
+  SocialServiceError,
+  assertOwner,
+  EMPTY_POST_LIST,
+  isSocialSchemaUnavailable,
+} from '../middlewares/social.errors';
 import { validateMentionsInContent } from './mention.service';
 import type { CreatePostBody, UpdatePostBody, ListPostsQuery } from '../interfaces/social.types';
 
@@ -29,17 +34,26 @@ export async function createPost(authorId: string, body: CreatePostBody) {
 export async function listPosts(query: ListPostsQuery, viewerId?: string) {
   const limit = parseLimit(query.limit);
   const cursor = decodeCursor(query.cursor);
-  const hashtag = query.hashtag?.replace(/^#/, '').toLowerCase();
+  const hashtag = coerceQueryString(query.hashtag)?.replace(/^#/, '').toLowerCase();
 
-  let rows = await postRepository.findMany({
-    limit,
-    cursor,
-    authorId: query.authorId,
-    hashtag,
-  });
+  let rows;
+  try {
+    rows = await postRepository.findMany({
+      limit,
+      cursor,
+      authorId: query.authorId,
+      hashtag,
+    });
+  } catch (err) {
+    if (isSocialSchemaUnavailable(err)) {
+      console.error('[Social] listPosts: database tables unavailable');
+      return { ...EMPTY_POST_LIST };
+    }
+    throw err;
+  }
 
   if (hashtag) {
-    rows = rows.filter((p) => contentMatchesHashtag(p.content, hashtag));
+    rows = rows.filter((p) => p.content && contentMatchesHashtag(p.content, hashtag));
   }
 
   const hasMore = rows.length > limit;
@@ -84,7 +98,17 @@ export async function listSavedPosts(query: ListPostsQuery, userId: string) {
   const limit = parseLimit(query.limit);
   const cursor = decodeCursor(query.cursor);
 
-  const rows = await postRepository.findSavedByUser(userId, limit, cursor);
+  let rows;
+  try {
+    rows = await postRepository.findSavedByUser(userId, limit, cursor);
+  } catch (err) {
+    if (isSocialSchemaUnavailable(err)) {
+      console.error('[Social] listSavedPosts: database tables unavailable');
+      return { ...EMPTY_POST_LIST };
+    }
+    throw err;
+  }
+
   const hasMore = rows.length > limit;
   const items = hasMore ? rows.slice(0, limit) : rows;
 
