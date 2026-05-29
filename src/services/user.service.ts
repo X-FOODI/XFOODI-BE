@@ -44,6 +44,11 @@ const USER_SAFE_SELECT = {
 
 // ─── Helper: map Prisma result → safe response (no passwordHash) ─────────────
 
+function cleanUserEmail(email: string | null | undefined): string | null {
+  if (!email) return null;
+  return email.includes(':') ? email.substring(email.indexOf(':') + 1) : email;
+}
+
 function toProfileResponse(user: {
   id: string;
   email: string | null;
@@ -61,7 +66,7 @@ function toProfileResponse(user: {
 }): UserProfileResponse {
   return {
     id: user.id,
-    email: user.email,
+    email: cleanUserEmail(user.email),
     fullName: user.fullName,
     phoneNumber: user.phoneNumber,
     avatarUrl: user.avatarUrl,

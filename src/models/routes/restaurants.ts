@@ -1,16 +1,53 @@
 import { Router } from 'express';
 import type { Router as ExpressRouter } from 'express';
-import { prisma } from '../lib/prisma';
+import { prisma } from '../../lib/prisma';
 import { authMiddleware } from './auth';
+import { tenantGuard } from '../../middlewares/tenantGuard';
 
 const router: ExpressRouter = Router();
+
+/**
+ * GET /api/restaurants
+ * Public — trả về danh sách nhà hàng đang hoạt động để hiển thị trên homepage
+ */
+router.get('/', async (_req: any, res: any) => {
+  try {
+    const restaurants = await prisma.restaurant.findMany({
+      where: { isActive: true },
+      orderBy: { createdAt: 'desc' },
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        description: true,
+        address: true,
+        phone: true,
+        email: true,
+        logoUrl: true,
+        planType: true,
+        latitude: true,
+        longitude: true,
+        cuisineType: true,
+        createdAt: true,
+      },
+    });
+
+    return res.json({
+      success: true,
+      data: restaurants,
+    });
+  } catch (err) {
+    console.error('[RestaurantRoute] GET / error:', err);
+    return res.status(500).json({ success: false, message: 'Lỗi server.' });
+  }
+});
 
 /**
  * GET /api/restaurants/me
  * Trả về thông tin nhà hàng của Owner đang đăng nhập
  * Dùng restaurantId từ JWT payload
  */
-router.get('/me', authMiddleware, async (req: any, res: any) => {
+router.get('/me', authMiddleware, tenantGuard, async (req: any, res: any) => {
   try {
     const restaurantId: string | undefined = req.user?.restaurantId;
 

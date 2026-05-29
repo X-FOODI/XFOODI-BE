@@ -1,17 +1,17 @@
 import { Router, type Router as ExpressRouter } from 'express';
 import multer from 'multer';
 import { v2 as cloudinary } from 'cloudinary';
-import { prisma } from '../lib/prisma';
+import { prisma } from '../../lib/prisma';
 import { Prisma } from '@prisma/client';
 import { authMiddleware } from './auth';
-import { requireRole } from '../middlewares/requireRole';
-import { encryptValue, decryptValue } from '../utils/encryption';
+import { requireRole } from '../../middlewares/requireRole';
+import { encryptValue, decryptValue } from '../../utils/encryption';
 import {
   sendApplicationApprovedEmail,
   sendApplicationRejectedEmail,
-} from '../lib/email';
-import { assignDefaultRole } from '../services/role.service';
-import { ENV } from '../config/env';
+} from '../../lib/email';
+import { assignDefaultRole } from '../../services/role.service';
+import { ENV } from '../../config/env';
 
 const router: ExpressRouter = Router();
 
@@ -59,6 +59,29 @@ async function uploadToCloudinary(
   });
 }
 
+/** Upload restaurant logo as PUBLIC image (for homepage display) */
+async function uploadPublicImage(
+  buffer: Buffer,
+  folder: string,
+  filename: string
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const stream = cloudinary.uploader.upload_stream(
+      {
+        folder,
+        public_id: filename,
+        resource_type: 'image',
+        access_mode: 'public',
+      },
+      (error, result) => {
+        if (error || !result) return reject(error);
+        resolve(result.secure_url);
+      }
+    );
+    stream.end(buffer);
+  });
+}
+
 // ──────────────────────────────────────────────────────────────────────────────
 // POST /api/restaurant-applications
 // Customer tạo đơn đăng ký mở nhà hàng
@@ -70,6 +93,7 @@ router.post(
   '/',
   authMiddleware,
   upload.fields([
+    { name: 'restaurantImage', maxCount: 1 },
     { name: 'businessLicense', maxCount: 1 },
     { name: 'ownershipProof', maxCount: 1 },
     { name: 'nationalId', maxCount: 1 },
@@ -95,7 +119,9 @@ router.post(
         return res.status(409).json({ success: false, message: msg });
       }
 
-      const { restaurantName, slug, description, address, phone, email } = req.body;
+      const { restaurantName, slug, description, address, phone, email, cuisineType } = req.body;
+      const latitude = req.body.latitude ? parseFloat(req.body.latitude) : null;
+      const longitude = req.body.longitude ? parseFloat(req.body.longitude) : null;
 
       // Validate required fields
       if (!restaurantName || !slug || !address || !phone || !email) {
@@ -126,6 +152,15 @@ router.post(
       const timestamp = Date.now();
 
       // Upload files lên Cloudinary + mã hóa URL
+      let logoUrl: string | undefined;
+      if (files.restaurantImage?.[0]) {
+        logoUrl = await uploadPublicImage(
+          files.restaurantImage[0].buffer,
+          'xfoodi/restaurant-logos',
+          `${userId}-logo-${timestamp}`
+        );
+      }
+
       let businessLicenseEnc: string | undefined;
       let ownershipProofEnc: string | undefined;
       let nationalIdEnc: string | undefined;
@@ -176,6 +211,10 @@ router.post(
           address,
           phone,
           email,
+          logoUrl: logoUrl || null,
+          latitude,
+          longitude,
+          cuisineType: cuisineType || 'other',
           businessLicenseEnc,
           ownershipProofEnc,
           nationalIdEnc,
@@ -219,6 +258,7 @@ router.get('/my', authMiddleware, async (req: any, res: any) => {
         address: true,
         phone: true,
         email: true,
+        logoUrl: true,
         status: true,
         reviewNote: true,
         reviewedAt: true,
@@ -405,6 +445,10 @@ router.post('/:id/approve', authMiddleware, requireRole('Admin', 'SuperAdmin'), 
           address: application.address,
           phone: application.phone,
           email: application.email,
+          logoUrl: application.logoUrl || null,
+          latitude: application.latitude || null,
+          longitude: application.longitude || null,
+          cuisineType: application.cuisineType || 'other',
           isActive: true,
         },
       });

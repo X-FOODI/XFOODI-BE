@@ -2,22 +2,67 @@ import { Router, type Router as ExpressRouter } from 'express';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
-import { prisma } from '../lib/prisma';
-import redisClient from '../lib/redis';
-import { API_ROUTES } from '../constants/routes';
-import { sendConfirmationEmail, sendResetPasswordEmail } from '../lib/email';
-import { generateAccessAndRefreshTokens } from '../services/authToken.service';
-import { assignDefaultRole } from '../services/role.service';
-import { verifyTurnstileToken } from '../utils/turnstile';
-import { postGoogleAuth } from '../controllers/googleAuth.controller';
+import { prisma } from '../../lib/prisma';
+import redisClient from '../../lib/redis';
+import { API_ROUTES } from '../../constants/routes';
+import { sendConfirmationEmail, sendResetPasswordEmail } from '../../lib/email';
+import { generateAccessAndRefreshTokens } from '../../services/authToken.service';
+import { assignDefaultRole } from '../../services/role.service';
+import { verifyTurnstileToken } from '../../utils/turnstile';
+import { postGoogleAuth } from '../../controllers/googleAuth.controller';
 
-import { ENV } from '../config/env';
+import { ENV } from '../../config/env';
 
 const router: ExpressRouter = Router();
 const ACCESS_SECRET = ENV.JWT.ACCESS_SECRET;
 const REFRESH_SECRET = ENV.JWT.REFRESH_SECRET;
 
 
+
+import { resolveRestaurantFromHeaders } from '../../lib/tenant';
+
+async function getTenantScopedEmail(email: string, headers: any): Promise<string> {
+  const restaurant = await resolveRestaurantFromHeaders(headers);
+  const normalizedEmail = email.trim().toLowerCase();
+  if (restaurant) {
+    return `${restaurant.slug}:${normalizedEmail}`;
+  }
+  return normalizedEmail;
+}
+
+function cleanUserEmail(email: string | null | undefined): string | null {
+  if (!email) return null;
+  return email.includes(':') ? email.substring(email.indexOf(':') + 1) : email;
+}
+
+// Helper to get roles filtered by active tenant (restaurant) from headers
+async function getFilteredRolesForUser(userId: string, headers: any) {
+  // Find user roles
+  const userRoles = await prisma.userRole.findMany({
+    where: { userId },
+    include: { role: true },
+  });
+
+  const restaurant = await resolveRestaurantFromHeaders(headers);
+
+  if (!restaurant) {
+    // If no tenant context is provided, return all roles (allow login on landing page)
+    return {
+      roles: userRoles.map((ur: any) => ur.role.name || ''),
+      ownerRestaurantId: userRoles.find((ur: any) => ur.role.name === 'Owner')?.restaurantId ?? null,
+    };
+  }
+
+  // Filter roles: keep global roles AND roles specific to this restaurant
+  const filteredRoles = userRoles.filter(
+    (ur: any) => !ur.restaurantId || ur.restaurantId === restaurant.id
+  );
+
+  return {
+    roles: filteredRoles.map((ur: any) => ur.role.name || ''),
+    ownerRestaurantId: filteredRoles.find((ur: any) => ur.role.name === 'Owner')?.restaurantId ?? null,
+  };
+}
 
 // Middleware to protect routes and check blacklist
 export const authMiddleware = async (req: any, res: any, next: any) => {
@@ -38,6 +83,25 @@ export const authMiddleware = async (req: any, res: any, next: any) => {
     }
 
     req.user = decoded;
+
+    // Tenant check: if user token is bound to a specific restaurant, verify it matches the active tenant
+    if (decoded.restaurantId) {
+      const userRoles = Array.isArray(decoded.roles) ? decoded.roles : decoded.role ? [decoded.role] : [];
+      const isSystemAdmin = userRoles.some((r: string) =>
+        ['Admin', 'SuperAdmin', 'System Admin'].includes(r)
+      );
+
+      if (!isSystemAdmin) {
+        const restaurant = await resolveRestaurantFromHeaders(req.headers);
+        if (restaurant && restaurant.id !== decoded.restaurantId) {
+          return res.status(403).json({
+            success: false,
+            message: 'Bạn không có quyền truy cập dữ liệu của nhà hàng này.',
+          });
+        }
+      }
+    }
+
     next();
   } catch (error) {
     res.status(401).json({ success: false, message: 'Invalid or expired token' });
@@ -59,9 +123,11 @@ router.post(API_ROUTES.AUTH.REGISTER, async (req, res) => {
       return res.status(400).json({ success: false, message: 'Email and password are required' });
     }
 
+    const scopedEmail = await getTenantScopedEmail(email, req.headers);
+
     // Check if user already exists
     const existingUser = await prisma.user.findFirst({
-      where: { email: email.toLowerCase() }
+      where: { email: scopedEmail }
     });
 
     if (existingUser) {
@@ -75,8 +141,8 @@ router.post(API_ROUTES.AUTH.REGISTER, async (req, res) => {
     // Create the user in database
     const newUser = await prisma.user.create({
       data: {
-        email: email.toLowerCase(),
-        userName: email.toLowerCase(),
+        email: scopedEmail,
+        userName: scopedEmail,
         passwordHash,
         fullName,
         phoneNumber,
@@ -90,7 +156,7 @@ router.post(API_ROUTES.AUTH.REGISTER, async (req, res) => {
 
     // Generate confirmation token and save to Redis
     const token = crypto.randomUUID();
-    await redisClient.setEx(`email_confirm:${token}`, 86400, email.toLowerCase()); // 24 hours
+    await redisClient.setEx(`email_confirm:${token}`, 86400, scopedEmail); // 24 hours
 
     // Send confirmation email
     await sendConfirmationEmail(email.toLowerCase(), token);
@@ -100,7 +166,7 @@ router.post(API_ROUTES.AUTH.REGISTER, async (req, res) => {
       message: 'Registration successful. Please check your email to confirm your account.',
       data: {
         id: newUser.id,
-        email: newUser.email,
+        email: cleanUserEmail(newUser.email),
         fullName: newUser.fullName
       }
     });
@@ -110,6 +176,8 @@ router.post(API_ROUTES.AUTH.REGISTER, async (req, res) => {
     res.status(500).json({ success: false, message: 'Internal server error during registration' });
   }
 });
+
+
 
 // 2. POST /api/auth/login
 router.post(API_ROUTES.AUTH.LOGIN, async (req, res) => {
@@ -126,7 +194,8 @@ router.post(API_ROUTES.AUTH.LOGIN, async (req, res) => {
       return res.status(400).json({ success: false, message: 'Email and password are required' });
     }
 
-    const loginFailKey = `login_fail:${email.toLowerCase()}`;
+    const scopedEmail = await getTenantScopedEmail(email, req.headers);
+    const loginFailKey = `login_fail:${scopedEmail}`;
 
     // Check rate limit
     const fails = await redisClient.get(loginFailKey);
@@ -136,7 +205,7 @@ router.post(API_ROUTES.AUTH.LOGIN, async (req, res) => {
 
     // Find the user by email
     const user = await prisma.user.findFirst({
-      where: { email: email.toLowerCase() },
+      where: { email: scopedEmail },
       include: {
         roles: {
           include: {
@@ -177,12 +246,17 @@ router.post(API_ROUTES.AUTH.LOGIN, async (req, res) => {
       }
     });
 
-    // Extract roles (if any)
-    const roles = user.roles.map((ur: any) => ur.role.name || '');
+    // Extract roles filtered by current tenant if applicable
+    const { roles, ownerRestaurantId } = await getFilteredRolesForUser(user.id, req.headers);
 
-    // If user is Owner, get their restaurantId from UserRole
-    const ownerUserRole = user.roles.find((ur: any) => ur.role.name === 'Owner');
-    const ownerRestaurantId: string | null = ownerUserRole?.restaurantId ?? null;
+    let restaurantSlug: string | null = null;
+    if (ownerRestaurantId) {
+      const rest = await prisma.restaurant.findUnique({
+        where: { id: ownerRestaurantId },
+        select: { slug: true }
+      });
+      restaurantSlug = rest?.slug ?? null;
+    }
 
     // Generate JWT (includes roles[] and restaurantId)
     const { accessToken, refreshToken } = generateAccessAndRefreshTokens(user, roles, ownerRestaurantId);
@@ -197,10 +271,11 @@ router.post(API_ROUTES.AUTH.LOGIN, async (req, res) => {
         refreshToken,
         user: {
           id: user.id,
-          email: user.email,
+          email: cleanUserEmail(user.email),
           fullName: user.fullName,
           roles,
           restaurantId: ownerRestaurantId,
+          restaurantSlug,
         }
       }
     });
@@ -259,9 +334,7 @@ router.post(API_ROUTES.AUTH.REFRESH_TOKEN, async (req, res) => {
       return res.status(401).json({ success: false, message: 'User not found' });
     }
 
-    const roles = (user.roles || []).map((ur: any) => ur.role?.name).filter(Boolean) as string[];
-    const ownerUserRole = user.roles.find((ur: any) => ur.role?.name === 'Owner');
-    const ownerRestaurantId: string | null = ownerUserRole?.restaurantId ?? null;
+    const { roles, ownerRestaurantId } = await getFilteredRolesForUser(user.id, req.headers);
     const tokens = generateAccessAndRefreshTokens(user, roles, ownerRestaurantId);
 
     // Update Redis with new Refresh Token
@@ -332,7 +405,7 @@ router.get(API_ROUTES.AUTH.ME, authMiddleware, async (req: any, res: any) => {
       success: true,
       data: {
         id: user.id,
-        email: user.email,
+        email: cleanUserEmail(user.email),
         fullName: user.fullName,
         role: req.user.role,
         roles: [req.user.role]
@@ -352,8 +425,10 @@ router.post(API_ROUTES.AUTH.RESEND_CONFIRMATION_EMAIL, async (req: any, res: any
       return res.status(400).json({ success: false, message: 'Email is required' });
     }
 
+    const scopedEmail = await getTenantScopedEmail(email, req.headers);
+
     const user = await prisma.user.findFirst({
-      where: { email: email.toLowerCase() }
+      where: { email: scopedEmail }
     });
 
     if (!user) {
@@ -367,7 +442,7 @@ router.post(API_ROUTES.AUTH.RESEND_CONFIRMATION_EMAIL, async (req: any, res: any
 
     // Generate new confirmation token
     const token = crypto.randomUUID();
-    await redisClient.setEx(`email_confirm:${token}`, 86400, email.toLowerCase()); // 24 hours
+    await redisClient.setEx(`email_confirm:${token}`, 86400, scopedEmail); // 24 hours
 
     // Send the email via SendGrid
     await sendConfirmationEmail(email.toLowerCase(), token);
@@ -415,8 +490,10 @@ router.post(API_ROUTES.AUTH.FORGOT_PASSWORD, async (req: any, res: any) => {
       return res.status(400).json({ success: false, message: 'Email is required' });
     }
 
+    const scopedEmail = await getTenantScopedEmail(email, req.headers);
+
     const user = await prisma.user.findFirst({
-      where: { email: email.toLowerCase() }
+      where: { email: scopedEmail }
     });
 
     if (!user) {
@@ -426,7 +503,7 @@ router.post(API_ROUTES.AUTH.FORGOT_PASSWORD, async (req: any, res: any) => {
     // Generate password reset token
     const token = crypto.randomUUID();
     // Save to Redis with 15 minutes expiration
-    await redisClient.setEx(`pwd_reset:${token}`, 900, email.toLowerCase());
+    await redisClient.setEx(`pwd_reset:${token}`, 900, scopedEmail);
 
     // Send the email
     await sendResetPasswordEmail(email.toLowerCase(), token);
@@ -448,7 +525,8 @@ router.post(API_ROUTES.AUTH.RESET_PASSWORD, async (req: any, res: any) => {
     }
 
     const redisEmail = await redisClient.get(`pwd_reset:${token}`);
-    if (!redisEmail || redisEmail !== email.toLowerCase()) {
+    const scopedEmail = await getTenantScopedEmail(email, req.headers);
+    if (!redisEmail || redisEmail !== scopedEmail) {
       return res.status(400).json({ success: false, message: 'Invalid or expired password reset link' });
     }
 
@@ -458,7 +536,7 @@ router.post(API_ROUTES.AUTH.RESET_PASSWORD, async (req: any, res: any) => {
 
     // Update user password
     await prisma.user.updateMany({
-      where: { email: email.toLowerCase() },
+      where: { email: scopedEmail },
       data: { passwordHash }
     });
 
