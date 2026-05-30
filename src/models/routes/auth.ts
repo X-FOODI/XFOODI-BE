@@ -10,6 +10,7 @@ import { generateAccessAndRefreshTokens } from '../../services/authToken.service
 import { assignDefaultRole } from '../../services/role.service';
 import { verifyTurnstileToken } from '../../utils/turnstile';
 import { postGoogleAuth } from '../../controllers/googleAuth.controller';
+import totpService from '../../services/totp.service';
 
 import { ENV } from '../../config/env';
 
@@ -33,6 +34,25 @@ async function getTenantScopedEmail(email: string, headers: any): Promise<string
 function cleanUserEmail(email: string | null | undefined): string | null {
   if (!email) return null;
   return email.includes(':') ? email.substring(email.indexOf(':') + 1) : email;
+}
+
+// ── Input Validation Helpers ──
+const EMAIL_REGEX = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+const PASSWORD_MIN_LENGTH = 8;
+
+function validateEmail(email: string): string | null {
+  if (!email || !email.trim()) return 'Email is required';
+  if (!EMAIL_REGEX.test(email.trim())) return 'Invalid email format';
+  return null;
+}
+
+function validatePassword(password: string): string | null {
+  if (!password) return 'Password is required';
+  if (password.length < PASSWORD_MIN_LENGTH) return `Password must be at least ${PASSWORD_MIN_LENGTH} characters`;
+  if (!/[A-Z]/.test(password)) return 'Password must contain at least one uppercase letter';
+  if (!/[a-z]/.test(password)) return 'Password must contain at least one lowercase letter';
+  if (!/[0-9]/.test(password)) return 'Password must contain at least one number';
+  return null;
 }
 
 // Helper to get roles filtered by active tenant (restaurant) from headers
@@ -119,8 +139,14 @@ router.post(API_ROUTES.AUTH.REGISTER, async (req, res) => {
       return res.status(403).json({ success: false, message: 'Bot verification failed. Please try again.' });
     }
 
-    if (!email || !password) {
-      return res.status(400).json({ success: false, message: 'Email and password are required' });
+    const emailErr = validateEmail(email);
+    if (emailErr) {
+      return res.status(400).json({ success: false, message: emailErr });
+    }
+
+    const passwordErr = validatePassword(password);
+    if (passwordErr) {
+      return res.status(400).json({ success: false, message: passwordErr });
     }
 
     const scopedEmail = await getTenantScopedEmail(email, req.headers);
@@ -195,15 +221,8 @@ router.post(API_ROUTES.AUTH.LOGIN, async (req, res) => {
     }
 
     const scopedEmail = await getTenantScopedEmail(email, req.headers);
-    const loginFailKey = `login_fail:${scopedEmail}`;
-
-    // Check rate limit
-    const fails = await redisClient.get(loginFailKey);
-    if (fails && parseInt(fails) >= 5) {
-      return res.status(429).json({ success: false, message: 'Too many failed login attempts. Please try again later (after 15 minutes).' });
-    }
-
-    // Find the user by email
+    
+    // Find the user by email first to check roles for rate limiting & isolation
     const user = await prisma.user.findFirst({
       where: { email: scopedEmail },
       include: {
@@ -219,6 +238,40 @@ router.post(API_ROUTES.AUTH.LOGIN, async (req, res) => {
       return res.status(401).json({ success: false, message: 'Invalid email or password' });
     }
 
+    // Extract roles
+    const userRoles = user.roles.map((ur: any) => ur.role.name || '');
+    const isAdminUser = userRoles.some((r: string) => ['Admin', 'SuperAdmin', 'System Admin'].includes(r));
+
+    // Admin Isolation Check
+    const tenantDomain = (req.headers['x-tenant-domain'] || req.headers.host || '') as string;
+    const isAdminDomain = tenantDomain.startsWith('admin.') || tenantDomain.includes('admin.localhost');
+
+    if (isAdminUser && !isAdminDomain) {
+      return res.status(403).json({
+        success: false,
+        message: 'Đây là tài khoản quản trị. Vui lòng truy cập trang quản trị để đăng nhập.'
+      });
+    }
+
+    // Dual-Tier Rate Limiting Check
+    if (isAdminUser) {
+      const adminFails = await redisClient.get(`admin_login_fail:${scopedEmail}`);
+      if (adminFails && parseInt(adminFails) >= 3) {
+        return res.status(429).json({
+          success: false,
+          message: 'Tài khoản quản trị đã bị tạm khóa do nhập sai mật khẩu quá 3 lần. Vui lòng thử lại sau 1 giờ.'
+        });
+      }
+    } else {
+      const fails = await redisClient.get(`login_fail:${scopedEmail}`);
+      if (fails && parseInt(fails) >= 10) {
+        return res.status(429).json({
+          success: false,
+          message: 'Quá nhiều lần đăng nhập thất bại. Vui lòng thử lại sau 15 phút.'
+        });
+      }
+    }
+
     if (!user.emailVerified) {
       return res.status(403).json({ success: false, message: 'Please verify your email address before logging in.' });
     }
@@ -227,16 +280,47 @@ router.post(API_ROUTES.AUTH.LOGIN, async (req, res) => {
     const isMatch = await bcrypt.compare(password, user.passwordHash);
 
     if (!isMatch) {
-      // Increment fail count
-      const currentFails = await redisClient.incr(loginFailKey);
-      if (currentFails === 1) {
-        await redisClient.expire(loginFailKey, 15 * 60); // 15 minutes TTL
+      if (isAdminUser) {
+        // Increment admin fail count (1 hour block)
+        const currentFails = await redisClient.incr(`admin_login_fail:${scopedEmail}`);
+        if (currentFails === 1) {
+          await redisClient.expire(`admin_login_fail:${scopedEmail}`, 3600); // 1 hour TTL
+        }
+      } else {
+        // Increment standard fail count (15 minutes block)
+        const currentFails = await redisClient.incr(`login_fail:${scopedEmail}`);
+        if (currentFails === 1) {
+          await redisClient.expire(`login_fail:${scopedEmail}`, 900); // 15 minutes TTL
+        }
       }
       return res.status(401).json({ success: false, message: 'Invalid email or password' });
     }
 
     // Reset fail count on success
-    await redisClient.del(loginFailKey);
+    if (isAdminUser) {
+      await redisClient.del(`admin_login_fail:${scopedEmail}`);
+    } else {
+      await redisClient.del(`login_fail:${scopedEmail}`);
+    }
+
+    // ─── Google Authenticator 2FA Challenge ───
+    if (isAdminUser && user.twoFactorEnabled) {
+      // Sign short-lived temporary token (5 min) for 2FA validation
+      const tempToken = jwt.sign(
+        { userId: user.id, purpose: '2fa' },
+        ACCESS_SECRET,
+        { expiresIn: '5m' }
+      );
+
+      console.log(`🔐 [2FA] Admin login requires TOTP verification: ${user.email}`);
+
+      return res.json({
+        success: true,
+        requires2FA: true,
+        message: 'Vui lòng cung cấp mã OTP 2FA từ ứng dụng xác thực.',
+        tempToken,
+      });
+    }
 
     // Update last login time on successful login
     await prisma.user.update({
@@ -273,6 +357,11 @@ router.post(API_ROUTES.AUTH.LOGIN, async (req, res) => {
           id: user.id,
           email: cleanUserEmail(user.email),
           fullName: user.fullName,
+          phoneNumber: user.phoneNumber,
+          avatarUrl: user.avatarUrl,
+          gender: user.gender,
+          dateOfBirth: user.dateOfBirth,
+          address: user.address,
           roles,
           restaurantId: ownerRestaurantId,
           restaurantSlug,
@@ -407,6 +496,11 @@ router.get(API_ROUTES.AUTH.ME, authMiddleware, async (req: any, res: any) => {
         id: user.id,
         email: cleanUserEmail(user.email),
         fullName: user.fullName,
+        phoneNumber: user.phoneNumber,
+        avatarUrl: user.avatarUrl,
+        gender: user.gender,
+        dateOfBirth: user.dateOfBirth,
+        address: user.address,
         role: req.user.role,
         roles: [req.user.role]
       }
@@ -427,6 +521,13 @@ router.post(API_ROUTES.AUTH.RESEND_CONFIRMATION_EMAIL, async (req: any, res: any
 
     const scopedEmail = await getTenantScopedEmail(email, req.headers);
 
+    // Rate limit: max 3 resend requests per email per 15 minutes
+    const resendRateKey = `resend_confirm_rate:${scopedEmail}`;
+    const resendAttempts = await redisClient.get(resendRateKey);
+    if (resendAttempts && parseInt(resendAttempts) >= 3) {
+      return res.status(429).json({ success: false, message: 'Too many requests. Please try again later.' });
+    }
+
     const user = await prisma.user.findFirst({
       where: { email: scopedEmail }
     });
@@ -446,6 +547,12 @@ router.post(API_ROUTES.AUTH.RESEND_CONFIRMATION_EMAIL, async (req: any, res: any
 
     // Send the email via SendGrid
     await sendConfirmationEmail(email.toLowerCase(), token);
+
+    // Increment rate limit counter
+    const currentResendAttempts = await redisClient.incr(resendRateKey);
+    if (currentResendAttempts === 1) {
+      await redisClient.expire(resendRateKey, 15 * 60); // 15 minutes TTL
+    }
 
     res.json({ success: true, message: 'Confirmation email sent successfully' });
   } catch (error) {
@@ -492,12 +599,20 @@ router.post(API_ROUTES.AUTH.FORGOT_PASSWORD, async (req: any, res: any) => {
 
     const scopedEmail = await getTenantScopedEmail(email, req.headers);
 
+    // Rate limit: max 3 password reset requests per email per 15 minutes
+    const forgotRateKey = `forgot_pwd_rate:${scopedEmail}`;
+    const forgotAttempts = await redisClient.get(forgotRateKey);
+    if (forgotAttempts && parseInt(forgotAttempts) >= 3) {
+      return res.status(429).json({ success: false, message: 'Too many password reset requests. Please try again later.' });
+    }
+
     const user = await prisma.user.findFirst({
       where: { email: scopedEmail }
     });
 
     if (!user) {
-      return res.status(404).json({ success: false, message: 'Email không tồn tại trong hệ thống.' });
+      // Return success to prevent email enumeration — don't reveal if email exists
+      return res.json({ success: true, message: 'If your email is registered, a password reset link has been sent.' });
     }
 
     // Generate password reset token
@@ -508,7 +623,13 @@ router.post(API_ROUTES.AUTH.FORGOT_PASSWORD, async (req: any, res: any) => {
     // Send the email
     await sendResetPasswordEmail(email.toLowerCase(), token);
 
-    res.json({ success: true, message: 'Password reset email sent successfully' });
+    // Increment rate limit counter
+    const currentForgotAttempts = await redisClient.incr(forgotRateKey);
+    if (currentForgotAttempts === 1) {
+      await redisClient.expire(forgotRateKey, 15 * 60); // 15 minutes TTL
+    }
+
+    res.json({ success: true, message: 'If your email is registered, a password reset link has been sent.' });
   } catch (error) {
     console.error('Forgot password error:', error);
     res.status(500).json({ success: false, message: 'Internal server error' });
@@ -522,6 +643,11 @@ router.post(API_ROUTES.AUTH.RESET_PASSWORD, async (req: any, res: any) => {
 
     if (!token || !email || !newPassword) {
       return res.status(400).json({ success: false, message: 'Token, email, and new password are required' });
+    }
+
+    const passwordErr = validatePassword(newPassword);
+    if (passwordErr) {
+      return res.status(400).json({ success: false, message: passwordErr });
     }
 
     const redisEmail = await redisClient.get(`pwd_reset:${token}`);
@@ -546,6 +672,278 @@ router.post(API_ROUTES.AUTH.RESET_PASSWORD, async (req: any, res: any) => {
     res.json({ success: true, message: 'Password has been reset successfully. You can now log in.' });
   } catch (error) {
     console.error('Reset password error:', error);
+    res.status(500).json({ success: false, message: 'Internal server error' });
+  }
+});
+
+// ─── 2FA Setup ──────────────────────────────────────────────────────────────
+router.post('/2fa/setup', authMiddleware, async (req: any, res: any) => {
+  try {
+    const userId = req.user.sub;
+    const user = await prisma.user.findUnique({
+      where: { id: userId }
+    });
+
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+
+    // Only allow Admin roles to setup 2FA
+    const userRoles = Array.isArray(req.user.roles) ? req.user.roles : req.user.role ? [req.user.role] : [];
+    const isAdmin = userRoles.some((r: string) => ['Admin', 'SuperAdmin', 'System Admin'].includes(r));
+    if (!isAdmin) {
+      return res.status(403).json({ success: false, message: 'Only admin accounts can configure 2FA.' });
+    }
+
+    if (user.twoFactorEnabled) {
+      return res.status(400).json({ success: false, message: '2FA is already enabled.' });
+    }
+
+    // Generate new secret
+    const cleanedEmail = cleanUserEmail(user.email) || 'admin@xfoodi';
+    const { secret, uri } = totpService.generateSecret(cleanedEmail);
+
+    // Save secret to database (not yet enabled until verified)
+    await prisma.user.update({
+      where: { id: userId },
+      data: { twoFactorSecret: secret }
+    });
+
+    // Generate QR code base64 data URL
+    const qrCode = await totpService.generateQRCode(uri);
+
+    res.json({
+      success: true,
+      message: 'TOTP secret generated successfully',
+      data: {
+        qrCode,
+        secret
+      }
+    });
+  } catch (error) {
+    console.error('[2FA Setup] Error:', error);
+    res.status(500).json({ success: false, message: 'Internal server error' });
+  }
+});
+
+// ─── 2FA Enable ─────────────────────────────────────────────────────────────
+router.post('/2fa/enable', authMiddleware, async (req: any, res: any) => {
+  try {
+    const userId = req.user.sub;
+    const { code } = req.body;
+
+    if (!code || code.length !== 6) {
+      return res.status(400).json({ success: false, message: 'Vui lòng cung cấp mã xác thực 6 số.' });
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { id: userId }
+    });
+
+    if (!user || !user.twoFactorSecret) {
+      return res.status(400).json({ success: false, message: 'Vui lòng thực hiện thiết lập 2FA trước.' });
+    }
+
+    // Verify TOTP code
+    const isValid = totpService.verify(user.twoFactorSecret, code);
+    if (!isValid) {
+      return res.status(400).json({ success: false, message: 'Mã xác thực không hợp lệ. Vui lòng thử lại.' });
+    }
+
+    // Generate backup codes
+    const backupCodes = totpService.generateBackupCodes();
+    const hashedBackupCodes = backupCodes.map((c) => totpService.hashBackupCode(c));
+
+    // Enable 2FA
+    await prisma.user.update({
+      where: { id: userId },
+      data: {
+        twoFactorEnabled: true,
+        twoFactorBackupCodes: hashedBackupCodes
+      }
+    });
+
+    res.json({
+      success: true,
+      message: '2FA has been enabled successfully',
+      data: {
+        backupCodes // Show once so user can download/save
+      }
+    });
+  } catch (error) {
+    console.error('[2FA Enable] Error:', error);
+    res.status(500).json({ success: false, message: 'Internal server error' });
+  }
+});
+
+// ─── 2FA Validate (during Login) ─────────────────────────────────────────────
+router.post('/2fa/validate', async (req: any, res: any) => {
+  try {
+    const { tempToken, code } = req.body;
+
+    if (!tempToken || !code) {
+      return res.status(400).json({ success: false, message: 'tempToken and code are required' });
+    }
+
+    // Verify tempToken
+    let decoded: any;
+    try {
+      decoded = jwt.verify(tempToken, ACCESS_SECRET);
+    } catch (err) {
+      return res.status(401).json({ success: false, message: 'Temporary token expired or invalid. Please login again.' });
+    }
+
+    if (decoded.purpose !== '2fa') {
+      return res.status(400).json({ success: false, message: 'Invalid token purpose' });
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { id: decoded.userId }
+    });
+
+    if (!user || !user.twoFactorEnabled || !user.twoFactorSecret) {
+      return res.status(400).json({ success: false, message: '2FA is not enabled for this account' });
+    }
+
+    // Verify TOTP code or backup code
+    let verified = false;
+    let backupUsed = false;
+
+    if (code.length === 6) {
+      verified = totpService.verify(user.twoFactorSecret, code);
+    } else {
+      // Check backup code
+      const backupIndex = totpService.verifyBackupCode(code, user.twoFactorBackupCodes);
+      if (backupIndex !== -1) {
+        verified = true;
+        backupUsed = true;
+        // Remove used backup code
+        const updatedBackupCodes = [...user.twoFactorBackupCodes];
+        updatedBackupCodes.splice(backupIndex, 1);
+
+        await prisma.user.update({
+          where: { id: user.id },
+          data: { twoFactorBackupCodes: updatedBackupCodes }
+        });
+      }
+    }
+
+    if (!verified) {
+      return res.status(401).json({ success: false, message: 'Mã xác thực 2FA không hợp lệ.' });
+    }
+
+    // Successful TOTP verification -> Complete Login & Issue real JWTs
+    const { roles, ownerRestaurantId } = await getFilteredRolesForUser(user.id, req.headers);
+
+    let restaurantSlug: string | null = null;
+    if (ownerRestaurantId) {
+      const rest = await prisma.restaurant.findUnique({
+        where: { id: ownerRestaurantId },
+        select: { slug: true }
+      });
+      restaurantSlug = rest?.slug ?? null;
+    }
+
+    const { accessToken, refreshToken } = generateAccessAndRefreshTokens(user, roles, ownerRestaurantId);
+
+    // Save Refresh Token in Redis (TTL: 7 days)
+    await redisClient.setEx(`refresh_token:${user.id}`, 7 * 24 * 60 * 60, refreshToken);
+
+    // Update last login
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { lastLoginAt: new Date() }
+    });
+
+    res.json({
+      success: true,
+      message: '2FA verified successfully. Login successful.',
+      data: {
+        accessToken,
+        refreshToken,
+        user: {
+          id: user.id,
+          email: cleanUserEmail(user.email),
+          fullName: user.fullName,
+          phoneNumber: user.phoneNumber,
+          avatarUrl: user.avatarUrl,
+          gender: user.gender,
+          dateOfBirth: user.dateOfBirth,
+          address: user.address,
+          roles,
+          restaurantId: ownerRestaurantId,
+          restaurantSlug,
+        }
+      }
+    });
+  } catch (error) {
+    console.error('[2FA Validate] Error:', error);
+    res.status(500).json({ success: false, message: 'Internal server error' });
+  }
+});
+
+// ─── 2FA Disable ────────────────────────────────────────────────────────────
+router.post('/2fa/disable', authMiddleware, async (req: any, res: any) => {
+  try {
+    const userId = req.user.sub;
+    const { code } = req.body;
+
+    if (!code) {
+      return res.status(400).json({ success: false, message: 'Vui lòng cung cấp mã xác thực 2FA hiện tại để tắt.' });
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { id: userId }
+    });
+
+    if (!user || !user.twoFactorEnabled || !user.twoFactorSecret) {
+      return res.status(400).json({ success: false, message: '2FA is not enabled.' });
+    }
+
+    // Verify code before disabling
+    const isValid = totpService.verify(user.twoFactorSecret, code);
+    if (!isValid) {
+      return res.status(401).json({ success: false, message: 'Mã xác thực không đúng. Không thể tắt 2FA.' });
+    }
+
+    // Disable 2FA
+    await prisma.user.update({
+      where: { id: userId },
+      data: {
+        twoFactorEnabled: false,
+        twoFactorSecret: null,
+        twoFactorBackupCodes: []
+      }
+    });
+
+    res.json({ success: true, message: '2FA has been disabled successfully' });
+  } catch (error) {
+    console.error('[2FA Disable] Error:', error);
+    res.status(500).json({ success: false, message: 'Internal server error' });
+  }
+});
+
+// ─── 2FA Status ─────────────────────────────────────────────────────────────
+router.get('/2fa/status', authMiddleware, async (req: any, res: any) => {
+  try {
+    const userId = req.user.sub;
+    const user = await prisma.user.findUnique({
+      where: { id: userId }
+    });
+
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+
+    res.json({
+      success: true,
+      data: {
+        twoFactorEnabled: user.twoFactorEnabled,
+        remainingBackupCodes: user.twoFactorBackupCodes?.length || 0
+      }
+    });
+  } catch (error) {
+    console.error('[2FA Status] Error:', error);
     res.status(500).json({ success: false, message: 'Internal server error' });
   }
 });

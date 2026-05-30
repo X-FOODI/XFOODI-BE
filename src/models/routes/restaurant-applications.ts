@@ -12,8 +12,12 @@ import {
 } from '../../lib/email';
 import { assignDefaultRole } from '../../services/role.service';
 import { ENV } from '../../config/env';
+import { auditLogMiddleware } from '../../middlewares/auditLog';
 
 const router: ExpressRouter = Router();
+
+// Track write operations performed by admins
+router.use(auditLogMiddleware);
 
 // ── Cloudinary config ──
 cloudinary.config({
