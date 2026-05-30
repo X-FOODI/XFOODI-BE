@@ -5,6 +5,8 @@ import tenantRoutes from './models/routes/tenants';
 import restaurantApplicationRoutes from './models/routes/restaurant-applications';
 import restaurantRoutes from './models/routes/restaurants';
 import userRoutes from './models/routes/users';
+import categoryRoutes from './models/routes/categories';
+import dishRoutes from './models/routes/dishes';
 import { API_ROUTES } from './constants/routes';
 import { ENV } from './config/env';
 
@@ -31,6 +33,8 @@ app.use(API_ROUTES.USERS.BASE, userRoutes);
 app.use('/api/restaurants', restaurantRoutes);
 app.use(API_ROUTES.TENANTS.BASE, tenantRoutes);
 app.use(API_ROUTES.RESTAURANT_APPLICATIONS.BASE, restaurantApplicationRoutes);
+app.use(API_ROUTES.CATEGORIES.BASE, categoryRoutes);
+app.use(API_ROUTES.DISHES.BASE, dishRoutes);
 
 // Health check endpoint
 app.get(API_ROUTES.HEALTH.BASE, (req, res) => {
