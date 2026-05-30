@@ -88,7 +88,7 @@ export const sendResetPasswordEmail = async (email: string, token: string) => {
           <a href="${resetUrl}" style="background-color: #ff380b; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: bold;">Reset Password</a>
         </div>
         <p style="color: #666; font-size: 14px;">${resetUrl}</p>
-        <p style="margin-top: 40px; font-size: 12px; color: #aaa;">This link will expire in 1 hour.</p>
+        <p style="margin-top: 40px; font-size: 12px; color: #aaa;">This link will expire in 15 minutes.</p>
       </div>
     `,
   });
