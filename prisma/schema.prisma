@@ -26,6 +26,9 @@ model Restaurant {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
   metadata     Json?
+  latitude     Float?
+  longitude    Float?
+  cuisineType  String?  @default("other") // e.g. "vietnamese", "japanese", "fastfood", "other"
 
   owner                User                 @relation("RestaurantOwner", fields: [ownerId], references: [id])
   userRoles            UserRole[]
@@ -1010,6 +1013,9 @@ model RestaurantApplication {
   phone           String
   email           String
   logoUrl         String?
+  latitude        Float?
+  longitude       Float?
+  cuisineType     String?  @default("other") // "vietnamese"|"japanese"|"fastfood"|"other"
 
   // Step 2 — Legal documents (AES-256 encrypted Cloudinary URLs)
   // Format: "base64(iv):base64(ciphertext)"

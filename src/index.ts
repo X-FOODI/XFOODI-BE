@@ -1,12 +1,12 @@
 import express from 'express';
 import cors from 'cors';
-import authRoutes from './routes/auth';
-import tenantRoutes from './routes/tenants';
-import restaurantApplicationRoutes from './routes/restaurant-applications';
-import restaurantRoutes from './routes/restaurants';
-import userRoutes from './routes/users';
-import categoryRoutes from './routes/categories';
-import dishRoutes from './routes/dishes';
+import authRoutes from './models/routes/auth';
+import tenantRoutes from './models/routes/tenants';
+import restaurantApplicationRoutes from './models/routes/restaurant-applications';
+import restaurantRoutes from './models/routes/restaurants';
+import userRoutes from './models/routes/users';
+import categoryRoutes from './models/routes/categories';
+import dishRoutes from './models/routes/dishes';
 import { API_ROUTES } from './constants/routes';
 import { ENV } from './config/env';
 

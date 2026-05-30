@@ -7,7 +7,7 @@ import {
   handleGetDishDetail,
   handleUpdateDish,
   handleDeleteDish,
-} from '../controllers/dish.controller';
+} from '../../controllers/dish.controller';
 
 const router: ExpressRouter = Router();
 

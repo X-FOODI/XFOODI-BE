@@ -12,17 +12,41 @@ const FROM = {
 };
 
 async function sendEmail(msg: Parameters<typeof sgMail.send>[0]) {
+  const cleanMsg = { ...msg } as any;
   try {
+    if (cleanMsg.to) {
+      if (typeof cleanMsg.to === 'string') {
+        cleanMsg.to = cleanMsg.to.includes(':') ? cleanMsg.to.substring(cleanMsg.to.indexOf(':') + 1) : cleanMsg.to;
+      } else if (Array.isArray(cleanMsg.to)) {
+        cleanMsg.to = cleanMsg.to.map((item: any) => {
+          if (typeof item === 'string') {
+            return item.includes(':') ? item.substring(item.indexOf(':') + 1) : item;
+          } else if (item && typeof item === 'object' && item.email) {
+            return {
+              ...item,
+              email: item.email.includes(':') ? item.email.substring(item.email.indexOf(':') + 1) : item.email,
+            };
+          }
+          return item;
+        });
+      } else if (typeof cleanMsg.to === 'object' && cleanMsg.to.email) {
+        cleanMsg.to = {
+          ...cleanMsg.to,
+          email: cleanMsg.to.email.includes(':') ? cleanMsg.to.email.substring(cleanMsg.to.email.indexOf(':') + 1) : cleanMsg.to.email,
+        };
+      }
+    }
+
     if (!ENV.SENDGRID.API_KEY) {
-      console.log(`[MOCK EMAIL]`, JSON.stringify(msg, null, 2));
+      console.log(`[MOCK EMAIL]`, JSON.stringify(cleanMsg, null, 2));
       return;
     }
-    await sgMail.send(msg as any);
-    console.log(`[Email] Sent to ${(msg as any).to}`);
+    await sgMail.send(cleanMsg as any);
+    console.log(`[Email] Sent to ${cleanMsg.to}`);
   } catch (error: any) {
     console.error(`[Email] Failed`, error?.response?.body || error);
     if (error?.code !== 401) throw error;
-    console.log(`[MOCK EMAIL FALLBACK]`, JSON.stringify(msg, null, 2));
+    console.log(`[MOCK EMAIL FALLBACK]`, JSON.stringify(cleanMsg, null, 2));
   }
 }
 
@@ -80,11 +104,11 @@ export const sendApplicationApprovedEmail = async (
     to: email,
     from: FROM,
     replyTo: ENV.SENDGRID.EMAIL_REPLY_TO,
-    subject: '🎉 Đơn đăng ký nhà hàng đã được duyệt - XFoodi',
+    subject: 'Đơn đăng ký nhà hàng đã được duyệt - XFoodi',
     text: `Chúc mừng! Đơn đăng ký "${restaurantName}" đã được duyệt. Đăng nhập lại để vào dashboard: ${dashboardUrl}`,
     html: `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
-        <h2 style="color: #22c55e;">🎉 Chúc mừng, ${fullName}!</h2>
+        <h2 style="color: #22c55e;">Chúc mừng, ${fullName}!</h2>
         <p>Đơn đăng ký mở nhà hàng <strong>"${restaurantName}"</strong> của bạn đã được <strong style="color:#22c55e;">phê duyệt</strong> thành công.</p>
         <p>Bạn đã được cấp quyền <strong>Owner</strong> trên nền tảng XFoodi. Hãy đăng nhập lại để truy cập Dashboard quản lý nhà hàng của bạn.</p>
         <div style="text-align: center; margin: 30px 0;">

@@ -7,7 +7,7 @@ import {
   handleGetCategoryDetail,
   handleUpdateCategory,
   handleDeleteCategory,
-} from '../controllers/category.controller';
+} from '../../controllers/category.controller';
 
 const router: ExpressRouter = Router();
 

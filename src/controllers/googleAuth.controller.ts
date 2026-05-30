@@ -32,7 +32,7 @@ export const postGoogleAuth: RequestHandler = async (req, res) => {
     console.log('[Controller] googleToken received, length:', googleToken.length);
     console.log('[Controller] Calling signInWithGoogle...');
     
-    const data = await signInWithGoogle(googleToken);
+    const data = await signInWithGoogle(googleToken, req.headers);
     
     console.log('[Controller] ✓ signInWithGoogle success');
     console.log('[Controller] Returning response with user ID:', data.user.id);
