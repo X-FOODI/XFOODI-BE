@@ -94,8 +94,19 @@ export function validateChangePassword(body: ChangePasswordBody): ValidationResu
 
   if (!body.newPassword || typeof body.newPassword !== 'string') {
     errors.push('newPassword is required');
-  } else if (body.newPassword.length < 6) {
-    errors.push('newPassword must be at least 6 characters');
+  } else {
+    if (body.newPassword.length < 8) {
+      errors.push('Password must be at least 8 characters');
+    }
+    if (!/[A-Z]/.test(body.newPassword)) {
+      errors.push('Password must contain at least one uppercase letter');
+    }
+    if (!/[a-z]/.test(body.newPassword)) {
+      errors.push('Password must contain at least one lowercase letter');
+    }
+    if (!/[0-9]/.test(body.newPassword)) {
+      errors.push('Password must contain at least one number');
+    }
   }
 
   if (!body.confirmPassword || typeof body.confirmPassword !== 'string') {

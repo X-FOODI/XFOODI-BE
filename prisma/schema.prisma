@@ -26,6 +26,9 @@ model Restaurant {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
   metadata     Json?
+  latitude     Float?
+  longitude    Float?
+  cuisineType  String?  @default("other") // e.g. "vietnamese", "japanese", "fastfood", "other"
 
   owner                User                 @relation("RestaurantOwner", fields: [ownerId], references: [id])
   userRoles            UserRole[]
@@ -78,11 +81,17 @@ model User {
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 
+  twoFactorEnabled     Boolean   @default(false)
+  twoFactorSecret      String?
+  twoFactorBackupCodes String[]  @default([])
+
   employee         Employee?
   customer         Customer?
   roles            UserRole[]
   sessions         UserSession[]
   ownedRestaurants Restaurant[] @relation("RestaurantOwner")
+  restaurantApplications RestaurantApplication[]
+  reviewedApplications   RestaurantApplication[] @relation("ApplicationReviewer")
 
   @@map("Users")
 }
@@ -992,4 +1001,46 @@ model AIChatMessage {
   session AIChatSession @relation(fields: [aiChatSessionId], references: [id], onDelete: Cascade)
 
   @@map("AIChatMessages")
+}
+
+// ─── Restaurant Registration Applications ──────────────────────────────────────
+
+model RestaurantApplication {
+  id              String    @id @default(uuid())
+  userId          String
+
+  // Step 1 — Restaurant info
+  restaurantName  String
+  slug            String
+  description     String?
+  address         String
+  phone           String
+  email           String
+  logoUrl         String?
+  latitude        Float?
+  longitude       Float?
+  cuisineType     String?  @default("other") // "vietnamese"|"japanese"|"fastfood"|"other"
+
+  // Step 2 — Legal documents (AES-256 encrypted Cloudinary URLs)
+  // Format: "base64(iv):base64(ciphertext)"
+  businessLicenseEnc  String?   // Giấy phép kinh doanh
+  ownershipProofEnc   String?   // Giấy sở hữu / hợp đồng thuê mặt bằng
+  nationalIdEnc       String?   // CCCD mặt trước
+  nationalIdBackEnc   String?   // CCCD mặt sau
+
+  // Review
+  status          String    @default("PENDING")  // PENDING | APPROVED | REJECTED
+  reviewedBy      String?
+  reviewNote      String?
+  reviewedAt      DateTime?
+
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  user     User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  reviewer User? @relation("ApplicationReviewer", fields: [reviewedBy], references: [id])
+
+  @@index([userId])
+  @@index([status])
+  @@map("RestaurantApplications")
 }

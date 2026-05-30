@@ -28,15 +28,20 @@
     "@sendgrid/mail": "^8.1.6",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
+    "@types/multer": "^2.1.0",
     "@types/uuid": "^10.0.0",
     "awilix": "^10.0.2",
     "bcryptjs": "^3.0.3",
+    "cloudinary": "^2.10.0",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
     "google-auth-library": "^10.6.2",
     "jsonwebtoken": "^9.0.3",
+    "multer": "^2.1.1",
     "nodemailer": "^8.0.7",
+    "otpauth": "^9.5.0",
+    "qrcode": "^1.5.4",
     "redis": "^5.12.1",
     "typescript": "^5.3.3",
     "uuid": "^14.0.0",
@@ -46,7 +51,9 @@
     "@types/bcryptjs": "^2.4.6",
     "@types/jest": "^29.5.11",
     "@types/jsonwebtoken": "^9.0.10",
+    "@types/multer": "^2.1.0",
     "@types/node": "^20.10.6",
+    "@types/qrcode": "^1.5.6",
     "@typescript-eslint/eslint-plugin": "^6.17.0",
     "@typescript-eslint/parser": "^6.17.0",
     "eslint": "^8.56.0",
@@ -68,5 +75,12 @@
   "bugs": {
     "url": "https://github.com/X-FOODI/XFOODI-BE/issues"
   },
-  "homepage": "https://github.com/X-FOODI/XFOODI-BE#readme"
+  "homepage": "https://github.com/X-FOODI/XFOODI-BE#readme",
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "@prisma/client",
+      "@prisma/engines",
+      "prisma"
+    ]
+  }
 }
