@@ -228,9 +228,15 @@ export async function signInWithGoogle(googleToken: string): Promise<GoogleSignI
     console.log('[GoogleAuth] JWT_REFRESH_SECRET exists:', !!ENV.JWT.REFRESH_SECRET);
     
     const roles = (user.roles ?? []).map((ur: { role?: { name?: string | null } | null }) => ur.role?.name || '');
+    const ownerUserRole = (user.roles ?? []).find(
+      (ur: any) => ur.role?.name === 'Owner'
+    );
+    const ownerRestaurantId = ownerUserRole?.restaurantId ?? null;
+
     const tokens = generateAccessAndRefreshTokens(
       { id: user.id, email: user.email, fullName: user.fullName },
-      roles
+      roles,
+      ownerRestaurantId
     );
     accessToken = tokens.accessToken;
     refreshToken = tokens.refreshToken;

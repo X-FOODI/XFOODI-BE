@@ -12,7 +12,42 @@ const router: ExpressRouter = Router();
  */
 router.get('/me', authMiddleware, async (req: any, res: any) => {
   try {
-    const restaurantId: string | undefined = req.user?.restaurantId;
+    let restaurantId: string | undefined = req.user?.restaurantId;
+
+    if (!restaurantId) {
+      // 1. Try to find an owned restaurant
+      const ownedRest = await prisma.restaurant.findFirst({
+        where: { ownerId: req.user?.sub ?? req.user?.id },
+        select: { id: true },
+      });
+      if (ownedRest) {
+        restaurantId = ownedRest.id;
+      }
+    }
+
+    if (!restaurantId) {
+      // 2. Try to find an employee association
+      const employeeRest = await prisma.employee.findFirst({
+        where: { userId: req.user?.sub ?? req.user?.id },
+        select: { restaurantId: true },
+      });
+      if (employeeRest) {
+        restaurantId = employeeRest.restaurantId;
+      }
+    }
+
+    if (!restaurantId) {
+      // 3. Fallback for testing/admin accounts: default to the first restaurant in the database
+      const roles = req.user?.roles || (req.user?.role ? [req.user.role] : []);
+      if (roles.includes('Admin') || roles.includes('SuperAdmin') || roles.includes('Owner')) {
+        const firstRest = await prisma.restaurant.findFirst({
+          select: { id: true },
+        });
+        if (firstRest) {
+          restaurantId = firstRest.id;
+        }
+      }
+    }
 
     if (!restaurantId) {
       return res.status(404).json({
