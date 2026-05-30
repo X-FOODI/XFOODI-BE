@@ -18,7 +18,7 @@ app.use(cors({
   origin: [ENV.FRONTEND_URL, 'http://localhost:3000', /\.xfoodi\.website$/],
   credentials: true
 }));
-app.use(express.json());
+app.use(express.json({ limit: '15mb' }));
 
 // Request logging middleware
 app.use((req, res, next) => {

@@ -244,12 +244,28 @@ export const updateSocialProfile: RequestHandler = async (req, res) => {
 
 export const uploadMedia: RequestHandler = async (req, res) => {
   try {
-    const files = (req.body?.files ?? []) as { base64: string; mimeType?: string }[];
-    const buffers = files.map((f, i) => ({
-      buffer: Buffer.from(f.base64, 'base64'),
-      mimetype: f.mimeType || 'image/jpeg',
-      originalname: `upload-${i}`,
-    }));
+    const rawFiles = req.body?.files;
+    if (!Array.isArray(rawFiles) || rawFiles.length === 0) {
+      return res.status(400).json({ success: false, message: 'No images provided' });
+    }
+
+    const buffers: { buffer: Buffer; mimetype: string; originalname?: string }[] = [];
+    for (let i = 0; i < rawFiles.length; i++) {
+      const f = rawFiles[i] as { base64?: string; mimeType?: string };
+      if (!f?.base64 || typeof f.base64 !== 'string') {
+        return res.status(400).json({
+          success: false,
+          message: `files[${i}].base64 is required`,
+        });
+      }
+      const normalized = f.base64.includes(',') ? f.base64.split(',')[1] : f.base64;
+      buffers.push({
+        buffer: Buffer.from(normalized, 'base64'),
+        mimetype: f.mimeType || 'image/jpeg',
+        originalname: `upload-${i}`,
+      });
+    }
+
     const data = await mediaService.uploadSocialImages(buffers);
     res.status(201).json({ success: true, data });
   } catch (err) {

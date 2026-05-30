@@ -27,7 +27,18 @@ export async function createPost(authorId: string, body: CreatePostBody) {
 
   await validateMentionsInContent(content);
 
-  const post = await postRepository.create(authorId, content, imageUrls);
+  let post;
+  try {
+    post = await postRepository.create(authorId, content, imageUrls);
+  } catch (err) {
+    if (isSocialSchemaUnavailable(err)) {
+      throw new SocialServiceError(
+        'Social features are temporarily unavailable. Please try again later.',
+        503
+      );
+    }
+    throw err;
+  }
   return mapPost(post, authorId);
 }
 
