@@ -1,13 +1,10 @@
 import express from 'express';
 import cors from 'cors';
-import authRoutes from './routes/auth';
-import tenantRoutes from './routes/tenants';
-<<<<<<< HEAD
-import restaurantApplicationRoutes from './routes/restaurant-applications';
-import restaurantRoutes from './routes/restaurants';
-=======
->>>>>>> 8e4c95639c4baa15fd86dec2a49f42e31d6ac306
-import userRoutes from './routes/users';
+import authRoutes from './models/routes/auth';
+import tenantRoutes from './models/routes/tenants';
+import restaurantApplicationRoutes from './models/routes/restaurant-applications';
+import restaurantRoutes from './models/routes/restaurants';
+import userRoutes from './models/routes/users';
 import { API_ROUTES } from './constants/routes';
 import { ENV } from './config/env';
 

@@ -10,8 +10,8 @@
 
 import { Router, type Router as ExpressRouter } from 'express';
 import { authMiddleware } from './auth';
-import { getMyProfile, updateMyProfile, changePassword } from '../controllers/user.controller';
-import { API_ROUTES } from '../constants/routes';
+import { getMyProfile, updateMyProfile, changePassword } from '../../controllers/user.controller';
+import { API_ROUTES } from '../../constants/routes';
 
 const router: ExpressRouter = Router();
 
