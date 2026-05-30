@@ -46,6 +46,7 @@ router.get('/', async (_req: any, res: any) => {
  * GET /api/restaurants/me
  * Trả về thông tin nhà hàng của Owner đang đăng nhập
  * Dùng restaurantId từ JWT payload
+ * ⚠️ PHẢI đứng trước /:slug để tránh bị match nhầm
  */
 router.get('/me', authMiddleware, tenantGuard, async (req: any, res: any) => {
   try {
@@ -100,6 +101,43 @@ router.get('/me', authMiddleware, tenantGuard, async (req: any, res: any) => {
       success: false,
       message: 'Lỗi server.',
     });
+  }
+});
+
+/**
+ * GET /api/restaurants/:slug
+ * Public — trả về thông tin nhà hàng theo slug (không cần auth)
+ * Dùng cho trang homepage của tenant: address, phone, email, lat/lng
+ */
+router.get('/:slug', async (req: any, res: any) => {
+  try {
+    const { slug } = req.params;
+    const restaurant = await prisma.restaurant.findUnique({
+      where: { slug },
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        description: true,
+        address: true,
+        phone: true,
+        email: true,
+        logoUrl: true,
+        latitude: true,
+        longitude: true,
+        cuisineType: true,
+        isActive: true,
+      },
+    });
+
+    if (!restaurant || !restaurant.isActive) {
+      return res.status(404).json({ success: false, message: 'Không tìm thấy nhà hàng.' });
+    }
+
+    return res.json({ success: true, data: restaurant });
+  } catch (err) {
+    console.error('[RestaurantRoute] GET /:slug error:', err);
+    return res.status(500).json({ success: false, message: 'Lỗi server.' });
   }
 });
 
