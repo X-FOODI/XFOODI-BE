@@ -39,6 +39,7 @@ export interface UserProfileResponse {
   provider: string;
   emailVerified: boolean;
   isActive: boolean;
+  hasPassword: boolean;
   createdAt: Date;
   updatedAt: Date | null;
 }

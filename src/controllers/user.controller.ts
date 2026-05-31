@@ -131,29 +131,72 @@ export const updateMyProfile: RequestHandler = async (req, res) => {
 
 // ─── PUT /api/users/change-password ──────────────────────────────────────────
 
+import { prisma } from '../lib/prisma';
+
 /**
  * Changes the authenticated user's password.
- * Requires: currentPassword, newPassword, confirmPassword.
+ * Supports setting a new password directly if the user does not have a password set yet.
  */
 export const changePassword: RequestHandler = async (req, res) => {
   try {
     const body = req.body as ChangePasswordBody;
+    const userId = getUserId(req);
 
-    // Validate input
-    const { valid, errors } = validateChangePassword(body);
-    if (!valid) {
+    // Fetch user to check if they already have a password
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { passwordHash: true }
+    });
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found',
+      });
+    }
+
+    const hasPassword = !!user.passwordHash;
+
+    // Validate input dynamically
+    const errors: string[] = [];
+    if (hasPassword) {
+      if (!body.currentPassword || typeof body.currentPassword !== 'string') {
+        errors.push('currentPassword is required');
+      }
+    }
+    if (!body.newPassword || typeof body.newPassword !== 'string') {
+      errors.push('newPassword is required');
+    } else {
+      if (body.newPassword.length < 8) {
+        errors.push('Password must be at least 8 characters');
+      }
+      if (!/[A-Z]/.test(body.newPassword)) {
+        errors.push('Password must contain at least one uppercase letter');
+      }
+      if (!/[a-z]/.test(body.newPassword)) {
+        errors.push('Password must contain at least one lowercase letter');
+      }
+      if (!/[0-9]/.test(body.newPassword)) {
+        errors.push('Password must contain at least one number');
+      }
+    }
+
+    if (body.confirmPassword !== body.newPassword) {
+      errors.push('confirmPassword does not match newPassword');
+    }
+
+    if (errors.length > 0) {
       return res.status(400).json({
         success: false,
         message: errors.join('; '),
       });
     }
 
-    const userId = getUserId(req);
     await changeUserPassword(userId, body.currentPassword, body.newPassword);
 
     res.json({
       success: true,
-      message: 'Password changed successfully',
+      message: hasPassword ? 'Password changed successfully' : 'Password set successfully',
     });
   } catch (err) {
     handleError(res, err);
