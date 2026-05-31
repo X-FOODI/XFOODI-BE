@@ -948,4 +948,159 @@ router.get('/2fa/status', authMiddleware, async (req: any, res: any) => {
   }
 });
 
+// ─── 2FA Regenerate Backup Codes ─────────────────────────────────────────────
+router.post('/2fa/regenerate-backup-codes', authMiddleware, async (req: any, res: any) => {
+  try {
+    const userId = req.user.sub;
+    const { code } = req.body;
+
+    if (!code) {
+      return res.status(400).json({ success: false, message: 'Vui lòng cung cấp mã OTP 2FA hiện tại.' });
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { id: userId }
+    });
+
+    if (!user || !user.twoFactorEnabled || !user.twoFactorSecret) {
+      return res.status(400).json({ success: false, message: 'Tính năng 2FA chưa được kích hoạt cho tài khoản này.' });
+    }
+
+    // Verify TOTP code
+    const isValid = totpService.verify(user.twoFactorSecret, code);
+    if (!isValid) {
+      return res.status(401).json({ success: false, message: 'Mã xác thực 2FA không chính xác.' });
+    }
+
+    // Generate new backup codes
+    const backupCodes = totpService.generateBackupCodes();
+    const hashedBackupCodes = backupCodes.map((c) => totpService.hashBackupCode(c));
+
+    // Update backup codes
+    await prisma.user.update({
+      where: { id: userId },
+      data: {
+        twoFactorBackupCodes: hashedBackupCodes
+      }
+    });
+
+    res.json({
+      success: true,
+      message: 'Tạo mới danh sách mã dự phòng thành công.',
+      data: {
+        backupCodes
+      }
+    });
+  } catch (error) {
+    console.error('[2FA Regenerate Backup Codes] Error:', error);
+    res.status(500).json({ success: false, message: 'Internal server error' });
+  }
+});
+
+// ─── 2FA Setup New Device ────────────────────────────────────────────────────
+router.post('/2fa/setup-new-device', authMiddleware, async (req: any, res: any) => {
+  try {
+    const userId = req.user.sub;
+    const { code } = req.body;
+
+    if (!code) {
+      return res.status(400).json({ success: false, message: 'Vui lòng cung cấp mã OTP từ thiết bị cũ để xác thực.' });
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { id: userId }
+    });
+
+    if (!user || !user.twoFactorEnabled || !user.twoFactorSecret) {
+      return res.status(400).json({ success: false, message: 'Tính năng 2FA chưa được kích hoạt.' });
+    }
+
+    // Verify current device OTP
+    const isValid = totpService.verify(user.twoFactorSecret, code);
+    if (!isValid) {
+      return res.status(401).json({ success: false, message: 'Mã xác thực từ thiết bị hiện tại không chính xác.' });
+    }
+
+    // Generate new secret for another device
+    const cleanedEmail = cleanUserEmail(user.email) || 'admin@xfoodi';
+    const { secret, uri } = totpService.generateSecret(cleanedEmail);
+
+    // Save secret to Redis temporarily for 15 mins (TTL: 900)
+    await redisClient.setEx(`temp_2fa_secret:${userId}`, 900, secret);
+
+    // Generate QR code base64 data URL
+    const qrCode = await totpService.generateQRCode(uri);
+
+    res.json({
+      success: true,
+      message: 'Yêu cầu thêm thiết bị mới thành công. Hãy quét mã QR này.',
+      data: {
+        qrCode,
+        secret
+      }
+    });
+  } catch (error) {
+    console.error('[2FA Setup New Device] Error:', error);
+    res.status(500).json({ success: false, message: 'Internal server error' });
+  }
+});
+
+// ─── 2FA Confirm New Device ──────────────────────────────────────────────────
+router.post('/2fa/confirm-new-device', authMiddleware, async (req: any, res: any) => {
+  try {
+    const userId = req.user.sub;
+    const { code } = req.body;
+
+    if (!code || code.length !== 6) {
+      return res.status(400).json({ success: false, message: 'Vui lòng cung cấp mã xác thực 6 chữ số từ thiết bị mới.' });
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { id: userId }
+    });
+
+    if (!user || !user.twoFactorEnabled) {
+      return res.status(400).json({ success: false, message: 'Tính năng 2FA chưa được kích hoạt.' });
+    }
+
+    // Fetch the temporary secret from Redis
+    const tempSecret = await redisClient.get(`temp_2fa_secret:${userId}`);
+    if (!tempSecret) {
+      return res.status(400).json({ success: false, message: 'Yêu cầu thêm thiết bị đã hết hạn. Vui lòng xác thực lại từ thiết bị cũ.' });
+    }
+
+    // Verify OTP from the new device
+    const isValid = totpService.verify(tempSecret, code);
+    if (!isValid) {
+      return res.status(401).json({ success: false, message: 'Mã xác thực từ thiết bị mới không chính xác. Vui lòng thử lại.' });
+    }
+
+    // Persist new secret and regenerate backup codes
+    const backupCodes = totpService.generateBackupCodes();
+    const hashedBackupCodes = backupCodes.map((c) => totpService.hashBackupCode(c));
+
+    await prisma.user.update({
+      where: { id: userId },
+      data: {
+        twoFactorSecret: tempSecret,
+        twoFactorBackupCodes: hashedBackupCodes
+      }
+    });
+
+    // Clean up temporary Redis key
+    await redisClient.del(`temp_2fa_secret:${userId}`);
+
+    res.json({
+      success: true,
+      message: 'Thiết bị 2FA mới đã được đăng ký thành công.',
+      data: {
+        backupCodes
+      }
+    });
+  } catch (error) {
+    console.error('[2FA Confirm New Device] Error:', error);
+    res.status(500).json({ success: false, message: 'Internal server error' });
+  }
+});
+
 export default router;
