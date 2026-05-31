@@ -43,6 +43,7 @@
     "otpauth": "^9.5.0",
     "qrcode": "^1.5.4",
     "redis": "^5.12.1",
+    "twilio": "^6.0.2",
     "typescript": "^5.3.3",
     "uuid": "^14.0.0",
     "winston": "^3.11.0"
