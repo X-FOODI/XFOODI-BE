@@ -44,6 +44,12 @@ export const ENV = {
     API_SECRET: process.env.CLOUDINARY_API_SECRET as string,
   },
 
+  TWILIO: {
+    ACCOUNT_SID: process.env.TWILIO_ACCOUNT_SID as string,
+    AUTH_TOKEN: process.env.TWILIO_AUTH_TOKEN as string,
+    PHONE_NUMBER: process.env.TWILIO_PHONE_NUMBER as string,
+  },
+
   DOCUMENT_ENCRYPTION_KEY: process.env.DOCUMENT_ENCRYPTION_KEY as string,
 };
 
