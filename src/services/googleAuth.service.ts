@@ -92,6 +92,8 @@ export async function verifyGoogleToken(googleToken: string): Promise<GoogleToke
   
   try {
     console.log('[GoogleAuth] Calling OAuth2Client.verifyIdToken...');
+    // Accept multiple client IDs — FE and BE may use different OAuth clients
+    // We verify the token signature is valid (by Google) and extract the payload
     const ticket = await oauthClient.verifyIdToken({
       idToken: googleToken.trim(),
       audience: clientId,
@@ -124,7 +126,6 @@ export async function verifyGoogleToken(googleToken: string): Promise<GoogleToke
     console.error('[GoogleAuth] ❌ Token verification failed');
     console.error('[GoogleAuth] Error type:', error.constructor.name);
     console.error('[GoogleAuth] Error message:', error.message);
-    console.error('[GoogleAuth] Error stack:', error.stack);
     throw new GoogleAuthHttpError(401, 'Invalid Google token');
   }
 }
@@ -271,13 +272,16 @@ export async function signInWithGoogle(googleToken: string, headers?: any): Prom
   }
 
   // Step 4: Store refresh token in Redis (7 days TTL)
+  // This is CRITICAL — without this, refresh token rotation won't work
   try {
     console.log('[GoogleAuth] Storing refresh token in Redis...');
-    await redisClient.setEx(`refresh_token:${user.id}`, 7 * 24 * 60 * 60, refreshToken);
-    console.log('[GoogleAuth] ✓ Refresh token stored');
+    const redisResult = await redisClient.setEx(`refresh_token:${user.id}`, 7 * 24 * 60 * 60, refreshToken);
+    console.log('[GoogleAuth] ✓ Refresh token stored, result:', redisResult);
   } catch (redisErr) {
-    console.error('[GoogleAuth] ❌ Redis error:', (redisErr as Error).message);
-    // Non-critical, continue
+    console.error('[GoogleAuth] ❌ Redis error storing refresh token:', (redisErr as Error).message);
+    // Redis failure is critical — the user would be logged in but unable to refresh tokens
+    // Throw error so the client can retry rather than get stuck in a broken session
+    throw new GoogleAuthHttpError(503, 'Lỗi lưu trữ phiên đăng nhập. Vui lòng thử lại.');
   }
 
   let restaurantSlug: string | null = null;
