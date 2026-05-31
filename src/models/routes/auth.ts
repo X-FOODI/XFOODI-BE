@@ -376,6 +376,42 @@ router.post(API_ROUTES.AUTH.LOGIN, async (req, res) => {
   }
 });
 
+// 2c. POST /api/auth/unlock - Unlock blocked admin account using Turnstile token
+router.post('/unlock', async (req: any, res: any) => {
+  try {
+    const { email, turnstileToken } = req.body;
+
+    if (!email) {
+      return res.status(400).json({ success: false, message: 'Email là bắt buộc.' });
+    }
+
+    // Verify Turnstile (bot protection)
+    const isHuman = await verifyTurnstileToken(turnstileToken, req.ip || undefined);
+    if (!isHuman) {
+      return res.status(403).json({ success: false, message: 'Xác thực Bot thất bại. Vui lòng thử lại.' });
+    }
+
+    const scopedEmail = await getTenantScopedEmail(email, req.headers);
+
+    // Delete keys in Redis
+    const failKey = `admin_login_fail:${scopedEmail}`;
+    const normalFailKey = `login_fail:${scopedEmail}`;
+    
+    await redisClient.del(failKey);
+    await redisClient.del(normalFailKey);
+
+    console.log(`🔓 [Unlock] Admin account unlocked via Turnstile: ${scopedEmail}`);
+
+    res.json({
+      success: true,
+      message: 'Mở khóa tài khoản thành công! Bạn có thể đăng nhập lại.'
+    });
+  } catch (error) {
+    console.error('Unlock account error:', error);
+    res.status(500).json({ success: false, message: 'Lỗi hệ thống khi mở khóa tài khoản.' });
+  }
+});
+
 // 2b. POST /api/auth/google - Google OAuth sign-in
 router.post(API_ROUTES.AUTH.GOOGLE, postGoogleAuth);
 
