@@ -11,6 +11,7 @@ import { assignDefaultRole } from '../../services/role.service';
 import { verifyTurnstileToken } from '../../utils/turnstile';
 import { postGoogleAuth } from '../../controllers/googleAuth.controller';
 import totpService from '../../services/totp.service';
+import smsService from '../../services/sms.service';
 
 import { ENV } from '../../config/env';
 
@@ -1100,6 +1101,222 @@ router.post('/2fa/confirm-new-device', authMiddleware, async (req: any, res: any
   } catch (error) {
     console.error('[2FA Confirm New Device] Error:', error);
     res.status(500).json({ success: false, message: 'Internal server error' });
+  }
+});
+
+// ─── Phone Number Authentication ─────────────────────────────────────────────
+
+// 1. POST /api/auth/customer/check-phone
+// Check if phone number exists in DB
+router.post('/customer/check-phone', async (req: any, res: any) => {
+  try {
+    const { phoneNumber } = req.body;
+    if (!phoneNumber) {
+      return res.status(400).json({ success: false, message: 'Số điện thoại là bắt buộc.' });
+    }
+
+    // Normalize phone number (replace leading '0' with '+84' if applicable)
+    let normalizedPhone = phoneNumber.trim();
+    if (normalizedPhone.startsWith('0')) {
+      normalizedPhone = '+84' + normalizedPhone.substring(1);
+    }
+
+    const user = await prisma.user.findFirst({
+      where: { phoneNumber: normalizedPhone }
+    });
+
+    if (user) {
+      return res.json({
+        success: true,
+        exists: true,
+        name: user.fullName || cleanUserEmail(user.email) || 'Khách hàng'
+      });
+    }
+
+    return res.json({
+      success: true,
+      exists: false
+    });
+  } catch (error) {
+    console.error('Check phone error:', error);
+    res.status(500).json({ success: false, message: 'Lỗi máy chủ nội bộ.' });
+  }
+});
+
+// 2. POST /api/auth/phone-login/otp
+// Generate and send OTP via Twilio SMS
+router.post('/phone-login/otp', async (req: any, res: any) => {
+  try {
+    const { phoneNumber } = req.body;
+    if (!phoneNumber) {
+      return res.status(400).json({ success: false, message: 'Số điện thoại là bắt buộc.' });
+    }
+
+    // Validate phone number format (Vietnamese)
+    const VIETNAMESE_PHONE_REGEX = /^(0|\+84)(3|5|7|8|9)[0-9]{8}$/;
+    if (!VIETNAMESE_PHONE_REGEX.test(phoneNumber.trim())) {
+      return res.status(400).json({ success: false, message: 'Số điện thoại không hợp lệ. Vui lòng nhập số điện thoại Việt Nam (ví dụ: 0912345678).' });
+    }
+
+    // Normalize phone number to E.164 for Twilio
+    let normalizedPhone = phoneNumber.trim();
+    if (normalizedPhone.startsWith('0')) {
+      normalizedPhone = '+84' + normalizedPhone.substring(1);
+    }
+
+    // Generate secure 6-digit verification code
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+
+    // Store in Redis (Key phone_otp:{phoneNumber}, TTL 300 seconds = 5 minutes)
+    await redisClient.setEx(`phone_otp:${normalizedPhone}`, 300, otp);
+
+    // Send the verification code via SMS
+    await smsService.sendVerificationSms(normalizedPhone, otp);
+
+    res.json({
+      success: true,
+      message: 'Mã xác thực OTP đã được gửi đến số điện thoại của bạn.'
+    });
+  } catch (error: any) {
+    console.error('Send phone OTP error:', error);
+    res.status(500).json({ success: false, message: error.message || 'Lỗi gửi tin nhắn xác thực.' });
+  }
+});
+
+// 3. POST /api/auth/phone-login/verify
+// Verify OTP and complete sign-in
+router.post('/phone-login/verify', async (req: any, res: any) => {
+  try {
+    const { phoneNumber, code } = req.body;
+    if (!phoneNumber || !code) {
+      return res.status(400).json({ success: false, message: 'Số điện thoại và mã OTP là bắt buộc.' });
+    }
+
+    // Normalize phone number
+    let normalizedPhone = phoneNumber.trim();
+    if (normalizedPhone.startsWith('0')) {
+      normalizedPhone = '+84' + normalizedPhone.substring(1);
+    }
+
+    // Fetch OTP from Redis
+    const cachedOtp = await redisClient.get(`phone_otp:${normalizedPhone}`);
+    if (!cachedOtp || cachedOtp !== code.trim()) {
+      return res.status(401).json({ success: false, message: 'Mã OTP không chính xác hoặc đã hết hạn.' });
+    }
+
+    // Delete OTP from Redis on successful verification
+    await redisClient.del(`phone_otp:${normalizedPhone}`);
+
+    // Lookup user by phone number
+    let user = await prisma.user.findFirst({
+      where: { phoneNumber: normalizedPhone },
+      include: {
+        roles: {
+          include: {
+            role: true
+          }
+        }
+      }
+    });
+
+    // If user does not exist, auto-register them
+    if (!user) {
+      console.log(`[Phone Auth] Registering new customer for phone: ${normalizedPhone}`);
+      
+      // We generate a temp unique email for them
+      const tempEmail = `phone_${normalizedPhone.replace('+', '')}@xfoodi.local`;
+
+      user = await prisma.user.create({
+        data: {
+          phoneNumber: normalizedPhone,
+          email: tempEmail,
+          userName: tempEmail,
+          emailVerified: true, // Auto-verified since phone is verified
+          provider: 'phone',
+          fullName: `User ${normalizedPhone}`,
+          isActive: true
+        },
+        include: {
+          roles: {
+            include: {
+              role: true
+            }
+          }
+        }
+      });
+
+      // Assign default Customer role
+      await assignDefaultRole(user.id);
+
+      // Re-fetch user to include the newly assigned role
+      user = await prisma.user.findUnique({
+        where: { id: user.id },
+        include: {
+          roles: {
+            include: {
+              role: true
+            }
+          }
+        }
+      }) as any;
+    }
+
+    if (!user) {
+      return res.status(500).json({ success: false, message: 'Không thể tạo tài khoản.' });
+    }
+
+    if (!user.isActive) {
+      return res.status(403).json({ success: false, message: 'Tài khoản của bạn đã bị khóa.' });
+    }
+
+    // Update last login
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { lastLoginAt: new Date() }
+    });
+
+    // Extract roles filtered by active tenant (restaurant) from headers
+    const { roles, ownerRestaurantId } = await getFilteredRolesForUser(user.id, req.headers);
+
+    let restaurantSlug: string | null = null;
+    if (ownerRestaurantId) {
+      const rest = await prisma.restaurant.findUnique({
+        where: { id: ownerRestaurantId },
+        select: { slug: true }
+      });
+      restaurantSlug = rest?.slug ?? null;
+    }
+
+    // Generate JWT access and refresh tokens
+    const { accessToken, refreshToken } = generateAccessAndRefreshTokens(user, roles, ownerRestaurantId);
+
+    // Save Refresh Token in Redis
+    await redisClient.setEx(`refresh_token:${user.id}`, 7 * 24 * 60 * 60, refreshToken);
+
+    res.json({
+      success: true,
+      message: 'Đăng nhập thành công.',
+      data: {
+        accessToken,
+        refreshToken,
+        user: {
+          id: user.id,
+          email: cleanUserEmail(user.email),
+          fullName: user.fullName,
+          phoneNumber: user.phoneNumber,
+          avatarUrl: user.avatarUrl,
+          gender: user.gender,
+          dateOfBirth: user.dateOfBirth,
+          address: user.address,
+          roles,
+          restaurantId: ownerRestaurantId,
+          restaurantSlug,
+        }
+      }
+    });
+  } catch (error) {
+    console.error('Verify phone login error:', error);
+    res.status(500).json({ success: false, message: 'Lỗi máy chủ nội bộ trong quá trình xác thực.' });
   }
 });
 
