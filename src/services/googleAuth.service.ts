@@ -227,6 +227,16 @@ export async function signInWithGoogle(googleToken: string, headers?: any): Prom
     }
   }
 
+  // ─── Google Authenticator 2FA Security Block for Google Login ───
+  if (user && user.twoFactorEnabled) {
+    const userRoles = user.roles.map((ur: any) => ur.role?.name || '');
+    const isAdminUser = userRoles.some((r: string) => ['Admin', 'SuperAdmin', 'System Admin', 'Owner'].includes(r));
+    if (isAdminUser) {
+      console.warn(`🔐 [GoogleAuth] Google Login blocked for admin with 2FA enabled: ${user.email}`);
+      throw new GoogleAuthHttpError(403, 'Tài khoản quản trị của bạn đã được kích hoạt bảo mật 2FA. Vui lòng đăng nhập bằng Email và Mật khẩu để nhập mã xác thực OTP.');
+    }
+  }
+
   // Step 3: Generate JWT tokens
   let accessToken: string, refreshToken: string;
   let roles: string[] = [];
