@@ -16,6 +16,15 @@ import {
 } from '../services/user.service';
 import { validateUpdateProfile, validateChangePassword } from '../validators/user.validator';
 import type { UpdateProfileBody, ChangePasswordBody } from '../types/user.types';
+import { v2 as cloudinary } from 'cloudinary';
+import { ENV } from '../config/env';
+
+// Configure Cloudinary
+cloudinary.config({
+  cloud_name: ENV.CLOUDINARY.CLOUD_NAME,
+  api_key: ENV.CLOUDINARY.API_KEY,
+  api_secret: ENV.CLOUDINARY.API_SECRET,
+});
 
 // ─── Helper: extract userId from JWT payload on req.user ─────────────────────
 // authMiddleware sets req.user = decoded JWT, where sub = user UUID
@@ -67,6 +76,37 @@ export const getMyProfile: RequestHandler = async (req, res) => {
 export const updateMyProfile: RequestHandler = async (req, res) => {
   try {
     const body = req.body as UpdateProfileBody;
+    const userId = getUserId(req);
+
+    // If an avatar file was uploaded from Multer
+    if (req.file) {
+      const file = req.file;
+      const timestamp = Date.now();
+      
+      console.log(`[UserController] Uploading avatar to Cloudinary for user: ${userId}`);
+      
+      const secureUrl = await new Promise<string>((resolve, reject) => {
+        const stream = cloudinary.uploader.upload_stream(
+          {
+            folder: 'xfoodi/users/avatars',
+            public_id: `${userId}-avatar-${timestamp}`,
+            resource_type: 'image',
+            access_mode: 'public',
+          },
+          (error, result) => {
+            if (error || !result) {
+              console.error('[Cloudinary Upload Error]', error);
+              return reject(error || new Error('Upload to Cloudinary failed'));
+            }
+            resolve(result.secure_url);
+          }
+        );
+        stream.end(file.buffer);
+      });
+      
+      console.log(`[UserController] Avatar uploaded successfully: ${secureUrl}`);
+      body.avatarUrl = secureUrl;
+    }
 
     // Validate input
     const { valid, errors } = validateUpdateProfile(body);
@@ -77,7 +117,6 @@ export const updateMyProfile: RequestHandler = async (req, res) => {
       });
     }
 
-    const userId = getUserId(req);
     const updated = await updateUserProfile(userId, body);
 
     res.json({
