@@ -96,8 +96,8 @@ export async function verifyGoogleToken(googleToken: string): Promise<GoogleToke
     // We verify the token signature is valid (by Google) and extract the payload
     const ticket = await oauthClient.verifyIdToken({
       idToken: googleToken.trim(),
-      // Pass audience as array to accept multiple client IDs
-      audience: [clientId, process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID].filter(Boolean) as string[],
+      // Chấp nhận cả BE client ID lẫn FE client ID (2 OAuth app khác nhau)
+      audience: [clientId, process.env.GOOGLE_CLIENT_ID_FE].filter(Boolean) as string[],
     });
     payload = ticket.getPayload();
     
