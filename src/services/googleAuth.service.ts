@@ -246,7 +246,6 @@ export async function signInWithGoogle(googleToken: string, headers?: any): Prom
     console.log('[GoogleAuth] Generating JWT tokens...');
     console.log('[GoogleAuth] JWT_ACCESS_SECRET exists:', !!ENV.JWT.ACCESS_SECRET);
     console.log('[GoogleAuth] JWT_REFRESH_SECRET exists:', !!ENV.JWT.REFRESH_SECRET);
-    
     // Filter roles by resolved restaurant ID
     const currentRestaurantId = restaurant?.id ?? null;
 
