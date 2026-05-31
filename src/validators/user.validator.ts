@@ -24,14 +24,14 @@ export function validateUpdateProfile(body: UpdateProfileBody): ValidationResult
   const errors: string[] = [];
 
   // fullName: optional, min 2 chars
-  if (body.fullName !== undefined) {
+  if (body.fullName !== undefined && body.fullName !== null && body.fullName !== '') {
     if (typeof body.fullName !== 'string' || body.fullName.trim().length < 2) {
       errors.push('fullName must be at least 2 characters');
     }
   }
 
   // phoneNumber: optional, Vietnamese format
-  if (body.phoneNumber !== undefined) {
+  if (body.phoneNumber !== undefined && body.phoneNumber !== null && body.phoneNumber !== '') {
     if (
       typeof body.phoneNumber !== 'string' ||
       !VIETNAMESE_PHONE_REGEX.test(body.phoneNumber.trim())
@@ -43,21 +43,21 @@ export function validateUpdateProfile(body: UpdateProfileBody): ValidationResult
   }
 
   // avatarUrl: optional, valid URL
-  if (body.avatarUrl !== undefined) {
+  if (body.avatarUrl !== undefined && body.avatarUrl !== null && body.avatarUrl !== '') {
     if (typeof body.avatarUrl !== 'string' || !URL_REGEX.test(body.avatarUrl.trim())) {
       errors.push('avatarUrl must be a valid URL starting with http:// or https://');
     }
   }
 
   // gender: optional, must be one of MALE | FEMALE | OTHER
-  if (body.gender !== undefined) {
+  if (body.gender !== undefined && body.gender !== null && body.gender as any !== '') {
     if (!GENDER_VALUES.includes(body.gender as any)) {
       errors.push(`gender must be one of: ${GENDER_VALUES.join(', ')}`);
     }
   }
 
   // dateOfBirth: optional, valid date, cannot be in the future
-  if (body.dateOfBirth !== undefined) {
+  if (body.dateOfBirth !== undefined && body.dateOfBirth !== null && body.dateOfBirth !== '') {
     if (typeof body.dateOfBirth !== 'string') {
       errors.push('dateOfBirth must be a string in ISO 8601 format (e.g. "1995-08-20")');
     } else {
@@ -71,7 +71,7 @@ export function validateUpdateProfile(body: UpdateProfileBody): ValidationResult
   }
 
   // address: optional, max 255 chars
-  if (body.address !== undefined) {
+  if (body.address !== undefined && body.address !== null && body.address !== '') {
     if (typeof body.address !== 'string') {
       errors.push('address must be a string');
     } else if (body.address.trim().length > ADDRESS_MAX_LENGTH) {
