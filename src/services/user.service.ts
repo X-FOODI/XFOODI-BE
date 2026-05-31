@@ -38,8 +38,8 @@ const USER_SAFE_SELECT = {
   provider: true,
   emailVerified: true,
   isActive: true,
-  createdDate: true,
-  modifiedDate: true,
+  createdAt: true,
+  updatedAt: true,
 } as const;
 
 // ─── Helper: map Prisma result → safe response (no passwordHash) ─────────────
@@ -61,8 +61,8 @@ function toProfileResponse(user: {
   provider: string;
   emailVerified: boolean;
   isActive: boolean;
-  createdDate: Date;
-  modifiedDate: Date | null;
+  createdAt: Date;
+  updatedAt: Date | null;
 }): UserProfileResponse {
   return {
     id: user.id,
@@ -76,8 +76,8 @@ function toProfileResponse(user: {
     provider: user.provider,
     emailVerified: user.emailVerified,
     isActive: user.isActive,
-    createdDate: user.createdDate,
-    modifiedDate: user.modifiedDate,
+    createdAt: user.createdAt,
+    updatedAt: user.updatedAt,
   };
 }
 
