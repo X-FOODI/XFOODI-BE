@@ -32,4 +32,10 @@ export const API_ROUTES = {
   HEALTH: {
     BASE: '/api/health',
   },
+  CATEGORIES: {
+    BASE: '/api/categories',
+  },
+  DISHES: {
+    BASE: '/api/dishes',
+  },
 };
