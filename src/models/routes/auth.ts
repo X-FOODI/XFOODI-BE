@@ -194,8 +194,9 @@ router.post(API_ROUTES.AUTH.LOGIN, async (req, res) => {
       return res.status(400).json({ success: false, message: 'Email and password are required' });
     }
 
+    const unscopedEmail = email.trim().toLowerCase();
     const scopedEmail = await getTenantScopedEmail(email, req.headers);
-    const loginFailKey = `login_fail:${scopedEmail}`;
+    const loginFailKey = `login_fail:${unscopedEmail}`;
 
     // Check rate limit
     const fails = await redisClient.get(loginFailKey);
@@ -203,17 +204,32 @@ router.post(API_ROUTES.AUTH.LOGIN, async (req, res) => {
       return res.status(429).json({ success: false, message: 'Too many failed login attempts. Please try again later (after 15 minutes).' });
     }
 
-    // Find the user by email
-    const user = await prisma.user.findFirst({
-      where: { email: scopedEmail },
-      include: {
-        roles: {
-          include: {
-            role: true
-          }
-        }
-      }
+    let user = null;
+    
+    // 1. First check if there is a global account (Owner/Admin)
+    const globalUser = await prisma.user.findFirst({
+      where: { email: unscopedEmail },
+      include: { roles: { include: { role: true } } }
     });
+
+    if (globalUser) {
+      const restaurant = await resolveRestaurantFromHeaders(req.headers);
+      const isOwnerOfThisTenant = restaurant && globalUser.roles.some((ur: any) => ur.role.name === 'Owner' && ur.restaurantId === restaurant.id);
+      const isSystemAdmin = globalUser.roles.some((ur: any) => ['Admin', 'SuperAdmin', 'System Admin'].includes(ur.role.name));
+      
+      // Allow if they are Owner of this tenant, System Admin, or if there is no tenant (logged in on main site)
+      if (isOwnerOfThisTenant || isSystemAdmin || !restaurant) {
+        user = globalUser;
+      }
+    }
+
+    // 2. If not found or not authorized as global, fallback to tenant-scoped account
+    if (!user) {
+      user = await prisma.user.findFirst({
+        where: { email: scopedEmail },
+        include: { roles: { include: { role: true } } }
+      });
+    }
 
     if (!user || !user.passwordHash) {
       return res.status(401).json({ success: false, message: 'Invalid email or password' });
