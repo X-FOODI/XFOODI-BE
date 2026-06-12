@@ -61,7 +61,7 @@
 
 ## 🚀 Quick Start
 
-> System Requirements: **Node.js ≥ 20**, **PostgreSQL**, **Redis**.
+> System Requirements: **Node.js ≥ 20**, **PostgreSQL**, **Redis** (eviction policy must be `noeviction`).
 
 ### 1. Clone & Install
 
