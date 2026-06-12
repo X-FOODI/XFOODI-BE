@@ -1,0 +1,25 @@
+========================================================================
+QUY TRÌNH HỖ TRỢ KỸ THUẬT VÀ GHI LOG HÀNH VI ADMIN (AUDIT LOGGING)
+========================================================================
+
+Để hỗ trợ các đối tác xử lý sự cố vận hành nhanh chóng, Super Admin của XFoodi có quyền truy cập vào bảng điều khiển quản trị toàn cục và thực hiện một số thao tác hỗ trợ thay cho chủ nhà hàng (như upload thực đơn hộ, xóa file lỗi, điều chỉnh thông tin bàn ăn). Tuy nhiên, để tránh xung đột lợi ích và bảo vệ quyền riêng tư dữ liệu của đối tác, hệ thống thiết lập quy chế kiểm soát và ghi nhật ký hoạt động nghiêm ngặt.
+
+1. Nguyên tắc "Không tự ý can thiệp" (Zero-Intervention Policy)
+- Super Admin không được tự ý thay đổi thực đơn, giá bán, cấu hình bàn ăn hoặc thông tin tài chính của bất kỳ nhà hàng nào trừ khi nhận được yêu cầu hỗ trợ chính thức (Support Ticket) từ chủ nhà hàng đó.
+- Yêu cầu hỗ trợ phải được ghi nhận dưới dạng Ticket trong hệ thống với đầy đủ mã số, thời gian, tên người yêu cầu và mô tả lỗi cụ thể.
+
+2. Hệ thống Ghi nhật ký hành vi quản trị (Admin Audit Logs)
+Mọi hành động thao tác dữ liệu thay cho tenant từ tài khoản có quyền Admin/SuperAdmin đều được hệ thống tự động ghi lại vào bảng `SystemAuditLogs` trong cơ sở dữ liệu với các thông tin bắt buộc:
+- **Thời gian (Timestamp)**: Thời điểm chính xác thực hiện hành động.
+- **Admin_ID & Email**: Định danh người thực hiện thao tác.
+- **Hành động (Action)**: Ví dụ: `UPLOAD_DOCUMENT_BYPASSED`, `DELETE_DOCUMENT_BYPASSED`, `UPDATE_PLAN_MANUAL`.
+- **Tenant_ID**: Nhà hàng bị tác động.
+- **Dữ liệu thay đổi (Payload Diff)**: Chi tiết thông số cũ và thông số mới được cập nhật.
+- **Mã Ticket hỗ trợ (SupportTicket_ID)**: Mã liên kết với yêu cầu của đối tác để đối chứng pháp lý khi cần thiết.
+
+Nhật ký hành vi này là dữ liệu chỉ đọc (Read-Only), không thể bị xóa hay sửa đổi bởi bất kỳ ai (kể cả Super Admin), đảm bảo tính minh bạch tuyệt đối của nền tảng.
+
+3. Giải quyết tranh chấp dữ liệu (Conflict Dispute Resolution)
+- Trong trường hợp chủ cửa hàng khiếu nại về việc thực đơn bị thay đổi giá hoặc tài liệu Cơ sở tri thức bị xóa ngoài ý muốn, Bộ phận giám sát của XFoodi sẽ truy xuất trực tiếp bảng `SystemAuditLogs`.
+- Nếu log ghi nhận thay đổi do tài khoản nội bộ của cửa hàng thực hiện (ví dụ: tài khoản nhân viên của chính cửa hàng), cửa hàng tự chịu trách nhiệm.
+- Nếu log ghi nhận do một tài khoản Super Admin thực hiện mà không đi kèm mã số Ticket hỗ trợ hợp lệ từ đối tác, Super Admin đó sẽ bị đình chỉ quyền truy cập hệ thống và chịu trách nhiệm bồi thường thiệt hại (nếu có) theo hợp đồng dịch vụ.

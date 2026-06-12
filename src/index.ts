@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import http from 'http';
 import { initializeSocket } from './socket';
+import path from 'path';
 import authRoutes from './models/routes/auth';
 import tenantRoutes from './models/routes/tenants';
 import restaurantApplicationRoutes from './models/routes/restaurant-applications';
@@ -9,10 +10,13 @@ import restaurantRoutes from './models/routes/restaurants';
 import userRoutes from './models/routes/users';
 import uploadRoutes from './models/routes/upload';
 import ordersRoutes from './models/routes/orders';
+import aiRoutes from './models/routes/ai';
 import categoryRoutes from './models/routes/categories';
 import dishRoutes from './models/routes/dishes';
 import { API_ROUTES } from './constants/routes';
 import { ENV } from './config/env';
+import { UploadQueueService } from './services/uploadQueue.service';
+
 
 const app = express();
 const PORT = ENV.PORT;
@@ -26,6 +30,7 @@ app.use(cors({
   credentials: true
 }));
 app.use(express.json());
+app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 
 // Multi-tenant database routing middleware using AsyncLocalStorage
 app.use(async (req: any, res: any, next) => {
@@ -104,6 +109,7 @@ app.use(API_ROUTES.TENANTS.BASE, tenantRoutes);
 app.use(API_ROUTES.RESTAURANT_APPLICATIONS.BASE, restaurantApplicationRoutes);
 app.use('/api/upload', uploadRoutes);
 app.use('/api/orders', ordersRoutes);
+app.use('/api/ai', aiRoutes);
 app.use(API_ROUTES.CATEGORIES.BASE, categoryRoutes);
 app.use(API_ROUTES.DISHES.BASE, dishRoutes);
 
@@ -121,6 +127,9 @@ initializeSocket(server);
 // Start server
 server.listen(PORT, () => {
   console.log(`🚀 XFoodi API Server running on http://localhost:${PORT}`);
+  
+  // Initialize Background Upload Queue
+  UploadQueueService.initialize();
   console.log(`- Auth API:  http://localhost:${PORT}${API_ROUTES.AUTH.BASE}`);
   console.log(`- User API:  http://localhost:${PORT}${API_ROUTES.USERS.BASE}`);
   console.log(`- Tenant API: http://localhost:${PORT}${API_ROUTES.TENANTS.BASE}`);

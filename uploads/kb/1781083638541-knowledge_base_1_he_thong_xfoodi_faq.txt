@@ -1,0 +1,37 @@
+========================================================================
+HỆ THỐNG SAAS QUẢN LÝ NHÀ HÀNG XFOODI - CÂU HỎI THƯỜNG GẶP (FAQ)
+========================================================================
+
+1. XFoodi là gì?
+XFoodi là nền tảng SaaS (Software-as-a-Service) quản lý nhà hàng đa tenant (multi-tenant). Nền tảng cho phép mỗi chủ nhà hàng đăng ký một tài khoản và sở hữu một trang web / hệ thống quản lý riêng biệt chạy trên một subdomain tùy chọn (ví dụ: giadinhquan.xfoodi.website).
+
+2. XFoodi hỗ trợ những tính năng chính nào?
+- Hệ thống gọi món và thanh toán qua QR code tại bàn.
+- Quản lý đặt bàn trực tuyến (Reservation Management).
+- Thiết kế và mô phỏng sơ đồ bàn ăn 3D (3D Table Map Viewer) cho quản lý vị trí trực quan.
+- Hệ thống màn hình nhà bếp (KDS - Kitchen Display System).
+- Quản lý nhân viên, phân quyền và xếp ca làm việc.
+- Quản lý nguyên vật liệu và tồn kho nâng cao (Inventory Management).
+- AI Chatbot trợ lý ảo hỗ trợ khách hàng trả lời thực đơn, dịch vụ và gọi phục vụ.
+
+3. Có những gói dịch vụ nào trên XFoodi?
+Hiện tại, XFoodi cung cấp 2 gói dịch vụ chính:
+a. Gói FREE (Miễn phí):
+   - Phù hợp cho quán ăn nhỏ hoặc quán cafe dưới 5 bàn ăn.
+   - Các tính năng cơ bản: Gọi món QR, báo cáo doanh thu cơ bản.
+   - Giới hạn tải lên Cơ sở Tri thức AI (Knowledge Base): Tối đa 2MB.
+b. Gói PRO (499.000đ / tháng):
+   - Phù hợp cho nhà hàng vừa và lớn, chuỗi nhà hàng không giới hạn số bàn.
+   - Các tính năng nâng cao: Sơ đồ bàn 3D, tích hợp cổng thanh toán trực tuyến PayOS, quản lý kho nguyên liệu tự động khấu hao, xếp lịch nhân viên thông minh.
+   - Trợ lý ảo AI Chatbot (RAG) riêng không giới hạn dung lượng tải lên tài liệu tri thức.
+
+4. Quy trình đăng ký mở nhà hàng trên XFoodi thế nào?
+- Bước 1: Chủ nhà hàng truy cập trang đăng ký nhà hàng tại "/register-restaurant".
+- Bước 2: Điền các thông tin bao gồm Tên nhà hàng, Địa chỉ, Số điện thoại, Email và Slug mong muốn (ví dụ: "quan-an-ngon").
+- Bước 3: Admin hệ thống (Super Admin) sẽ kiểm duyệt đơn đăng ký trong vòng 24 giờ.
+- Bước 4: Sau khi được duyệt, hệ thống tự động khởi tạo tenant subdomain cho nhà hàng và gửi email xác nhận kèm thông tin đăng nhập tài khoản Owner.
+
+5. Liên hệ hỗ trợ kỹ thuật của XFoodi bằng cách nào?
+- Tổng đài hỗ trợ: 1900-1000
+- Email: support@xfoodi.com hoặc admin@xfoodi.com
+- Địa chỉ văn phòng: Khu công nghệ cao, Quận 9, TP. Hồ Chí Minh.
