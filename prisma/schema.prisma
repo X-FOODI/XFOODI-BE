@@ -1075,7 +1075,7 @@ model DocumentChunk {
   id         String   @id @default(uuid())
   documentId String
   content    String   @db.Text
-  embedding  Unsupported("vector(768)")
+  embedding  Unsupported("public.vector(768)")
   metadata   Json?
   createdAt  DateTime @default(now())
 

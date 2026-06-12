@@ -15,14 +15,16 @@ export async function runMigrationsForTenant(slug: string): Promise<void> {
   console.log(`[TenantDbService] Initializing database schema for tenant "${slug}"...`);
   
   // Execute Prisma CLI to push the schema to the target tenant's connection string
-  // We use npx prisma db push to dynamically create the schema and all tables
-  const command = `npx prisma db push --schema=prisma/schema.prisma --accept-data-loss`;
+  // We use npx prisma db push to dynamically create the schema and all tables.
+  // We add --skip-generate to prevent EPERM file locking errors on Windows.
+  const command = `npx prisma db push --schema=prisma/schema.prisma --accept-data-loss --skip-generate`;
   
   try {
     const { stdout, stderr } = await execPromise(command, {
       env: {
         ...process.env,
-        DATABASE_URL: tenantDirectUrl, // Set DATABASE_URL dynamically for this child process
+        DATABASE_URL: tenantDirectUrl,
+        DIRECT_URL: tenantDirectUrl, // Set both to tenant schema URL
       },
     });
     console.log(`[TenantDbService] Prisma output for "${slug}":\n`, stdout);
