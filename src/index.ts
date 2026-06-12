@@ -15,6 +15,8 @@ import categoryRoutes from './models/routes/categories';
 import dishRoutes from './models/routes/dishes';
 import floorsRoutes from './models/routes/floors';
 import tablesRoutes from './models/routes/tables';
+import reservationRoutes from './models/routes/reservations';
+import paymentRoutes from './models/routes/payments';
 import { API_ROUTES } from './constants/routes';
 import { ENV } from './config/env';
 import { UploadQueueService } from './services/uploadQueue.service';
@@ -116,6 +118,8 @@ app.use(API_ROUTES.CATEGORIES.BASE, categoryRoutes);
 app.use(API_ROUTES.DISHES.BASE, dishRoutes);
 app.use('/api/floors', floorsRoutes);
 app.use('/api/tables', tablesRoutes);
+app.use('/api/reservations', reservationRoutes);
+app.use('/api/payments', paymentRoutes);
 
 // Health check endpoint
 app.get(API_ROUTES.HEALTH.BASE, (req, res) => {
