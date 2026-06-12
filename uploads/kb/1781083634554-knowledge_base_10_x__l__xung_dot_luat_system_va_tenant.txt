@@ -1,0 +1,27 @@
+========================================================================
+XỬ LÝ XUNG ĐỘT LUẬT GIỮA HỆ THỐNG (SYSTEM) VÀ NHÀ HÀNG (TENANT)
+========================================================================
+
+Trong mô hình SaaS đa tenant, xung đột chính sách giữa Hệ thống và Nhà hàng xảy ra khi các thiết lập cục bộ của Nhà hàng mâu thuẫn với cấu hình giới hạn gói cước hoặc luật toàn cục của Hệ thống. XFoodi áp dụng nguyên tắc: "Quy định Hệ thống (System rules) luôn ghi đè Quy định Nhà hàng (Tenant rules)".
+
+1. Xung đột về Giới hạn Tính năng (Subscription Enforcement)
+Khi một nhà hàng hết hạn gói PRO hoặc bị hạ cấp xuống gói FREE:
+- Xung đột xảy ra: Nhà hàng vẫn giữ cấu hình 20 bàn ăn trên hệ thống và sơ đồ 3D đã thiết kế, nhưng gói FREE chỉ cho phép vận hành tối đa 5 bàn ăn.
+- Cơ chế giải quyết tự động của Hệ thống:
+  + Tầng API kiểm tra trạng thái gói cước (planType) của tenant trước khi xử lý order. Nếu gói cước là FREE, hệ thống chỉ chấp nhận order từ các bàn ăn có số thứ tự từ 1 đến 5. Các order gửi từ bàn số 6 trở đi sẽ bị hệ thống từ chối và thông báo: "Dịch vụ bàn tạm ngưng do gói cước hết hạn".
+  + Giao diện sơ đồ bàn 3D trong trang quản trị bị khóa (chỉ hiển thị chế độ xem 2D phẳng cơ bản).
+  + Chatbot RAG AI bị tắt chức năng tự học hỏi từ tài liệu thô. Chatbot chỉ sử dụng câu trả lời mặc định cơ bản.
+
+2. Xung đột về Hoạt động của Nhà hàng (Restaurant Suspension)
+Khi Hệ thống phát hiện nhà hàng đối tác vi phạm điều khoản dịch vụ (ví dụ: chậm thanh toán phí duy trì hệ thống quá 15 ngày hoặc nhận quá nhiều khiếu nại về lừa đảo thanh toán):
+- Xung đột xảy ra: Chủ cửa hàng (Owner) muốn hệ thống hoạt động bình thường, nhưng Super Admin muốn khóa nhà hàng.
+- Cơ chế xử lý của Hệ thống:
+  + Super Admin đặt trạng thái `isActive = false` cho nhà hàng trong trang quản trị hệ thống.
+  + Trạng thái này lập tức vô hiệu hóa tenant subdomain (người dùng truy cập sẽ nhận lỗi 404 hoặc trang bảo trì).
+  + Toàn bộ nhân viên của nhà hàng đó lập tức bị đăng xuất khỏi hệ thống và không thể đăng nhập lại.
+  + Toàn bộ cổng thanh toán tự động qua PayOS của nhà hàng bị khóa chiều nhận tiền.
+
+3. Xung đột về Cài đặt Hệ thống Toàn cục (Global Settings Override)
+Khi Super Admin tiến hành bảo trì hệ thống hoặc tắt một tính năng toàn cục (ví dụ: tạm ngưng thanh toán online PayOS toàn nền tảng để bảo trì cổng ngân hàng):
+- Thiết lập này sẽ đè lên tất cả các thiết lập riêng lẻ của từng nhà hàng. Dù nhà hàng đã kích hoạt thanh toán online, khách hàng quét QR tại bàn của tất cả nhà hàng chỉ có thể chọn phương thức "Thanh toán bằng tiền mặt tại quầy".
+- Hệ thống tự động gửi thông báo (Notification) trên Dashboard của tất cả các tenant để giải thích rõ lý do gián đoạn dịch vụ từ phía hệ thống.

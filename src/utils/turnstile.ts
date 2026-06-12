@@ -13,9 +13,17 @@ export async function verifyTurnstileToken(
   token: string | undefined,
   ip?: string
 ): Promise<boolean> {
+  // ─── DEV BYPASS ──────────────────────────────────────────────────────────
+  // Skip Turnstile entirely in development mode so you can login without
+  // the Cloudflare widget. Remove this block before going to production.
+  if (process.env.NODE_ENV === 'development') {
+    console.warn('[Turnstile] ⚠️ DEV MODE — Turnstile verification skipped');
+    return true;
+  }
+  // ─────────────────────────────────────────────────────────────────────────
+
   const secretKey = ENV.TURNSTILE?.SECRET_KEY?.trim();
 
-  // In development: bypass if secret key is not configured
   if (!secretKey) {
     if (process.env.NODE_ENV === 'development' || process.env.NODE_ENV === undefined) {
       console.warn('[Turnstile] ⚠️ TURNSTILE_SECRET_KEY not set — bypassing in dev mode');

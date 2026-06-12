@@ -1,0 +1,20 @@
+========================================================================
+HỆ THỐNG GỌI PHỤC VỤ VÀ THÔNG BÁO TỨC THÌ QUA WEBSOCKETS (SIGNALR)
+========================================================================
+
+Tính năng "Gọi phục vụ" là tiện ích tối quan trọng giúp khách hàng tương tác ngay lập tức với nhân viên nhà hàng từ bàn ăn thông qua kết nối thời gian thực (Real-time WebSockets / SignalR).
+
+1. Cơ chế Hoạt động của nút "Gọi phục vụ"
+- Bước 1: Kích hoạt yêu cầu
+  Khách hàng ngồi tại bàn ăn nhấp chọn nút "Gọi phục vụ 🔔" trên giao diện menu điện tử (hoặc thông qua đề xuất nhanh của AI Chatbot). Giao diện hiển thị xác nhận tức thời.
+- Bước 2: Truyền dữ liệu thời gian thực
+  Hệ thống gửi một gói tin WebSocket qua SignalR Hub đến backend chứa thông tin: số bàn (ví dụ: Bàn 102), tầng (ví dụ: Tầng 1) và loại yêu cầu (ví dụ: Gọi phục vụ chung, Gọi thanh toán, Lấy đá/nước).
+- Bước 3: Phân phối thông báo (Alert Routing)
+  Tín hiệu WebSocket lập tức được phân phối đến toàn bộ các thiết bị đang đăng nhập tài khoản phục vụ (Staff) của nhà hàng đó:
+  * Màn hình POS chính của quầy thu ngân phát âm thanh chuông báo và nhấp nháy bàn cần hỗ trợ trên sơ đồ 3D.
+  * Ứng dụng di động của tất cả nhân viên phục vụ đang trong ca làm việc và được phân công phụ trách khu vực đó (ví dụ: Tầng 1) sẽ nhận thông báo đẩy (Push Notification) kèm chế độ rung đặc thù: "Khách hàng Bàn 102 yêu cầu gọi phục vụ!".
+
+2. Quy trình xử lý và Phản hồi (Alert Resolution)
+- Nhận việc: Một nhân viên phục vụ nhấp chọn "Nhận hỗ trợ" trên ứng dụng di động. Tín hiệu này lập tức gửi lên server để đổi trạng thái yêu cầu từ `PENDING` thành `IN_PROGRESS` và thông báo cho các nhân viên khác biết bàn này đã có người phụ trách (tránh tình trạng nhiều người chạy đến một bàn).
+- Hoàn tất: Khi phục vụ đã hỗ trợ khách xong tại bàn, nhân viên nhấn "Hoàn tất" trên ứng dụng. Trạng thái đổi thành `RESOLVED`.
+- Thống kê hiệu suất: Hệ thống tự động ghi nhận thời gian phản hồi (Response Time - khoảng thời gian từ lúc khách nhấn nút đến lúc nhân viên nhận việc) và thời gian xử lý (Resolution Time) để quản lý đánh giá năng lực làm việc của từng nhân viên phục vụ hàng tuần.
