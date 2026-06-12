@@ -37,6 +37,8 @@ Table Restaurants {
   mealCombos MealCombos [not null]
   notifications Notifications [not null]
   aiChatSessions AIChatSessions [not null]
+  documents RestaurantDocuments [not null]
+  buckets RestaurantBuckets [not null]
 }
 
 Table Roles {
@@ -62,6 +64,9 @@ Table Users {
   lastLoginAt DateTime
   createdAt DateTime [default: `now()`, not null]
   updatedAt DateTime [not null]
+  twoFactorEnabled Boolean [not null, default: false]
+  twoFactorSecret String
+  twoFactorBackupCodes String[] [not null]
   employee Employees
   customer Customers
   roles UserRoles [not null]
@@ -841,6 +846,51 @@ Table RestaurantApplications {
   reviewer Users
 }
 
+Table RestaurantDocuments {
+  id String [pk]
+  restaurantId String [not null]
+  bucketId String
+  filename String [not null]
+  fileUrl String [not null]
+  fileType String [not null]
+  status String [not null, default: 'PENDING']
+  createdAt DateTime [default: `now()`, not null]
+  updatedAt DateTime [not null]
+  restaurant Restaurants [not null]
+  bucket RestaurantBuckets
+  chunks DocumentChunks [not null]
+}
+
+Table DocumentChunks {
+  id String [pk]
+  documentId String [not null]
+  content String [not null]
+  metadata Json
+  createdAt DateTime [default: `now()`, not null]
+  document RestaurantDocuments [not null]
+}
+
+Table RestaurantBuckets {
+  id String [pk]
+  restaurantId String [not null]
+  name String [not null]
+  url String [not null]
+  description String
+  isChatEnabled Boolean [not null, default: true]
+  createdAt DateTime [default: `now()`, not null]
+  updatedAt DateTime [not null]
+  isMounted Boolean [not null, default: false]
+  chunkingStrategy String [not null, default: 'FIXED']
+  chunkSize Int [not null, default: 800]
+  chunkOverlap Int [not null, default: 100]
+  restaurant Restaurants [not null]
+  documents RestaurantDocuments [not null]
+
+  indexes {
+    (restaurantId, name) [unique]
+  }
+}
+
 Ref: Restaurants.ownerId > Users.id
 
 Ref: UserSessions.userId > Users.id [delete: Cascade]
@@ -980,3 +1030,11 @@ Ref: AIChatMessages.aiChatSessionId > AIChatSessions.id [delete: Cascade]
 Ref: RestaurantApplications.userId > Users.id [delete: Cascade]
 
 Ref: RestaurantApplications.reviewedBy > Users.id [delete: Cascade]
+
+Ref: RestaurantDocuments.restaurantId > Restaurants.id [delete: Cascade]
+
+Ref: RestaurantDocuments.bucketId > RestaurantBuckets.id [delete: Cascade]
+
+Ref: DocumentChunks.documentId > RestaurantDocuments.id [delete: Cascade]
+
+Ref: RestaurantBuckets.restaurantId > Restaurants.id [delete: Cascade]
