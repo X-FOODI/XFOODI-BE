@@ -84,5 +84,12 @@
   "bugs": {
     "url": "https://github.com/X-FOODI/XFOODI-BE/issues"
   },
-  "homepage": "https://github.com/X-FOODI/XFOODI-BE#readme"
+  "homepage": "https://github.com/X-FOODI/XFOODI-BE#readme",
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "@prisma/client",
+      "@prisma/engines",
+      "prisma"
+    ]
+  }
 }

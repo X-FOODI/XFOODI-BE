@@ -25,12 +25,21 @@ export async function verifyTurnstileToken(
   const secretKey = ENV.TURNSTILE?.SECRET_KEY?.trim();
 
   if (!secretKey) {
+    if (process.env.NODE_ENV === 'development' || process.env.NODE_ENV === undefined) {
+      console.warn('[Turnstile] ⚠️ TURNSTILE_SECRET_KEY not set — bypassing in dev mode');
+      return true;
+    }
     console.error('[Turnstile] ❌ TURNSTILE_SECRET_KEY is not defined');
     return false;
   }
 
-  // If no token provided, fail immediately
+  // If no token provided
   if (!token) {
+    // In development: bypass if frontend widget is disabled (no NEXT_PUBLIC_TURNSTILE_SITE_KEY)
+    if (process.env.NODE_ENV !== 'production') {
+      console.warn('[Turnstile] ⚠️ No turnstile token provided — bypassing in dev mode');
+      return true;
+    }
     console.warn('[Turnstile] ⚠️ No turnstile token provided');
     return false;
   }

@@ -7,6 +7,8 @@ import restaurantApplicationRoutes from './models/routes/restaurant-applications
 import restaurantRoutes from './models/routes/restaurants';
 import userRoutes from './models/routes/users';
 import aiRoutes from './models/routes/ai';
+import categoryRoutes from './models/routes/categories';
+import dishRoutes from './models/routes/dishes';
 import { API_ROUTES } from './constants/routes';
 import { ENV } from './config/env';
 import { UploadQueueService } from './services/uploadQueue.service';
@@ -37,7 +39,8 @@ app.use('/api/restaurants', restaurantRoutes);
 app.use(API_ROUTES.TENANTS.BASE, tenantRoutes);
 app.use(API_ROUTES.RESTAURANT_APPLICATIONS.BASE, restaurantApplicationRoutes);
 app.use('/api/ai', aiRoutes);
-
+app.use(API_ROUTES.CATEGORIES.BASE, categoryRoutes);
+app.use(API_ROUTES.DISHES.BASE, dishRoutes);
 
 // Health check endpoint
 app.get(API_ROUTES.HEALTH.BASE, (req, res) => {
