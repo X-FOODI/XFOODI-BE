@@ -46,6 +46,8 @@ model Restaurant {
   mealCombos           MealCombo[]
   notifications        Notification[]
   aiChatSessions       AIChatSession[]
+  documents            RestaurantDocument[]
+  buckets              RestaurantBucket[]
 
   @@map("Restaurants")
 }
@@ -1044,3 +1046,61 @@ model RestaurantApplication {
   @@index([status])
   @@map("RestaurantApplications")
 }
+
+model RestaurantDocument {
+  id           String   @id @default(uuid())
+  restaurantId String
+  bucketId     String?
+  filename     String
+  fileUrl      String
+  fileType     String   // "PDF" | "DOCX" | "TXT" | "URL"
+  status       String   @default("PENDING") // "PENDING" | "PROCESSING" | "INDEXED" | "FAILED"
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  restaurant   Restaurant        @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  bucket       RestaurantBucket? @relation(fields: [bucketId], references: [id], onDelete: Cascade)
+  chunks       DocumentChunk[]
+
+  @@index([restaurantId])
+  @@index([bucketId])
+  @@map("RestaurantDocuments")
+}
+
+model DocumentChunk {
+  id         String   @id @default(uuid())
+  documentId String
+  content    String   @db.Text
+  embedding  Unsupported("vector(768)")
+  metadata   Json?
+  createdAt  DateTime @default(now())
+
+  document   RestaurantDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@index([documentId])
+  @@map("DocumentChunks")
+}
+
+model RestaurantBucket {
+  id           String   @id @default(uuid())
+  restaurantId String
+  name         String
+  url          String
+  description  String?
+  isChatEnabled Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // Knowledge Base config
+  isMounted        Boolean  @default(false)
+  chunkingStrategy String   @default("FIXED") // "FIXED" | "SEMANTIC" | "NONE"
+  chunkSize        Int      @default(800)
+  chunkOverlap     Int      @default(100)
+
+  restaurant   Restaurant           @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  documents    RestaurantDocument[]
+
+  @@unique([restaurantId, name])
+  @@map("RestaurantBuckets")
+}
+

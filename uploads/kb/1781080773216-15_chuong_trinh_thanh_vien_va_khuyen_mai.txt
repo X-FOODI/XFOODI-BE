@@ -1,0 +1,30 @@
+========================================================================
+CHƯƠNG TRÌNH KHÁCH HÀNG THÂN THIẾT VÀ QUẢN LÝ KHUYẾN MÃI (LOYALTY & PROMOS)
+========================================================================
+
+XFoodi tích hợp hệ thống marketing và chăm sóc khách hàng tự động, hỗ trợ nhà hàng thu hút khách quay lại bằng điểm tích lũy và các chương trình khuyến mãi linh hoạt.
+
+1. Chương trình Khách hàng Thân thiết (Loyalty Program)
+Mỗi khách hàng khi đăng ký số điện thoại trên hệ thống của nhà hàng sẽ trở thành thành viên và bắt đầu tích lũy điểm thưởng:
+- Tỷ lệ tích điểm mặc định: Chi tiêu 10.000 đ tương ứng tích lũy 1 điểm thưởng.
+- Phân hạng thành viên (Loyalty Tiers):
+  + Hạng Đồng (Bronze): Dưới 100 điểm. Không áp dụng giảm giá thêm.
+  + Hạng Bạc (Silver): Từ 100 đến 500 điểm. Tự động giảm giá 3% tổng hóa đơn khi thanh toán.
+  + Hạng Vàng (Gold): Từ 500 đến 1500 điểm. Tự động giảm giá 5% tổng hóa đơn và nhân đôi điểm tích lũy cho mỗi đơn hàng tiếp theo.
+  + Hạng Kim Cương (Platinum): Trên 1500 điểm. Tự động giảm giá 10% tổng hóa đơn, tặng 1 món tráng miệng miễn phí mỗi lần đến ăn.
+- Đổi điểm (Points Redemption): Khách hàng có thể sử dụng điểm thưởng đã tích lũy để trừ trực tiếp vào tiền hóa đơn thanh toán (Quy đổi: 1 điểm = 100 đ).
+
+2. Quản lý Chiến dịch Khuyến mãi (Promotion Campaigns)
+Quản trị viên nhà hàng có thể thiết kế đa dạng các hình thức khuyến mãi trong trang quản lý:
+a. Giảm giá trực tiếp theo mã Coupon (Coupon Discounts):
+   - Thiết kế mã giảm giá dạng chữ (ví dụ: `XFOODI10`, `GIADINH20`).
+   - Cấu hình giảm theo phần trăm (ví dụ: giảm 10%) hoặc số tiền cố định (giảm 50.000 đ), kèm điều kiện áp dụng (áp dụng cho hóa đơn tối thiểu 200.000 đ).
+b. Tự động áp dụng theo khung giờ (Happy Hour Promotions):
+   - Giảm giá món ăn cụ thể trong các khung giờ vắng khách (ví dụ: Giảm giá 20% các món lẩu trong khung giờ từ 14:00 đến 17:00 từ Thứ 2 đến Thứ 5 hàng tuần).
+c. Khuyến mãi mua X tặng Y (Combo & Bundle Deals):
+   - Ví dụ: Mua 2 ly Trà đào tặng 1 Tiramisu, hoặc mua Combo Gia Đình được giảm giá 15% so với gọi món lẻ.
+
+3. Chống gian lận Khuyến mãi (Anti-Fraud checks)
+- Mỗi mã Coupon chỉ được giới hạn số lần sử dụng tối đa trên toàn hệ thống hoặc giới hạn mỗi khách hàng chỉ được dùng 1 lần.
+- Điểm tích lũy thành viên chỉ được ghi nhận sau khi đơn hàng chuyển trạng thái thành `PAID` (Đã thanh toán) thành công và không bị hoàn trả/hủy món.
+- Điểm thưởng thành viên không có giá trị quy đổi thành tiền mặt trong mọi trường hợp.
