@@ -13,6 +13,8 @@ import ordersRoutes from './models/routes/orders';
 import aiRoutes from './models/routes/ai';
 import categoryRoutes from './models/routes/categories';
 import dishRoutes from './models/routes/dishes';
+import floorsRoutes from './models/routes/floors';
+import tablesRoutes from './models/routes/tables';
 import { API_ROUTES } from './constants/routes';
 import { ENV } from './config/env';
 import { UploadQueueService } from './services/uploadQueue.service';
@@ -112,6 +114,8 @@ app.use('/api/orders', ordersRoutes);
 app.use('/api/ai', aiRoutes);
 app.use(API_ROUTES.CATEGORIES.BASE, categoryRoutes);
 app.use(API_ROUTES.DISHES.BASE, dishRoutes);
+app.use('/api/floors', floorsRoutes);
+app.use('/api/tables', tablesRoutes);
 
 // Health check endpoint
 app.get(API_ROUTES.HEALTH.BASE, (req, res) => {
