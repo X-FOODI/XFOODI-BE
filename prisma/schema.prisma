@@ -9,26 +9,32 @@ datasource db {
 }
 
 model Restaurant {
-  id                   String               @id @default(uuid())
-  name                 String
-  slug                 String               @unique
-  ownerId              String
-  planType             String               @default("FREE")
-  logoUrl              String?
-  description          String?
-  address              String?
-  phone                String?
-  email                String?
-  primaryColor         String?              @default("#FF380B")
-  isActive             Boolean              @default(true)
-  createdAt            DateTime             @default(now())
-  updatedAt            DateTime             @updatedAt
-  metadata             Json?
-  aiChatSessions       AIChatSession[]
-  categories           Category[]
-  dishes               Dish[]
+  id           String   @id @default(uuid())
+  name         String
+  slug         String   @unique
+  ownerId      String
+  planType     String   @default("FREE")
+  logoUrl      String?
+  description  String?
+  address      String?
+  phone        String?
+  email        String?
+  primaryColor String?  @default("#FF380B")
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  metadata     Json?
+  latitude     Float?
+  longitude    Float?
+  cuisineType  String?  @default("other") // e.g. "vietnamese", "japanese", "fastfood", "other"
+
+  owner                User                 @relation("RestaurantOwner", fields: [ownerId], references: [id])
+  userRoles            UserRole[]
   employees            Employee[]
   floors               Floor[]
+  tables               Table[]
+  categories           Category[]
+  dishes               Dish[]
   ingredientCategories IngredientCategory[]
   ingredients          Ingredient[]
   mealCombos           MealCombo[]
@@ -36,10 +42,10 @@ model Restaurant {
   orders               Order[]
   promotions           Promotion[]
   reservations         Reservation[]
-  owner                User                 @relation("RestaurantOwner", fields: [ownerId], references: [id])
   suppliers            Supplier[]
-  tables               Table[]
-  userRoles            UserRole[]
+  aiChatSessions       AIChatSession[]
+  documents            RestaurantDocument[]
+  buckets              RestaurantBucket[]
 
   @@map("Restaurants")
 }
@@ -64,13 +70,18 @@ model User {
   provider         String        @default("local")
   emailVerified    Boolean       @default(false)
   /// "MALE" | "FEMALE" | "OTHER"
-  gender           String?
-  dateOfBirth      DateTime?
-  address          String?       @db.VarChar(255)
-  createdAt        DateTime      @default(now())
-  isActive         Boolean       @default(true)
-  lastLoginAt      DateTime?
-  updatedAt        DateTime      @updatedAt
+  gender        String?
+  dateOfBirth   DateTime?
+  address       String?   @db.VarChar(255)
+  isActive      Boolean   @default(true)
+  lastLoginAt   DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  twoFactorEnabled     Boolean   @default(false)
+  twoFactorSecret      String?
+  twoFactorBackupCodes String[]  @default([])
+
   customer         Customer?
   employee         Employee?
   ownedRestaurants Restaurant[]  @relation("RestaurantOwner")
@@ -88,6 +99,8 @@ model User {
   socialFollowing            SocialFollow[]       @relation("UserSocialFollowing")
   socialNotificationsReceived SocialNotification[] @relation("NotificationRecipient")
   socialNotificationsSent     SocialNotification[] @relation("NotificationActor")
+  restaurantApplications RestaurantApplication[]
+  reviewedApplications   RestaurantApplication[] @relation("ApplicationReviewer")
 
   @@map("Users")
 }
@@ -1092,3 +1105,103 @@ model SocialNotification {
   @@index([actorId])
   @@map("SocialNotifications")
 }
+
+// ─── Restaurant Registration Applications ──────────────────────────────────────
+
+model RestaurantApplication {
+  id              String    @id @default(uuid())
+  userId          String
+
+  // Step 1 — Restaurant info
+  restaurantName  String
+  slug            String
+  description     String?
+  address         String
+  phone           String
+  email           String
+  logoUrl         String?
+  latitude        Float?
+  longitude       Float?
+  cuisineType     String?  @default("other") // "vietnamese"|"japanese"|"fastfood"|"other"
+
+  // Step 2 — Legal documents (AES-256 encrypted Cloudinary URLs)
+  // Format: "base64(iv):base64(ciphertext)"
+  businessLicenseEnc  String?   // Giấy phép kinh doanh
+  ownershipProofEnc   String?   // Giấy sở hữu / hợp đồng thuê mặt bằng
+  nationalIdEnc       String?   // CCCD mặt trước
+  nationalIdBackEnc   String?   // CCCD mặt sau
+
+  // Review
+  status          String    @default("PENDING")  // PENDING | APPROVED | REJECTED
+  reviewedBy      String?
+  reviewNote      String?
+  reviewedAt      DateTime?
+
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  user     User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  reviewer User? @relation("ApplicationReviewer", fields: [reviewedBy], references: [id])
+
+  @@index([userId])
+  @@index([status])
+  @@map("RestaurantApplications")
+}
+
+model RestaurantDocument {
+  id           String   @id @default(uuid())
+  restaurantId String
+  bucketId     String?
+  filename     String
+  fileUrl      String
+  fileType     String   // "PDF" | "DOCX" | "TXT" | "URL"
+  status       String   @default("PENDING") // "PENDING" | "PROCESSING" | "INDEXED" | "FAILED"
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  restaurant   Restaurant        @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  bucket       RestaurantBucket? @relation(fields: [bucketId], references: [id], onDelete: Cascade)
+  chunks       DocumentChunk[]
+
+  @@index([restaurantId])
+  @@index([bucketId])
+  @@map("RestaurantDocuments")
+}
+
+model DocumentChunk {
+  id         String   @id @default(uuid())
+  documentId String
+  content    String   @db.Text
+  embedding  Unsupported("vector(768)")
+  metadata   Json?
+  createdAt  DateTime @default(now())
+
+  document   RestaurantDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@index([documentId])
+  @@map("DocumentChunks")
+}
+
+model RestaurantBucket {
+  id           String   @id @default(uuid())
+  restaurantId String
+  name         String
+  url          String
+  description  String?
+  isChatEnabled Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // Knowledge Base config
+  isMounted        Boolean  @default(false)
+  chunkingStrategy String   @default("FIXED") // "FIXED" | "SEMANTIC" | "NONE"
+  chunkSize        Int      @default(800)
+  chunkOverlap     Int      @default(100)
+
+  restaurant   Restaurant           @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  documents    RestaurantDocument[]
+
+  @@unique([restaurantId, name])
+  @@map("RestaurantBuckets")
+}
+

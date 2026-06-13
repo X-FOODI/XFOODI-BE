@@ -38,11 +38,17 @@ const USER_SAFE_SELECT = {
   provider: true,
   emailVerified: true,
   isActive: true,
+  passwordHash: true,
   createdAt: true,
   updatedAt: true,
 } as const;
 
 // ─── Helper: map Prisma result → safe response (no passwordHash) ─────────────
+
+function cleanUserEmail(email: string | null | undefined): string | null {
+  if (!email) return null;
+  return email.includes(':') ? email.substring(email.indexOf(':') + 1) : email;
+}
 
 function toProfileResponse(user: {
   id: string;
@@ -56,12 +62,13 @@ function toProfileResponse(user: {
   provider: string;
   emailVerified: boolean;
   isActive: boolean;
+  passwordHash?: string | null;
   createdAt: Date;
-  updatedAt: Date;
+  updatedAt: Date | null;
 }): UserProfileResponse {
   return {
     id: user.id,
-    email: user.email,
+    email: cleanUserEmail(user.email),
     fullName: user.fullName,
     phoneNumber: user.phoneNumber,
     avatarUrl: user.avatarUrl,
@@ -71,8 +78,9 @@ function toProfileResponse(user: {
     provider: user.provider,
     emailVerified: user.emailVerified,
     isActive: user.isActive,
-    createdDate: user.createdAt,
-    modifiedDate: user.updatedAt,
+    hasPassword: user.passwordHash !== null && user.passwordHash !== undefined && user.passwordHash !== '',
+    createdAt: user.createdAt,
+    updatedAt: user.updatedAt,
   };
 }
 
@@ -159,7 +167,7 @@ export async function updateUserProfile(
  */
 export async function changeUserPassword(
   userId: string,
-  currentPassword: string,
+  currentPassword: string | undefined,
   newPassword: string
 ): Promise<void> {
   // Fetch user including passwordHash for verification
@@ -172,17 +180,15 @@ export async function changeUserPassword(
     throw new UserServiceError(404, 'User not found');
   }
 
-  if (!user.passwordHash) {
-    throw new UserServiceError(
-      400,
-      'This account uses social login and does not have a password. Please use the appropriate sign-in method.'
-    );
-  }
-
-  // Verify current password
-  const isMatch = await bcrypt.compare(currentPassword, user.passwordHash);
-  if (!isMatch) {
-    throw new UserServiceError(401, 'Current password is incorrect');
+  // If they already have a password set, we MUST verify the current password
+  if (user.passwordHash) {
+    if (!currentPassword) {
+      throw new UserServiceError(400, 'Current password is required');
+    }
+    const isMatch = await bcrypt.compare(currentPassword, user.passwordHash);
+    if (!isMatch) {
+      throw new UserServiceError(401, 'Current password is incorrect');
+    }
   }
 
   // Hash the new password

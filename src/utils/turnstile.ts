@@ -13,11 +13,19 @@ export async function verifyTurnstileToken(
   token: string | undefined,
   ip?: string
 ): Promise<boolean> {
+  // ─── DEV BYPASS ──────────────────────────────────────────────────────────
+  // Skip Turnstile entirely in development mode so you can login without
+  // the Cloudflare widget. Remove this block before going to production.
+  if (process.env.NODE_ENV === 'development') {
+    console.warn('[Turnstile] ⚠️ DEV MODE — Turnstile verification skipped');
+    return true;
+  }
+  // ─────────────────────────────────────────────────────────────────────────
+
   const secretKey = ENV.TURNSTILE?.SECRET_KEY?.trim();
 
-  // In development: bypass if secret key is not configured
   if (!secretKey) {
-    if (process.env.NODE_ENV === 'development') {
+    if (process.env.NODE_ENV === 'development' || process.env.NODE_ENV === undefined) {
       console.warn('[Turnstile] ⚠️ TURNSTILE_SECRET_KEY not set — bypassing in dev mode');
       return true;
     }
@@ -25,8 +33,13 @@ export async function verifyTurnstileToken(
     return false;
   }
 
-  // If no token provided, fail immediately
+  // If no token provided
   if (!token) {
+    // In development: bypass if frontend widget is disabled (no NEXT_PUBLIC_TURNSTILE_SITE_KEY)
+    if (process.env.NODE_ENV !== 'production') {
+      console.warn('[Turnstile] ⚠️ No turnstile token provided — bypassing in dev mode');
+      return true;
+    }
     console.warn('[Turnstile] ⚠️ No turnstile token provided');
     return false;
   }

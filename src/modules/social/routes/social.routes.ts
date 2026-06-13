@@ -24,7 +24,7 @@
  */
 
 import { Router, type Router as ExpressRouter } from 'express';
-import { authMiddleware } from '../../../routes/auth';
+import { authMiddleware } from '../../../models/routes/auth';
 import { optionalAuthMiddleware } from '../middlewares/optional-auth.middleware';
 import {
   createPost,

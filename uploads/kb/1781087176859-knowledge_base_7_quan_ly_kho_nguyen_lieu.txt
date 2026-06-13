@@ -1,0 +1,27 @@
+========================================================================
+QUẢN LÝ KHO NGUYÊN LIỆU VÀ TỰ ĐỘNG KHẤU HAO (INVENTORY & DEPRECIATION)
+========================================================================
+
+Tính năng Quản lý Kho nguyên liệu nâng cao của XFoodi giúp các nhà hàng kiểm soát chặt chẽ hao hụt nguyên liệu, tối ưu hóa chi phí mua hàng và tự động cập nhật số lượng tồn kho theo thời gian thực dựa trên công thức chế biến món ăn.
+
+1. Khai báo Định lượng món ăn (Recipe Recipe Setup)
+Để kích hoạt tính năng tự động khấu hao nguyên liệu, quản lý nhà hàng cần thiết lập công thức chế biến (Recipe) cho từng món ăn trong menu:
+- Ví dụ: Món "Bò Bít Tết Sốt Tiêu Xanh" có định lượng nguyên liệu cho 1 phần ăn gồm:
+  + Thịt thăn bò Mỹ: 200 gram
+  + Tiêu xanh tươi: 20 gram
+  + Bơ lạt: 15 gram
+  + Khoai tây: 100 gram
+  + Măng tây: 50 gram
+- Khi cấu hình hoàn tất, mỗi khi hệ thống POS ghi nhận 1 phần Bò bít tết được bán ra thành công, hệ thống kho tự động trừ đi chính xác số lượng nguyên liệu trên khỏi kho tổng.
+
+2. Quản lý Nhập kho & Nhà cung cấp (Purchase Order & Suppliers)
+- Danh mục Nhà cung cấp (Suppliers): Lưu trữ thông tin tên công ty, số điện thoại, địa chỉ, người liên hệ trực tiếp và danh mục mặt hàng cung cấp chính (ví dụ: Công ty Rau quả Sạch Đà Lạt, Nhà phân phối Thịt bò Mỹ).
+- Phiếu Nhập kho (Goods Receipt): Khi nhập hàng mới, nhân viên thủ kho tạo Phiếu Nhập kho trên hệ thống, nhập đơn giá mua thực tế và hạn sử dụng của nguyên liệu (đặc biệt quan trọng đối với thực phẩm tươi sống). Hệ thống tự động tính giá vốn hàng bán dựa trên phương pháp FIFO (Nhập trước - Xuất trước) hoặc LIFO tùy chọn.
+
+3. Cảnh báo Tồn kho tối thiểu (Low Stock Alerts)
+- Đối với mỗi nguyên liệu trong kho, quản lý có thể cài đặt "Ngưỡng tồn kho tối thiểu" (ví dụ: Thịt bò Mỹ dưới 5kg, Bia Heineken dưới 2 thùng).
+- Khi lượng tồn thực tế chạm hoặc xuống dưới ngưỡng này, hệ thống tự động gửi thông báo khẩn cấp đến tài khoản của Quản lý và gợi ý tạo đơn mua hàng tự động để gửi cho nhà cung cấp tương ứng.
+
+4. Báo cáo Hao hụt và Kiểm kho (Inventory Discrepancy Reports)
+- Khuyến nghị nhà hàng thực hiện kiểm kho định kỳ vào cuối tuần hoặc cuối tháng.
+- Nhân viên kiểm kho nhập số lượng tồn thực tế đếm được vào hệ thống. XFoodi tự động tính toán chênh lệch giữa "Tồn thực tế" và "Tồn lý thuyết trên hệ thống", xuất báo cáo hao hụt chi tiết để làm rõ nguyên nhân (do thất thoát, rơi vỡ hay chế biến sai định lượng).

@@ -1,0 +1,39 @@
+========================================================================
+QUY TRÌNH XỬ LÝ ĐƠN HÀNG VÀ HỆ THỐNG MÀN HÌNH NHÀ BẾP (KDS) - XFOODI
+========================================================================
+
+Hệ thống màn hình nhà bếp (Kitchen Display System - KDS) là tính năng cốt lõi giúp số hóa quy trình liên lạc giữa phòng ăn và nhà bếp, loại bỏ hoàn toàn hóa đơn giấy thủ công, tăng tốc độ chế biến món ăn lên 35%.
+
+1. Luồng đi của một Đơn hàng (Order Workflow)
+Quy trình từ lúc khách gọi món đến lúc phục vụ diễn ra qua 5 bước tự động hóa sau:
+
+- Bước 1: Khách hàng gửi Order
+  Khách hàng ngồi tại bàn ăn quét mã QR, chọn món trên thực đơn điện tử và nhấn gửi order. Yêu cầu gọi món lập tức được chuyển lên hệ thống đám mây.
+
+- Bước 2: Nhân viên phục vụ xác nhận (Bypass Config)
+  * Tùy thuộc vào thiết lập cấu hình của nhà hàng, đơn hàng sẽ:
+    - Cách A (Mặc định): Đơn hàng chuyển thẳng xuống nhà bếp mà không cần phê duyệt để tối ưu tốc độ phục vụ.
+    - Cách B (Phê duyệt): Đơn hàng gửi về thiết bị POS cầm tay của nhân viên phụ trách khu vực đó để xác nhận trước khi chuyển xuống bếp (nhằm tránh khách hàng đặt nhầm hoặc đặt đùa giỡn).
+
+- Bước 3: Đơn hàng hiển thị trên màn hình KDS nhà bếp
+  Món ăn được phân loại tự động theo khu vực chế biến:
+  * Các món nấu, nướng, lẩu chuyển đến KDS Bếp nóng.
+  * Các món salad, gỏi, tráng miệng chuyển đến KDS Bếp nguội.
+  * Các món sinh tố, trà, bia chuyển đến KDS Quầy pha chế (Bar).
+  Mỗi món ăn trên màn hình KDS hiển thị kèm theo ghi chú đặc biệt từ khách hàng (Ví dụ: "Không hành", "Nhiều đá", "Ít cay").
+
+- Bước 4: Trạng thái chế biến món ăn trên KDS
+  Đầu bếp thao tác chạm trực tiếp lên màn hình cảm ứng KDS để cập nhật trạng thái món ăn:
+  - Màu vàng (PENDING): Món ăn mới chuyển xuống, chưa chế biến.
+  - Màu xanh dương (COOKING): Đầu bếp đã nhận món và đang trong quá trình nấu nướng.
+  - Màu xanh lá (READY): Món ăn đã hoàn thành, sẵn sàng phục vụ.
+
+- Bước 5: Báo phục vụ lấy món và trả món
+  Khi đầu bếp nhấn chuyển trạng thái món sang "READY" trên KDS:
+  - Hệ thống tự động gửi thông báo rung kèm âm thanh đến thiết bị di động / POS cầm tay của nhân viên phục vụ chịu trách nhiệm bàn đó: "Bàn số [X] - Món [Y] đã sẵn sàng!".
+  - Nhân viên phục vụ đến quầy ra món nhận đĩa ăn mang ra bàn phục vụ khách hàng, đổi trạng thái món ăn thành "SERVED" (Đã trả món) để hoàn tất.
+
+2. Quản lý thời gian phục vụ (Service SLA)
+Hệ thống KDS tự động tính toán thời gian chế biến của từng món ăn:
+- Nếu món ăn quá 15 phút chưa được chế biến xong, món ăn sẽ nhấp nháy đỏ trên màn hình KDS để cảnh báo đầu bếp đẩy nhanh tiến độ.
+- Hệ thống ghi nhận báo cáo chi tiết về hiệu suất làm việc của từng đầu bếp dựa trên thời gian hoàn thành món ăn trung bình hàng ngày/hàng tuần.
