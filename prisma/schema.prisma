@@ -82,6 +82,8 @@ model User {
   lastLoginAt   DateTime?
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
+  resetOtp      String?
+  resetOtpExpires DateTime?
 
   twoFactorEnabled     Boolean   @default(false)
   twoFactorSecret      String?
