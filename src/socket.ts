@@ -30,6 +30,14 @@ export function initializeSocket(httpServer: HttpServer) {
       }
     });
 
+    // Handle staff calls (e.g., call staff for cash checkout) and broadcast to the restaurant's room
+    socket.on('CALL_STAFF', (data: any) => {
+      if (data && data.restaurantId) {
+        io.to(`restaurant_${data.restaurantId}`).emit('CALL_STAFF', data);
+        console.log(`[Socket] Broadcasted CALL_STAFF from table ${data.tableCode} to room restaurant_${data.restaurantId}`);
+      }
+    });
+
     socket.on('disconnect', () => {
       console.log(`[Socket] Client disconnected: ${socket.id}`);
     });

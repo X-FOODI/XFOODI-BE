@@ -17,6 +17,7 @@ import floorsRoutes from './models/routes/floors';
 import tablesRoutes from './models/routes/tables';
 import reservationRoutes from './models/routes/reservations';
 import paymentRoutes from './models/routes/payments';
+import walletRoutes from './models/routes/wallet';
 import { API_ROUTES } from './constants/routes';
 import { ENV } from './config/env';
 import { UploadQueueService } from './services/uploadQueue.service';
@@ -95,6 +96,8 @@ app.use(async (req: any, res: any, next) => {
       if (restaurant) {
         const tenantDbUrl = getTenantConnectionUrl(ENV.DATABASE_URL, restaurant.slug);
         activeClient = getTenantPrisma(tenantDbUrl);
+        // Expose restaurant on request for route handlers
+        (req as any).restaurant = restaurant;
 
         // Lazily sync the Restaurant and its Owner User to the tenant DB schema
         // to satisfy database-level foreign key constraints (like Floors_restaurantId_fkey)
@@ -136,18 +139,36 @@ app.use(async (req: any, res: any, next) => {
                 name: restaurant.name,
                 slug: restaurant.slug,
                 ownerId: restaurant.ownerId,
+                planType: restaurant.planType,
                 logoUrl: restaurant.logoUrl,
+                description: restaurant.description,
+                address: restaurant.address,
+                phone: restaurant.phone,
+                email: restaurant.email,
                 primaryColor: restaurant.primaryColor,
                 isActive: restaurant.isActive,
+                metadata: restaurant.metadata as any,
+                latitude: restaurant.latitude,
+                longitude: restaurant.longitude,
+                cuisineType: restaurant.cuisineType,
               },
               create: {
                 id: restaurant.id,
                 name: restaurant.name,
                 slug: restaurant.slug,
                 ownerId: restaurant.ownerId,
+                planType: restaurant.planType,
                 logoUrl: restaurant.logoUrl,
+                description: restaurant.description,
+                address: restaurant.address,
+                phone: restaurant.phone,
+                email: restaurant.email,
                 primaryColor: restaurant.primaryColor,
                 isActive: restaurant.isActive,
+                metadata: restaurant.metadata as any,
+                latitude: restaurant.latitude,
+                longitude: restaurant.longitude,
+                cuisineType: restaurant.cuisineType,
               },
             });
 
@@ -193,6 +214,7 @@ app.use('/api/floors', floorsRoutes);
 app.use('/api/tables', tablesRoutes);
 app.use('/api/reservations', reservationRoutes);
 app.use('/api/payments', paymentRoutes);
+app.use('/api/wallet', walletRoutes);
 
 // Health check endpoint
 app.get(API_ROUTES.HEALTH.BASE, (req, res) => {

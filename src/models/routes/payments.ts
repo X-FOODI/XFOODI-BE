@@ -2,11 +2,12 @@ import { Router, Request, Response } from 'express';
 import { paymentService } from '../../services/payment.service';
 import { requireRole } from '../../middlewares/requireRole';
 import { PaymentPurpose } from '../../enums/payment.enum';
+import { authMiddleware } from './auth';
 
 const router = Router();
 
 // ── List payments (staff/admin) ──────────────────────────────────────────────
-router.get('/', requireRole('Owner', 'Admin', 'Staff'), async (req, res) => {
+router.get('/', authMiddleware, requireRole('Owner', 'Admin', 'Staff'), async (req, res) => {
   try {
     const { restaurantId, page, limit, status, from, to, purpose } = req.query;
     const result = await paymentService.listPayments({
@@ -25,7 +26,7 @@ router.get('/', requireRole('Owner', 'Admin', 'Staff'), async (req, res) => {
 });
 
 // ── Get payment by ID ────────────────────────────────────────────────────────
-router.get('/:id', requireRole('Owner', 'Admin', 'Staff'), async (req, res) => {
+router.get('/:id', authMiddleware, requireRole('Owner', 'Admin', 'Staff'), async (req, res) => {
   try {
     const payment = await paymentService.getById(req.params.id);
     if (!payment) return res.status(404).json({ success: false, message: 'Payment not found' });
@@ -36,7 +37,7 @@ router.get('/:id', requireRole('Owner', 'Admin', 'Staff'), async (req, res) => {
 });
 
 // ── Cash payment ─────────────────────────────────────────────────────────────
-router.post('/cash', requireRole('Owner', 'Admin', 'Staff'), async (req, res) => {
+router.post('/cash', authMiddleware, requireRole('Owner', 'Admin', 'Staff'), async (req, res) => {
   try {
     const { orderId, reservationId, cashReceive, purpose } = req.body;
     if (!cashReceive) return res.status(400).json({ success: false, message: 'cashReceive required' });

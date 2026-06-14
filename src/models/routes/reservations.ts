@@ -1,11 +1,12 @@
 import { Router, Request, Response } from 'express';
 import { reservationService } from '../../services/reservation.service';
 import { requireRole } from '../../middlewares/requireRole';
+import { authMiddleware } from './auth';
 
 const router = Router();
 
 // ── Customer: create reservation ─────────────────────────────────────────────
-router.post('/', requireRole('Customer', 'Owner', 'Admin'), async (req: any, res: Response) => {
+router.post('/', authMiddleware, requireRole('Customer', 'Owner', 'Admin'), async (req: any, res: Response) => {
   try {
     const user = req.user;
     const prisma = (req as any).prismaClient ?? (await import('../../lib/prisma')).prismaStorage.getStore();
@@ -33,7 +34,7 @@ router.post('/', requireRole('Customer', 'Owner', 'Admin'), async (req: any, res
 });
 
 // ── Staff/Admin: list all reservations ──────────────────────────────────────
-router.get('/', requireRole('Owner', 'Admin', 'Staff'), async (req: any, res: Response) => {
+router.get('/', authMiddleware, requireRole('Owner', 'Admin', 'Staff'), async (req: any, res: Response) => {
   try {
     const { restaurantId, page, limit, status, from, to, search } = req.query;
     const result = await reservationService.listReservations({
@@ -52,7 +53,7 @@ router.get('/', requireRole('Owner', 'Admin', 'Staff'), async (req: any, res: Re
 });
 
 // ── Customer: my reservations ────────────────────────────────────────────────
-router.get('/my', requireRole('Customer'), async (req: any, res: Response) => {
+router.get('/my', authMiddleware, requireRole('Customer'), async (req: any, res: Response) => {
   try {
     const { prismaStorage } = await import('../../lib/prisma');
     const { PrismaClient } = await import('@prisma/client');
@@ -99,7 +100,7 @@ router.get('/code/:code', async (req, res) => {
 });
 
 // ── Get by ID ────────────────────────────────────────────────────────────────
-router.get('/:id', requireRole('Owner', 'Admin', 'Staff', 'Customer'), async (req, res) => {
+router.get('/:id', authMiddleware, requireRole('Owner', 'Admin', 'Staff', 'Customer'), async (req, res) => {
   try {
     const reservation = await reservationService.getById(req.params.id);
     if (!reservation) return res.status(404).json({ success: false, message: 'Reservation not found' });
@@ -110,7 +111,7 @@ router.get('/:id', requireRole('Owner', 'Admin', 'Staff', 'Customer'), async (re
 });
 
 // ── Update status ────────────────────────────────────────────────────────────
-router.patch('/:id/status', requireRole('Owner', 'Admin', 'Staff'), async (req, res) => {
+router.patch('/:id/status', authMiddleware, requireRole('Owner', 'Admin', 'Staff'), async (req, res) => {
   try {
     const { status } = req.body;
     if (!status) return res.status(400).json({ success: false, message: 'status required' });
@@ -122,7 +123,7 @@ router.patch('/:id/status', requireRole('Owner', 'Admin', 'Staff'), async (req, 
 });
 
 // ── Check-in by code ─────────────────────────────────────────────────────────
-router.post('/checkin/:code', requireRole('Owner', 'Admin', 'Staff'), async (req, res) => {
+router.post('/checkin/:code', authMiddleware, requireRole('Owner', 'Admin', 'Staff'), async (req, res) => {
   try {
     const updated = await reservationService.checkIn(req.params.code);
     return res.json({ success: true, data: updated });
@@ -132,7 +133,7 @@ router.post('/checkin/:code', requireRole('Owner', 'Admin', 'Staff'), async (req
 });
 
 // ── Cancel ───────────────────────────────────────────────────────────────────
-router.post('/:id/cancel', requireRole('Owner', 'Admin', 'Staff', 'Customer'), async (req, res) => {
+router.post('/:id/cancel', authMiddleware, requireRole('Owner', 'Admin', 'Staff', 'Customer'), async (req, res) => {
   try {
     const updated = await reservationService.cancel(req.params.id);
     return res.json({ success: true, data: updated });

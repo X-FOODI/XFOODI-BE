@@ -39,6 +39,7 @@ Table Restaurants {
   aiChatSessions AIChatSessions [not null]
   documents RestaurantDocuments [not null]
   buckets RestaurantBuckets [not null]
+  wallet RestaurantWallets
 }
 
 Table Roles {
@@ -892,6 +893,60 @@ Table RestaurantBuckets {
   }
 }
 
+Table RestaurantWallets {
+  id String [pk]
+  restaurantId String [unique, not null]
+  balance Decimal [not null, default: 0]
+  cashBalance Decimal [not null, default: 0]
+  lifetimeEarned Decimal [not null, default: 0]
+  createdAt DateTime [default: `now()`, not null]
+  updatedAt DateTime [not null]
+  restaurant Restaurants [not null]
+  transactions WalletTransactions [not null]
+  withdrawals WithdrawalRequests [not null]
+
+  Note: 'Tracks each restaurant owner\'s accumulated revenue.
+Money physically sits in admin\'s bank account; this is a ledger balance.'
+}
+
+Table WalletTransactions {
+  id String [pk]
+  walletId String [not null]
+  type String [not null]
+  amount Decimal [not null]
+  balanceBefore Decimal [not null]
+  balanceAfter Decimal [not null]
+  orderId String
+  paymentId String
+  description String
+  metadata Json
+  createdAt DateTime [default: `now()`, not null]
+  wallet RestaurantWallets [not null]
+}
+
+Table WithdrawalRequests {
+  id String [pk]
+  walletId String [not null]
+  restaurantId String [not null]
+  amount Decimal [not null]
+  status String [not null, default: 'PENDING']
+  bankCode String [not null]
+  bankBin String [not null]
+  accountNumber String [not null]
+  accountName String [not null]
+  adminNote String
+  rejectionReason String
+  externalTxId String
+  processedBy String
+  processedAt DateTime
+  createdAt DateTime [default: `now()`, not null]
+  updatedAt DateTime [not null]
+  wallet RestaurantWallets [not null]
+
+  Note: 'Withdrawal request from restaurant owner.
+Admin approves → PayOS disburses → balance deducted.'
+}
+
 Ref: Restaurants.ownerId > Users.id
 
 Ref: UserSessions.userId > Users.id [delete: Cascade]
@@ -1039,3 +1094,9 @@ Ref: RestaurantDocuments.bucketId > RestaurantBuckets.id [delete: Cascade]
 Ref: DocumentChunks.documentId > RestaurantDocuments.id [delete: Cascade]
 
 Ref: RestaurantBuckets.restaurantId > Restaurants.id [delete: Cascade]
+
+Ref: RestaurantWallets.restaurantId - Restaurants.id [delete: Cascade]
+
+Ref: WalletTransactions.walletId > RestaurantWallets.id [delete: Cascade]
+
+Ref: WithdrawalRequests.walletId > RestaurantWallets.id

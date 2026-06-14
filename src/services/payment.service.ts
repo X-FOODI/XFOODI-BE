@@ -1,8 +1,9 @@
 import { PrismaClient } from '@prisma/client';
-import { prismaStorage } from '../lib/prisma';
+import { prismaStorage, centralPrisma, getTenantPrisma, getTenantConnectionUrl } from '../lib/prisma';
 import { PaymentStatus, PaymentPurpose } from '../enums/payment.enum';
 import crypto from 'crypto';
 import { getIO } from '../socket';
+import { walletService } from './wallet.service';
 
 function getPrisma(): PrismaClient {
   return prismaStorage.getStore() as PrismaClient;
@@ -78,6 +79,20 @@ export class PaymentService {
           orderStatusId: completedStatus.id,
         },
       });
+
+      // Update all items in this order to COMPLETED
+      const detailStatusType = await prisma.statusType.findUnique({ where: { code: 'ORDER_DETAIL' } });
+      if (detailStatusType) {
+        const completedDetailStatus = await prisma.statusValue.findFirst({
+          where: { statusTypeId: detailStatusType.id, code: 'COMPLETED' },
+        });
+        if (completedDetailStatus) {
+          await prisma.orderDetail.updateMany({
+            where: { orderId },
+            data: { itemStatusId: completedDetailStatus.id },
+          });
+        }
+      }
     }
 
     // 2. Fetch order to get restaurantId
@@ -138,6 +153,7 @@ export class PaymentService {
       io.to(`restaurant_${order.restaurantId}`).emit('ORDER_STATUS_CHANGED', {
         orderId,
         status: 'COMPLETED',
+        isPaid: true,
       });
     } catch (e) {
       console.warn('[PaymentService] Failed to broadcast ORDER_STATUS_CHANGED:', e);
@@ -182,6 +198,22 @@ export class PaymentService {
     // Mark order as paid if applicable
     if (dto.orderId) {
       await this.finalizeOrderPayment(dto.orderId);
+
+      // Credit restaurant owner wallet with this order's revenue
+      try {
+        const order = await prisma.order.findUnique({ where: { id: dto.orderId } });
+        if (order) {
+          await walletService.creditOrderRevenue({
+            restaurantId: order.restaurantId,
+            orderId: order.id,
+            paymentId: payment.id,
+            amount: Number(payment.amount),
+            paymentMethodCode: 'CASH',
+          });
+        }
+      } catch (walletErr: any) {
+        console.warn('[Cash Payment] Failed to credit wallet:', walletErr.message);
+      }
     }
 
     // Mark reservation deposit as paid
@@ -212,7 +244,7 @@ export class PaymentService {
     // Retrieve bank info from restaurant metadata
     const restaurant = await prisma.restaurant.findUnique({
       where: { id: params.restaurantId },
-      select: { metadata: true, name: true },
+      select: { metadata: true, name: true, slug: true },
     });
 
     const meta = (restaurant?.metadata as any) ?? {};
@@ -222,6 +254,8 @@ export class PaymentService {
       accountName: '',       // Tên tài khoản
     };
 
+    const slug = restaurant?.slug || 'default';
+
     // Generate transfer content that SePay can match
     let transferContent = '';
     if (params.reservationId) {
@@ -229,13 +263,13 @@ export class PaymentService {
         where: { id: params.reservationId },
         select: { confirmationCode: true },
       });
-      transferContent = `XFOODI RES ${res?.confirmationCode ?? params.reservationId.slice(0, 8).toUpperCase()}`;
+      transferContent = `XFOODI ${slug} RES ${res?.confirmationCode ?? params.reservationId.slice(0, 8).toUpperCase()}`;
     } else if (params.orderId) {
       const order = await prisma.order.findUnique({
         where: { id: params.orderId },
         select: { reference: true },
       });
-      transferContent = `XFOODI ORD ${order?.reference ?? params.orderId.slice(0, 8).toUpperCase()}`;
+      transferContent = `XFOODI ${slug} ORD ${order?.reference ?? params.orderId.slice(0, 8).toUpperCase()}`;
     }
 
     // Build SePay QR URL (VietQR format)
@@ -272,9 +306,10 @@ export class PaymentService {
   }
 
   // ── SePay Webhook handler ─────────────────────────────────────────────────────
+  // ── SePay Webhook handler ─────────────────────────────────────────────────────
   async handleSePayWebhook(payload: SePayWebhookPayload, sePayToken: string) {
     // 1. Verify token
-    const expectedToken = process.env.SEPAY_WEBHOOK_TOKEN ?? '';
+    const expectedToken = process.env.SEPAY_WEBHOOK_TOKEN ?? process.env.SEPAY_WEBHOOK_KEY ?? '';
     if (expectedToken && sePayToken !== expectedToken) {
       throw new Error('Invalid SePay webhook token');
     }
@@ -284,16 +319,106 @@ export class PaymentService {
       return { success: true, message: 'Outgoing transfer ignored' };
     }
 
-    const prisma = getPrisma();
     const content = payload.content ?? '';
 
-    // 2. Try to match reservation by code
+    // Fast Path: Try to parse slug and route directly
+    // Pattern: XFOODI\s+([A-Za-z0-9\-]+)\s+(ORD|RES)\s+([A-Z0-9\-]+)
+    const newFormatMatch = content.match(/XFOODI\s+([A-Za-z0-9\-]+)\s+(ORD|RES)\s+([A-Z0-9\-]+)/i);
+
+    if (newFormatMatch) {
+      const slug = newFormatMatch[1].toLowerCase();
+      const type = newFormatMatch[2].toUpperCase();
+      const refOrCode = newFormatMatch[3].toUpperCase();
+
+      // Find restaurant in central database
+      const restaurant = await centralPrisma.restaurant.findFirst({
+        where: { slug, isActive: true },
+      });
+
+      if (restaurant) {
+        const tenantDbUrl = getTenantConnectionUrl(process.env.DATABASE_URL ?? '', restaurant.slug);
+        const tenantPrisma = getTenantPrisma(tenantDbUrl);
+
+        // Run within the context of the tenant database
+        const result = await prismaStorage.run(tenantPrisma, async () => {
+          return this.processMatchedPayment({
+            type,
+            refOrCode,
+            payload,
+            restaurantId: restaurant.id,
+          });
+        });
+
+        if (result.matched) {
+          return { success: true, matched: result.type, slug: restaurant.slug, ...result.details };
+        }
+      }
+    }
+
+    // Fallback Path: Scan all active tenants to match the order or reservation reference
+    const activeRestaurants = await centralPrisma.restaurant.findMany({
+      where: { isActive: true },
+    });
+
+    const ordMatch = content.match(/ORD\s+([A-Z0-9\-]+)/i) || content.match(/(ORD\-[A-Z0-9\-]+)/i);
     const resMatch = content.match(/RES\s+([A-Z0-9]+)/i);
-    if (resMatch) {
-      const code = resMatch[1].toUpperCase();
-      const reservation = await prisma.reservation.findUnique({
-        where: { confirmationCode: code },
+
+    const type = ordMatch ? 'ORD' : (resMatch ? 'RES' : null);
+    const refOrCode = ordMatch ? ordMatch[1].toUpperCase() : (resMatch ? resMatch[1].toUpperCase() : null);
+
+    if (type && refOrCode) {
+      for (const restaurant of activeRestaurants) {
+        const tenantDbUrl = getTenantConnectionUrl(process.env.DATABASE_URL ?? '', restaurant.slug);
+        const tenantPrisma = getTenantPrisma(tenantDbUrl);
+
+        const result = await prismaStorage.run(tenantPrisma, async () => {
+          return this.processMatchedPayment({
+            type,
+            refOrCode,
+            payload,
+            restaurantId: restaurant.id,
+          });
+        });
+
+        if (result.matched) {
+          return { 
+            success: true, 
+            matched: result.type, 
+            slug: restaurant.slug, 
+            ...result.details, 
+            note: 'Resolved via fallback scan' 
+          };
+        }
+      }
+    }
+
+    // No match — log but return OK (SePay expects 200)
+    console.warn('[SePay Webhook] No matching reservation/order for content:', content);
+    return { success: true, matched: null, content };
+  }
+
+  // ── SePay payment processor helper ──
+  private async processMatchedPayment(params: {
+    type: 'ORD' | 'RES' | string;
+    refOrCode: string;
+    payload: SePayWebhookPayload;
+    restaurantId: string;
+  }) {
+    const prisma = getPrisma();
+
+    if (params.type === 'RES') {
+      const normalizedCode = params.refOrCode.replace(/[^A-Z0-9]/ig, '').toUpperCase();
+      const pendingReservations = await prisma.reservation.findMany({
+        where: {
+          payments: { some: { status: PaymentStatus.PENDING, purpose: PaymentPurpose.DEPOSIT } }
+        },
         include: { payments: { where: { status: PaymentStatus.PENDING, purpose: PaymentPurpose.DEPOSIT } } },
+      });
+
+      const reservation = pendingReservations.find(r => {
+        if (!r.confirmationCode) return false;
+        const codeNorm = r.confirmationCode.replace(/[^A-Z0-9]/ig, '').toUpperCase();
+        return codeNorm === normalizedCode || codeNorm.includes(normalizedCode) || normalizedCode.includes(codeNorm);
       });
 
       if (reservation && reservation.payments.length > 0) {
@@ -302,8 +427,8 @@ export class PaymentService {
           where: { id: payment.id },
           data: {
             status: PaymentStatus.COMPLETED,
-            transactionId: String(payload.id),
-            paymentDate: new Date(payload.transactionDate),
+            transactionId: String(params.payload.id),
+            paymentDate: new Date(params.payload.transactionDate),
           },
         });
 
@@ -316,17 +441,24 @@ export class PaymentService {
           });
         }
 
-        return { success: true, matched: 'reservation', code, reservationId: reservation.id };
+        return {
+          matched: true,
+          type: 'reservation',
+          details: { reservationId: reservation.id, code: params.refOrCode },
+        };
       }
-    }
-
-    // 3. Try to match order by reference
-    const ordMatch = content.match(/ORD\s+([A-Z0-9\-]+)/i);
-    if (ordMatch) {
-      const ref = ordMatch[1].toUpperCase();
-      const order = await prisma.order.findFirst({
-        where: { reference: { contains: ref } },
+    } else if (params.type === 'ORD') {
+      const normalizedRef = params.refOrCode.replace(/[^A-Z0-9]/ig, '').toUpperCase();
+      const pendingOrders = await prisma.order.findMany({
+        where: {
+          payments: { some: { status: PaymentStatus.PENDING } }
+        },
         include: { payments: { where: { status: PaymentStatus.PENDING } } },
+      });
+
+      const order = pendingOrders.find(o => {
+        const orderNorm = o.reference.replace(/[^A-Z0-9]/ig, '').toUpperCase();
+        return orderNorm === normalizedRef || orderNorm.includes(normalizedRef) || normalizedRef.includes(orderNorm);
       });
 
       if (order && order.payments.length > 0) {
@@ -335,20 +467,35 @@ export class PaymentService {
           where: { id: payment.id },
           data: {
             status: PaymentStatus.COMPLETED,
-            transactionId: String(payload.id),
-            paymentDate: new Date(payload.transactionDate),
+            transactionId: String(params.payload.id),
+            paymentDate: new Date(params.payload.transactionDate),
           },
         });
 
-        await this.finalizeOrderPayment(order.id, String(payload.id));
+        await this.finalizeOrderPayment(order.id, String(params.payload.id));
 
-        return { success: true, matched: 'order', ref, orderId: order.id };
+        // Credit restaurant owner wallet with this order's revenue
+        try {
+          await walletService.creditOrderRevenue({
+            restaurantId: order.restaurantId,
+            orderId: order.id,
+            paymentId: payment.id,
+            amount: Number(payment.amount),
+            paymentMethodCode: 'BANK_TRANSFER',
+          });
+        } catch (walletErr: any) {
+          console.warn('[SePay Webhook] Failed to credit wallet:', walletErr.message);
+        }
+
+        return {
+          matched: true,
+          type: 'order',
+          details: { orderId: order.id, ref: params.refOrCode },
+        };
       }
     }
 
-    // No match — log but return OK (SePay expects 200)
-    console.warn('[SePay Webhook] No matching reservation/order for content:', content);
-    return { success: true, matched: null, content };
+    return { matched: false };
   }
 
   // ── List payments ─────────────────────────────────────────────────────────────

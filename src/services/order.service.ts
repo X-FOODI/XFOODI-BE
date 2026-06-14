@@ -294,6 +294,11 @@ export class OrderService {
               statusValue: { select: { code: true, name: true, colorCode: true } },
             },
           },
+          customer: {
+            include: {
+              user: true,
+            },
+          },
         },
       });
 
@@ -308,6 +313,9 @@ export class OrderService {
         totalAmount,
         createdAt: order.createdAt,
         status: 'PENDING',
+        customerName: order.customer?.user?.fullName || order.customer?.user?.userName || null,
+        customerPhone: order.customer?.user?.phoneNumber || null,
+        customerEmail: order.customer?.user?.email || null,
         items: order.orderDetails.map((d: any) => ({
           id: d.id,
           name: d.dish?.name || 'Món ăn',
@@ -369,6 +377,14 @@ export class OrderService {
           where: { isActive: true },
           include: { table: true },
         },
+        customer: {
+          include: {
+            user: true,
+          },
+        },
+        payments: {
+          where: { status: 1 }, // COMPLETED
+        },
       },
       orderBy: { createdAt: 'desc' },
       skip,
@@ -384,8 +400,12 @@ export class OrderService {
         totalAmount: Number(o.totalAmount),
         createdAt: o.createdAt,
         status: statusIdToCode[o.orderStatusId] || 'PENDING',
+        isPaid: o.payments.length > 0,
         table: activeSession?.table?.code || 'Mang đi',
         tableId: activeSession?.table?.id || null,
+        customerName: o.customer?.user?.fullName || o.customer?.user?.userName || null,
+        customerPhone: o.customer?.user?.phoneNumber || null,
+        customerEmail: o.customer?.user?.email || null,
         items: o.orderDetails.map((d) => ({
           id: d.id,
           name: d.dish?.name || 'Món ăn',
@@ -422,6 +442,14 @@ export class OrderService {
         tableSessions: {
           include: { table: true },
         },
+        customer: {
+          include: {
+            user: true,
+          },
+        },
+        payments: {
+          where: { status: 1 }, // COMPLETED
+        },
       },
     });
 
@@ -437,8 +465,12 @@ export class OrderService {
       totalAmount: Number(order.totalAmount),
       createdAt: order.createdAt,
       status: statusIdToCode[order.orderStatusId] || 'PENDING',
+      isPaid: order.payments.length > 0,
       table: activeSession?.table?.code || 'Mang đi',
       tableId: activeSession?.table?.id || null,
+      customerName: order.customer?.user?.fullName || order.customer?.user?.userName || null,
+      customerPhone: order.customer?.user?.phoneNumber || null,
+      customerEmail: order.customer?.user?.email || null,
       items: order.orderDetails.map((d) => ({
         id: d.id,
         name: d.dish?.name || 'Món ăn',
@@ -474,11 +506,35 @@ export class OrderService {
       data: { orderStatusId: statusId },
     });
 
+    // Sync order items status when order status changes
+    const itemStatusMap = await ensureOrderDetailStatuses();
+    let targetItemStatus: string | null = null;
+    if (status.toUpperCase() === 'CONFIRMED') {
+      targetItemStatus = 'COOKING';
+    } else if (status.toUpperCase() === 'COMPLETED') {
+      targetItemStatus = 'COMPLETED';
+    } else if (status.toUpperCase() === 'CANCELLED') {
+      targetItemStatus = 'CANCELLED';
+    }
+
+    if (targetItemStatus && itemStatusMap[targetItemStatus]) {
+      await prisma.orderDetail.updateMany({
+        where: { orderId },
+        data: { itemStatusId: itemStatusMap[targetItemStatus] },
+      });
+    }
+
+    const payments = await prisma.payment.findFirst({
+      where: { orderId, status: 1 }, // COMPLETED payment status
+    });
+    const isPaid = !!payments;
+
     // Notify via Socket.io
     const io = getIO();
     io.to(`restaurant_${restaurantId}`).emit('ORDER_STATUS_CHANGED', {
       orderId,
       status: status.toUpperCase(),
+      isPaid,
     });
 
     return updated;
