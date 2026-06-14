@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { getCustomers, getCustomerDetail, toggleCustomerStatus } from '../controllers/customer.controller';
-import { authMiddleware } from './auth';
+import { authMiddleware } from '../models/routes/auth';
 
 const router: Router = Router();
 
