@@ -534,6 +534,16 @@ router.get(API_ROUTES.AUTH.ME, authMiddleware, async (req: any, res: any) => {
       return res.status(401).json({ success: false, message: 'User not found' });
     }
 
+    const { roles, ownerRestaurantId } = await getFilteredRolesForUser(user.id, req.headers);
+    let restaurantSlug: string | null = null;
+    if (ownerRestaurantId) {
+      const rest = await prisma.restaurant.findUnique({
+        where: { id: ownerRestaurantId },
+        select: { slug: true }
+      });
+      restaurantSlug = rest?.slug ?? null;
+    }
+
     res.json({
       success: true,
       data: {
@@ -546,7 +556,9 @@ router.get(API_ROUTES.AUTH.ME, authMiddleware, async (req: any, res: any) => {
         dateOfBirth: user.dateOfBirth,
         address: user.address,
         role: req.user.role,
-        roles: [req.user.role]
+        roles,
+        restaurantId: ownerRestaurantId,
+        restaurantSlug
       }
     });
   } catch (error) {
