@@ -85,7 +85,7 @@ if (response.data.requireEmailConfirmation) {
   "EmailSettings": {
     "SmtpServer": "smtp.gmail.com",
     "SmtpPort": 587,
-    "SenderEmail": "noreply@restx.food",
+    "SenderEmail": "noreply@XFoodi.food",
     "Username": "your-email@gmail.com",
     "Password": "your-app-password"
   },
@@ -125,3 +125,6 @@ Xem file `EMAIL_CONFIRMATION_FLOW.md` để có:
 6. Deploy to staging
 7. Monitor and fix issues
 8. Deploy to production
+
+
+

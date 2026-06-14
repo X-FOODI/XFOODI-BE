@@ -61,14 +61,14 @@
 
 ## 🚀 Quick Start
 
-> System Requirements: **Node.js ≥ 20**, **PostgreSQL**, **Redis**.
+> System Requirements: **Node.js ≥ 20**, **PostgreSQL**, **Redis** (eviction policy must be `noeviction`).
 
 ### 1. Clone & Install
 
 ```bash
 git clone <your-repo-url>
 cd XFoodi-BE
-npm install
+pnpm install
 ```
 
 ### 2. Environment Configuration
@@ -98,13 +98,13 @@ npx prisma generate
 
 **Run in Development mode:**
 ```bash
-npm run dev
+pnpm run dev
 ```
 
 **Run in Production mode:**
 ```bash
-npm run build
-npm start
+pnpm run build
+pnpm start
 ```
 
 ---
@@ -128,7 +128,7 @@ We enforce rigorous code quality standards. Please ensure you run the CI checks 
 
 ```bash
 # Check for linting errors and type issues
-npm run check
+pnpm run check
 ```
 
 **Workflow Summary:**
@@ -147,3 +147,4 @@ This project is proprietary and protected. It is designed specifically for the F
 <div align="center">
   <sub>Built with ❤️ by the FoodX Backend Team</sub>
 </div>
+
