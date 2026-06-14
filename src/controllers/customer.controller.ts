@@ -22,7 +22,7 @@ export const getCustomers = async (req: Request, res: Response) => {
             roles: {
               some: {
                 role: {
-                  normalizedName: {
+                  name: {
                     in: ['CUSTOMER', 'Customer']
                   }
                 }
@@ -70,7 +70,7 @@ export const getCustomers = async (req: Request, res: Response) => {
         phoneNumber: user.phoneNumber || 'N/A',
         avatarUrl: user.avatarUrl || null,
         isActive: user.isActive,
-        createdDate: user.createdDate,
+        createdDate: user.createdAt,
         totalOrders,
         totalSpent,
       };
@@ -147,7 +147,7 @@ export const getCustomerDetail = async (req: Request, res: Response) => {
           include: {
             orders: {
               orderBy: {
-                createdDate: 'desc'
+                createdAt: 'desc'
               }
             },
             reservations: true
@@ -177,7 +177,7 @@ export const getCustomerDetail = async (req: Request, res: Response) => {
     let ordersHistory = [];
     if (hasRealOrders) {
       // Fetch status values for the orders
-      const statusIds = Array.from(new Set(realOrders.map((o: any) => o.orderStatusId))) as number[];
+      const statusIds = Array.from(new Set(realOrders.map((o: any) => o.orderStatusId))) as string[];
       const statusValues = await prisma.statusValue.findMany({
         where: { id: { in: statusIds } }
       });
@@ -186,14 +186,14 @@ export const getCustomerDetail = async (req: Request, res: Response) => {
       ordersHistory = realOrders.map((order: any) => ({
         id: order.id,
         reference: order.reference,
-        createdDate: order.createdDate,
+        createdDate: order.createdAt,
         totalAmount: Number(order.totalAmount),
         status: statusMap.get(order.orderStatusId)?.name || 'Unknown'
       }));
     } else {
       // Generate deterministic mock order history matching the stats
       for (let i = 0; i < totalOrders; i++) {
-        const orderDate = new Date(user.createdDate);
+        const orderDate = new Date(user.createdAt);
         orderDate.setDate(orderDate.getDate() + i * 3 + 1);
         
         const priceMock = Number((35.00 + (idCode % 15) * 5 + (i * 2.5)).toFixed(2));
@@ -218,7 +218,7 @@ export const getCustomerDetail = async (req: Request, res: Response) => {
       phoneNumber: user.phoneNumber || 'N/A',
       avatarUrl: user.avatarUrl || null,
       isActive: user.isActive,
-      createdDate: user.createdDate
+      createdDate: user.createdAt
     };
 
     return res.json({
@@ -257,7 +257,7 @@ export const toggleCustomerStatus = async (req: Request, res: Response) => {
       where: {
         OR: [
           { id: id },
-          { applicationUserId: id }
+          { userId: id }
         ]
       },
       include: {
@@ -269,7 +269,7 @@ export const toggleCustomerStatus = async (req: Request, res: Response) => {
     // check for processing/pending orders.
     if (!isActive && customer) {
       const activeOrders = (customer as any).orders || [];
-      const statusIds = Array.from(new Set(activeOrders.map((o: any) => o.orderStatusId))) as number[];
+      const statusIds = Array.from(new Set(activeOrders.map((o: any) => o.orderStatusId))) as string[];
       const statusValues = await prisma.statusValue.findMany({
         where: { id: { in: statusIds } }
       });
@@ -293,7 +293,7 @@ export const toggleCustomerStatus = async (req: Request, res: Response) => {
     }
 
     // 3. Update User status
-    const targetUserId = customer ? customer.applicationUserId : id;
+    const targetUserId = customer ? customer.userId : id;
     
     const user = await prisma.user.findUnique({
       where: { id: targetUserId }
