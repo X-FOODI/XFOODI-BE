@@ -67,6 +67,8 @@ model User {
   lastLoginAt   DateTime?
   createdDate   DateTime  @default(now())
   modifiedDate  DateTime? @updatedAt
+  resetOtp      String?
+  resetOtpExpires DateTime?
 
   employee Employee?
   customer Customer?

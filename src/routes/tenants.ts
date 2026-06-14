@@ -1,10 +1,10 @@
 import { Router } from 'express';
 import crypto from 'crypto';
 
-const router = Router();
+const router: Router = Router();
 
 const mockTenant = {
-  id: crypto.randomUUID(),
+  id: "mock-tenant-id-12345",
   name: "Demo Restaurant",
   hostname: "demo",
   businessName: "Demo Restaurant Ltd",

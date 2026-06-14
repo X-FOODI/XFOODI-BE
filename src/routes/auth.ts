@@ -8,10 +8,10 @@ import { API_ROUTES } from '../constants/routes';
 import { sendConfirmationEmail } from '../lib/email';
 import { postGoogleAuth } from '../controllers/googleAuth.controller';
 import { generateAccessAndRefreshTokens } from '../services/authToken.service';
-
+import { sendResetPasswordOtp } from '../services/mail.service';
 import { ENV } from '../config/env';
 
-const router = Router();
+const router: Router = Router();
 const ACCESS_SECRET = ENV.JWT.ACCESS_SECRET;
 const REFRESH_SECRET = ENV.JWT.REFRESH_SECRET;
 
@@ -167,6 +167,8 @@ router.post(API_ROUTES.AUTH.LOGIN, async (req, res) => {
     // Lưu Refresh Token trong Redis (TTL: 7 ngày)
     await redisClient.setEx(`refresh_token:${user.id}`, 7 * 24 * 60 * 60, refreshToken);
 
+    const isRestaurantRole = roles.includes("Owner") || roles.includes("Staff");
+
     res.json({
       success: true,
       data: {
@@ -176,7 +178,9 @@ router.post(API_ROUTES.AUTH.LOGIN, async (req, res) => {
           id: user.id,
           email: user.email,
           fullName: user.fullName,
-          roles: roles
+          roles: roles,
+          restaurantId: isRestaurantRole ? "mock-tenant-id-12345" : null,
+          restaurantSlug: isRestaurantRole ? "demo" : null
         }
       }
     });
@@ -302,6 +306,8 @@ router.get(API_ROUTES.AUTH.ME, authMiddleware, async (req: any, res: any) => {
       return res.status(401).json({ success: false, message: 'User not found' });
     }
 
+    const isRestaurantRole = req.user.role === "Owner" || req.user.role === "Staff";
+
     res.json({
       success: true,
       data: {
@@ -309,7 +315,9 @@ router.get(API_ROUTES.AUTH.ME, authMiddleware, async (req: any, res: any) => {
         email: user.email,
         fullName: user.fullName,
         role: req.user.role,
-        roles: [req.user.role]
+        roles: [req.user.role],
+        restaurantId: isRestaurantRole ? "mock-tenant-id-12345" : null,
+        restaurantSlug: isRestaurantRole ? "demo" : null
       }
     });
   } catch (error) {
@@ -376,6 +384,95 @@ router.get(API_ROUTES.AUTH.CONFIRM_EMAIL, async (req: any, res: any) => {
     res.json({ success: true, message: 'Email confirmed successfully. You can now log in.' });
   } catch (error) {
     console.error('Confirm email error:', error);
+    res.status(500).json({ success: false, message: 'Internal server error' });
+  }
+});
+
+// Endpoint to request password reset (Forgot Password)
+router.post(API_ROUTES.AUTH.FORGOT_PASSWORD, async (req: any, res: any) => {
+  try {
+    const { email } = req.body;
+    if (!email) {
+      return res.status(400).json({ success: false, message: 'Email is required' });
+    }
+
+    const user = await prisma.user.findFirst({
+      where: { email: email.toLowerCase() }
+    });
+
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'Email address not found' });
+    }
+
+    // Generate 6-digit OTP code
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes expiry
+
+    // Save to user
+    await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        resetOtp: otp,
+        resetOtpExpires: expiresAt
+      }
+    });
+
+    // Send email
+    await sendResetPasswordOtp(user.email || email, otp);
+
+    res.json({ success: true, message: 'Password reset code has been sent to your email.' });
+  } catch (error) {
+    console.error('Forgot password error:', error);
+    res.status(500).json({ success: false, message: 'Internal server error' });
+  }
+});
+
+// Endpoint to reset password with OTP (Reset Password)
+router.post(API_ROUTES.AUTH.RESET_PASSWORD, async (req: any, res: any) => {
+  try {
+    const { email, token, newPassword, confirmNewPassword } = req.body;
+    if (!email || !token || !newPassword) {
+      return res.status(400).json({ success: false, message: 'All fields are required' });
+    }
+
+    if (newPassword !== confirmNewPassword) {
+      return res.status(400).json({ success: false, message: 'Passwords do not match' });
+    }
+
+    const user = await prisma.user.findFirst({
+      where: { email: email.toLowerCase() }
+    });
+
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'Email address not found' });
+    }
+
+    // Validate OTP
+    if (!user.resetOtp || user.resetOtp !== token) {
+      return res.status(400).json({ success: false, message: 'Invalid reset token' });
+    }
+
+    if (!user.resetOtpExpires || user.resetOtpExpires < new Date()) {
+      return res.status(400).json({ success: false, message: 'Reset token has expired' });
+    }
+
+    // Hash new password
+    const salt = await bcrypt.genSalt(10);
+    const passwordHash = await bcrypt.hash(newPassword, salt);
+
+    // Update user password and clear OTP
+    await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        passwordHash,
+        resetOtp: null,
+        resetOtpExpires: null
+      }
+    });
+
+    res.json({ success: true, message: 'Password has been reset successfully.' });
+  } catch (error) {
+    console.error('Reset password error:', error);
     res.status(500).json({ success: false, message: 'Internal server error' });
   }
 });
