@@ -7,11 +7,13 @@ import tenantRoutes from './models/routes/tenants';
 import restaurantApplicationRoutes from './models/routes/restaurant-applications';
 import restaurantRoutes from './models/routes/restaurants';
 import userRoutes from './models/routes/users';
+import employeeRoutes from './models/routes/employees';
 import aiRoutes from './models/routes/ai';
 import categoryRoutes from './models/routes/categories';
 import dishRoutes from './models/routes/dishes';
 import { registerSocialModule } from './modules/social/social.module';
 import { initSocialRealtime } from './modules/social/realtime/social-socket';
+import customerRoutes from './routes/customer.routes';
 import { API_ROUTES } from './constants/routes';
 import { ENV } from './config/env';
 import { UploadQueueService } from './services/uploadQueue.service';
@@ -23,7 +25,14 @@ const PORT = ENV.PORT;
 
 // Middleware
 app.use(cors({
-  origin: [ENV.FRONTEND_URL, 'http://localhost:3000', /\.xfoodi\.website$/],
+  origin: [
+    ENV.FRONTEND_URL,
+    'http://localhost:3000',
+    'http://localhost:3001',
+    'http://localhost:3002',
+    /\.xfoodi\.website$/,
+    /\.localhost(:\d+)?$/,
+  ],
   credentials: true
 }));
 app.use(express.json({ limit: '15mb' }));
@@ -39,8 +48,33 @@ app.use((req, res, next) => {
 // Routes
 app.use(API_ROUTES.AUTH.BASE, authRoutes);
 app.use(API_ROUTES.USERS.BASE, userRoutes);
+app.use(API_ROUTES.EMPLOYEES.BASE, employeeRoutes);
 app.use('/api/restaurants', restaurantRoutes);
 app.use(API_ROUTES.TENANTS.BASE, tenantRoutes);
+app.use('/api/restaurant/customers', customerRoutes);
+
+// Mock /api/restaurants/me - returns restaurant info for the logged-in owner
+app.get('/api/restaurants/me', (req, res) => {
+  res.json({
+    success: true,
+    data: {
+      id: 'mock-tenant-id-12345',
+      name: 'Demo Restaurant',
+      slug: 'demo',
+      email: 'contact@demo.xfoodi.website',
+      phone: '0123456789',
+      address: '123 Main St',
+      logoUrl: null,
+      owner: {
+        id: 'owner-id',
+        fullName: 'Trần Văn Chủ',
+        email: 'owner-test@xfoodi.com',
+        avatarUrl: null
+      }
+    }
+  });
+});
+
 app.use(API_ROUTES.RESTAURANT_APPLICATIONS.BASE, restaurantApplicationRoutes);
 app.use('/api/ai', aiRoutes);
 app.use(API_ROUTES.CATEGORIES.BASE, categoryRoutes);
@@ -66,3 +100,4 @@ httpServer.listen(PORT, () => {
   console.log(`- Social API: http://localhost:${PORT}${API_ROUTES.SOCIAL.BASE}`);
   console.log(`- Social realtime: http://localhost:${PORT}/hubs/social (Socket.io)`);
 });
+

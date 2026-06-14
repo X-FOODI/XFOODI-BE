@@ -311,7 +311,8 @@ router.post(API_ROUTES.AUTH.LOGIN, async (req, res) => {
     }
 
     // ─── Google Authenticator 2FA Challenge ───
-    if (isAdminUser && user.twoFactorEnabled && process.env.NODE_ENV !== 'development') {
+    const isDevMode = process.env.NODE_ENV === 'development' || process.env.NODE_ENV === 'dev' || process.env.NODE_ENV === undefined;
+    if (isAdminUser && user.twoFactorEnabled && !isDevMode) {
       // Sign short-lived temporary token (5 min) for 2FA validation
       const tempToken = jwt.sign(
         { userId: user.id, purpose: '2fa' },
@@ -533,6 +534,16 @@ router.get(API_ROUTES.AUTH.ME, authMiddleware, async (req: any, res: any) => {
       return res.status(401).json({ success: false, message: 'User not found' });
     }
 
+    const { roles, ownerRestaurantId } = await getFilteredRolesForUser(user.id, req.headers);
+    let restaurantSlug: string | null = null;
+    if (ownerRestaurantId) {
+      const rest = await prisma.restaurant.findUnique({
+        where: { id: ownerRestaurantId },
+        select: { slug: true }
+      });
+      restaurantSlug = rest?.slug ?? null;
+    }
+
     res.json({
       success: true,
       data: {
@@ -545,7 +556,9 @@ router.get(API_ROUTES.AUTH.ME, authMiddleware, async (req: any, res: any) => {
         dateOfBirth: user.dateOfBirth,
         address: user.address,
         role: req.user.role,
-        roles: [req.user.role]
+        roles,
+        restaurantId: ownerRestaurantId,
+        restaurantSlug
       }
     });
   } catch (error) {
