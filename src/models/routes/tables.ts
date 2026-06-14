@@ -11,11 +11,15 @@ import {
   handleMergeSessions,
   handleTransferSession,
   handleCloseSession,
+  handleGetPublicTableDetail,
 } from '../../controllers/table.controller';
 
 const router: ExpressRouter = Router();
 
-// Apply authMiddleware and tenantGuard to all table routes
+// Public route for customers scanning QR code
+router.get('/public/:id', handleGetPublicTableDetail);
+
+// Apply authMiddleware and tenantGuard to all subsequent table routes
 router.use(authMiddleware);
 router.use(tenantGuard);
 

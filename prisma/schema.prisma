@@ -311,6 +311,7 @@ model Dish {
   description        String
   price              Decimal  @db.Decimal(18, 2)
   unit               String
+  imageUrl           String?
   isVegetarian       Boolean  @default(false)
   isSpicy            Boolean  @default(false)
   isBestSeller       Boolean  @default(false)

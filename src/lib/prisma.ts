@@ -55,12 +55,25 @@ export function getTenantConnectionUrl(baseUrl: string, slug: string): string {
 
 // Export a Proxy of PrismaClient that dynamically delegates to the active client in the current request store.
 // If no request context exists (e.g. background jobs, seed scripts), it defaults to the central database.
+// Central models are forced to run against centralPrisma (public schema) because they do not have tenant-specific rows.
 export const prisma = new Proxy({} as PrismaClient, {
   get(target, prop, receiver) {
-    // Get the active client from AsyncLocalStorage, or default to central client
-    const activeClient = prismaStorage.getStore() || centralPrisma;
+    const centralModels = [
+      'restaurant',
+      'user',
+      'role',
+      'userRole',
+      'userSession',
+      'restaurantApplication',
+    ];
+
+    // Determine whether to use the central client or the tenant-specific client
+    const useCentral = typeof prop === 'string' && centralModels.includes(prop);
+    const activeClient = useCentral
+      ? centralPrisma
+      : (prismaStorage.getStore() || centralPrisma);
     
-    // Delegate property access to the active client
+    // Delegate property access to the chosen client
     const value = Reflect.get(activeClient, prop, receiver);
     if (typeof value === 'function') {
       return value.bind(activeClient);

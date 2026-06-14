@@ -1,6 +1,7 @@
 import { prisma } from '../lib/prisma';
 import { Prisma } from '@prisma/client';
 import { getIO } from '../socket';
+import { randomUUID } from 'crypto';
 
 export class TableServiceError extends Error {
   constructor(
@@ -308,20 +309,30 @@ export async function createTable(
     throw new TableServiceError(404, 'Target Floor not found or inactive');
   }
 
-  // Check code uniqueness
+  // Check code uniqueness (both active and inactive to prevent database unique constraint violations)
   const duplicate = await prisma.table.findFirst({
-    where: { code: data.code.trim(), restaurantId, isActive: true },
+    where: { code: data.code.trim(), restaurantId },
   });
 
   if (duplicate) {
-    throw new TableServiceError(409, `Table with code "${data.code}" already exists in this restaurant`);
+    if (duplicate.isActive) {
+      throw new TableServiceError(409, `Table with code "${data.code}" already exists in this restaurant`);
+    } else {
+      // Free up the code of the inactive (soft-deleted) table by appending a unique suffix
+      await prisma.table.update({
+        where: { id: duplicate.id },
+        data: { code: `${duplicate.code}_deleted_${Date.now()}` },
+      });
+    }
   }
 
   const statusMap = await ensureTableStatuses(restaurantId);
   const availableStatusId = statusMap['AVAILABLE'];
 
+  const tableId = randomUUID();
   const newTable = await prisma.table.create({
     data: {
+      id: tableId,
       code: data.code.trim(),
       restaurantId,
       floorId: data.floorId,
@@ -335,7 +346,7 @@ export async function createTable(
       rotation: new Prisma.Decimal(data.rotation ?? 0),
       tableStatusId: availableStatusId,
       isActive: true,
-      qrCodeUrl: `/menu?restaurantId=${restaurantId}&tableCode=${encodeURIComponent(data.code.trim())}`,
+      qrCodeUrl: `/menu/${tableId}`,
     },
   });
 
@@ -375,14 +386,22 @@ export async function updateTable(
     const trimmedCode = data.code.trim();
     if (trimmedCode !== existing.code) {
       const duplicate = await prisma.table.findFirst({
-        where: { code: trimmedCode, restaurantId, id: { not: id }, isActive: true },
+        where: { code: trimmedCode, restaurantId, id: { not: id } },
       });
       if (duplicate) {
-        throw new TableServiceError(409, `Table with code "${trimmedCode}" already exists`);
+        if (duplicate.isActive) {
+          throw new TableServiceError(409, `Table with code "${trimmedCode}" already exists`);
+        } else {
+          // Free up the code of the inactive duplicate
+          await prisma.table.update({
+            where: { id: duplicate.id },
+            data: { code: `${duplicate.code}_deleted_${Date.now()}` },
+          });
+        }
       }
     }
     updateData.code = trimmedCode;
-    updateData.qrCodeUrl = `/menu?restaurantId=${restaurantId}&tableCode=${encodeURIComponent(trimmedCode)}`;
+    updateData.qrCodeUrl = `/menu/${id}`;
   }
 
   if (data.floorId !== undefined) {
@@ -455,7 +474,10 @@ export async function deleteTable(restaurantId: string, id: string) {
 
   await prisma.table.update({
     where: { id },
-    data: { isActive: false },
+    data: { 
+      isActive: false,
+      code: `${existing.code}_deleted_${Date.now()}`,
+    },
   });
 
   broadcastTableUpdate(restaurantId, 'TABLE_DELETED', { tableId: id, floorId: existing.floorId });

@@ -1,5 +1,6 @@
 import type { RequestHandler } from 'express';
 import * as tableService from '../services/table.service';
+import { prisma } from '../lib/prisma';
 
 function getRestaurantId(req: any): string | null {
   if (req.user?.restaurantId) {
@@ -265,6 +266,32 @@ export const handleCloseSession: RequestHandler = async (req, res) => {
     }
     const result = await tableService.closeTableSession(restaurantId, tableId);
     res.json({ success: true, message: 'Table session closed successfully', data: result });
+  } catch (err) {
+    handleTableError(res, err);
+  }
+};
+
+export const handleGetPublicTableDetail: RequestHandler = async (req, res) => {
+  try {
+    const id = req.params.id as string;
+    const table = await prisma.table.findUnique({
+      where: { id, isActive: true },
+      include: {
+        restaurant: {
+          select: { id: true, name: true, slug: true, logoUrl: true, address: true, phone: true }
+        },
+        floor: {
+          select: { name: true }
+        }
+      }
+    });
+
+    if (!table) {
+      res.status(404).json({ success: false, message: 'Bàn ăn không tồn tại hoặc đã bị xóa.' });
+      return;
+    }
+
+    res.json({ success: true, data: table });
   } catch (err) {
     handleTableError(res, err);
   }

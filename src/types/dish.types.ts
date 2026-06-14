@@ -6,6 +6,7 @@ export interface CreateDishBody {
   description: string;
   price: number | string;
   unit: string;
+  imageUrl?: string | null;
   isVegetarian?: boolean;
   isSpicy?: boolean;
   isBestSeller?: boolean;
@@ -19,6 +20,7 @@ export interface UpdateDishBody {
   description?: string;
   price?: number | string;
   unit?: string;
+  imageUrl?: string | null;
   isVegetarian?: boolean;
   isSpicy?: boolean;
   isBestSeller?: boolean;
@@ -45,6 +47,7 @@ export interface DishResponse {
   description: string;
   price: string;           // Decimal as string to preserve precision
   unit: string;
+  imageUrl: string | null;
   isVegetarian: boolean;
   isSpicy: boolean;
   isBestSeller: boolean;

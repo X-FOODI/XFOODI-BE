@@ -7,7 +7,13 @@ let io: Server;
 export function initializeSocket(httpServer: HttpServer) {
   io = new Server(httpServer, {
     cors: {
-      origin: [ENV.FRONTEND_URL, 'http://localhost:3000', /\.xfoodi\.website$/],
+      origin: (origin: string | undefined, callback: any) => {
+        if (!origin) return callback(null, true);
+        const isLocalSubdomain = /^https?:\/\/[a-zA-Z0-9-]+\.localhost(:\d+)?$/.test(origin);
+        const isProdSubdomain = /^https?:\/\/([a-zA-Z0-9-]+\.)?xfoodi\.website$/.test(origin);
+        const allowed = isLocalSubdomain || isProdSubdomain || origin === 'http://localhost:3000' || origin === ENV.FRONTEND_URL;
+        callback(null, allowed);
+      },
       methods: ["GET", "POST"],
       credentials: true
     }

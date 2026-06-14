@@ -2,6 +2,7 @@ import { PrismaClient } from '@prisma/client';
 import { prismaStorage } from '../lib/prisma';
 import { PaymentStatus, PaymentPurpose } from '../enums/payment.enum';
 import crypto from 'crypto';
+import { getIO } from '../socket';
 
 function getPrisma(): PrismaClient {
   return prismaStorage.getStore() as PrismaClient;
@@ -57,6 +58,92 @@ export class PaymentService {
     return prisma.paymentMethod.findFirst({ where: { code: 'BANK_TRANSFER' } });
   }
 
+  // ── Finalize Order Payment Helper ──
+  private async finalizeOrderPayment(orderId: string, transactionId?: string) {
+    const prisma = getPrisma();
+    
+    // 1. Get COMPLETED status for ORDER
+    const completedStatus = await prisma.statusValue.findFirst({
+      where: {
+        statusType: { code: 'ORDER' },
+        code: 'COMPLETED',
+      },
+    });
+
+    if (completedStatus) {
+      await prisma.order.update({
+        where: { id: orderId },
+        data: {
+          completedAt: new Date(),
+          orderStatusId: completedStatus.id,
+        },
+      });
+    }
+
+    // 2. Fetch order to get restaurantId
+    const order = await prisma.order.findUnique({
+      where: { id: orderId },
+      select: { restaurantId: true },
+    });
+    
+    if (!order) return;
+
+    // 3. Find and close active table sessions linked to this order
+    const activeSessions = await prisma.tableSession.findMany({
+      where: { orderId, isActive: true },
+    });
+
+    // Get AVAILABLE status for TABLE
+    const tableStatusType = await prisma.statusType.findUnique({ where: { code: 'TABLE' } });
+    let availableStatusId: string | undefined;
+    if (tableStatusType) {
+      const availableStatus = await prisma.statusValue.findFirst({
+        where: { statusTypeId: tableStatusType.id, code: 'AVAILABLE' },
+      });
+      availableStatusId = availableStatus?.id;
+    }
+
+    for (const session of activeSessions) {
+      await prisma.tableSession.update({
+        where: { id: session.id },
+        data: {
+          isActive: false,
+          endedAt: new Date(),
+        },
+      });
+
+      if (availableStatusId) {
+        await prisma.table.update({
+          where: { id: session.tableId },
+          data: { tableStatusId: availableStatusId },
+        });
+      }
+
+      // Broadcast TABLE_SESSION_CLOSED via Socket.io
+      try {
+        const io = getIO();
+        io.to(`restaurant_${order.restaurantId}`).emit('TABLE_SESSION_CLOSED', {
+          tableId: session.tableId,
+          sessionId: session.id,
+          status: 'AVAILABLE',
+        });
+      } catch (e) {
+        console.warn('[PaymentService] Failed to broadcast TABLE_SESSION_CLOSED:', e);
+      }
+    }
+
+    // Broadcast ORDER_STATUS_CHANGED via Socket.io
+    try {
+      const io = getIO();
+      io.to(`restaurant_${order.restaurantId}`).emit('ORDER_STATUS_CHANGED', {
+        orderId,
+        status: 'COMPLETED',
+      });
+    } catch (e) {
+      console.warn('[PaymentService] Failed to broadcast ORDER_STATUS_CHANGED:', e);
+    }
+  }
+
   // ── Cash payment ─────────────────────────────────────────────────────────────
   async payCash(dto: CashPaymentDto) {
     const prisma = getPrisma();
@@ -94,13 +181,7 @@ export class PaymentService {
 
     // Mark order as paid if applicable
     if (dto.orderId) {
-      const completedStatus = await prisma.statusValue.findFirst({ where: { code: 'COMPLETED' } });
-      if (completedStatus) {
-        await prisma.order.update({
-          where: { id: dto.orderId },
-          data: { completedAt: new Date() },
-        });
-      }
+      await this.finalizeOrderPayment(dto.orderId);
     }
 
     // Mark reservation deposit as paid
@@ -259,10 +340,7 @@ export class PaymentService {
           },
         });
 
-        await prisma.order.update({
-          where: { id: order.id },
-          data: { completedAt: new Date() },
-        });
+        await this.finalizeOrderPayment(order.id, String(payload.id));
 
         return { success: true, matched: 'order', ref, orderId: order.id };
       }

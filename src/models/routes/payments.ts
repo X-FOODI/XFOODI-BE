@@ -54,7 +54,7 @@ router.post('/cash', requireRole('Owner', 'Admin', 'Staff'), async (req, res) =>
 });
 
 // ── Generate SePay transfer info (QR + bank details) ─────────────────────────
-router.post('/transfer-info', requireRole('Owner', 'Admin', 'Staff', 'Customer'), async (req, res) => {
+router.post('/transfer-info', async (req, res) => {
   try {
     const { orderId, reservationId, amount, restaurantId } = req.body;
     if (!amount || !restaurantId) {

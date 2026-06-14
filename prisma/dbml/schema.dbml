@@ -258,6 +258,7 @@ Table Dishes {
   description String [not null]
   price Decimal [not null]
   unit String [not null]
+  imageUrl String
   isVegetarian Boolean [not null, default: false]
   isSpicy Boolean [not null, default: false]
   isBestSeller Boolean [not null, default: false]

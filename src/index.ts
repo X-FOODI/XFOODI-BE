@@ -25,14 +25,25 @@ import { UploadQueueService } from './services/uploadQueue.service';
 const app = express();
 const PORT = ENV.PORT;
 
+// Cache to store the sync state of tenants' Restaurant and Owner User records
+const syncedTenants: Record<string, boolean> = {};
+
 // Import tenant routing utilities
 import { prismaStorage, centralPrisma, getTenantPrisma, getTenantConnectionUrl } from './lib/prisma';
 
 // Middleware
-app.use(cors({
-  origin: [ENV.FRONTEND_URL, 'http://localhost:3000', /\.xfoodi\.website$/],
+const corsOptions = {
+  origin: (origin: string | undefined, callback: any) => {
+    if (!origin) return callback(null, true);
+    const isLocalSubdomain = /^https?:\/\/[a-zA-Z0-9-]+\.localhost(:\d+)?$/.test(origin);
+    const isProdSubdomain = /^https?:\/\/([a-zA-Z0-9-]+\.)?xfoodi\.website$/.test(origin);
+    const allowed = isLocalSubdomain || isProdSubdomain || origin === 'http://localhost:3000' || origin === ENV.FRONTEND_URL;
+    callback(null, allowed);
+  },
   credentials: true
-}));
+};
+
+app.use(cors(corsOptions));
 app.use(express.json());
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 
@@ -84,6 +95,68 @@ app.use(async (req: any, res: any, next) => {
       if (restaurant) {
         const tenantDbUrl = getTenantConnectionUrl(ENV.DATABASE_URL, restaurant.slug);
         activeClient = getTenantPrisma(tenantDbUrl);
+
+        // Lazily sync the Restaurant and its Owner User to the tenant DB schema
+        // to satisfy database-level foreign key constraints (like Floors_restaurantId_fkey)
+        if (!syncedTenants[restaurant.slug]) {
+          try {
+            // 1. Ensure the Owner User exists in the tenant schema
+            const centralOwner = await centralPrisma.user.findUnique({
+              where: { id: restaurant.ownerId },
+            });
+            if (centralOwner) {
+              await activeClient.user.upsert({
+                where: { id: centralOwner.id },
+                update: {
+                  email: centralOwner.email,
+                  userName: centralOwner.userName,
+                  fullName: centralOwner.fullName,
+                  phoneNumber: centralOwner.phoneNumber,
+                  passwordHash: centralOwner.passwordHash,
+                  isActive: centralOwner.isActive,
+                  emailVerified: centralOwner.emailVerified,
+                },
+                create: {
+                  id: centralOwner.id,
+                  email: centralOwner.email,
+                  userName: centralOwner.userName,
+                  fullName: centralOwner.fullName,
+                  phoneNumber: centralOwner.phoneNumber,
+                  passwordHash: centralOwner.passwordHash,
+                  isActive: centralOwner.isActive,
+                  emailVerified: centralOwner.emailVerified,
+                },
+              });
+            }
+
+            // 2. Ensure the Restaurant record exists in the tenant schema
+            await activeClient.restaurant.upsert({
+              where: { id: restaurant.id },
+              update: {
+                name: restaurant.name,
+                slug: restaurant.slug,
+                ownerId: restaurant.ownerId,
+                logoUrl: restaurant.logoUrl,
+                primaryColor: restaurant.primaryColor,
+                isActive: restaurant.isActive,
+              },
+              create: {
+                id: restaurant.id,
+                name: restaurant.name,
+                slug: restaurant.slug,
+                ownerId: restaurant.ownerId,
+                logoUrl: restaurant.logoUrl,
+                primaryColor: restaurant.primaryColor,
+                isActive: restaurant.isActive,
+              },
+            });
+
+            syncedTenants[restaurant.slug] = true;
+            console.log(`[TenantDbMiddleware] Successfully synced restaurant and owner user to tenant schema for "${restaurant.slug}"`);
+          } catch (syncError) {
+            console.error(`[TenantDbMiddleware] Failed to sync restaurant/owner to tenant "${restaurant.slug}":`, syncError);
+          }
+        }
       }
     }
 
