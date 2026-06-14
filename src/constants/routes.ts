@@ -17,6 +17,9 @@ export const API_ROUTES = {
     ME: '/me',
     CHANGE_PASSWORD: '/change-password',
   },
+  EMPLOYEES: {
+    BASE: '/api/employees',
+  },
   TENANTS: {
     BASE: '/api/tenants',
   },

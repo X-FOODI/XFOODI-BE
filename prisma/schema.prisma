@@ -57,21 +57,23 @@ model Restaurant {
 model Role {
   id   String @id @default(uuid())
   name String @unique
+
   userRoles UserRole[]
 
   @@map("Roles")
 }
 
 model User {
-  id                                                              String                   @id @default(uuid())
-  userName                                                        String?                  @unique
-  email                                                           String?                  @unique
-  passwordHash                                                    String?
-  phoneNumber                                                     String?
-  avatarUrl                                                       String?
-  fullName                                                        String?
+  id            String    @id @default(uuid())
+  userName      String?   @unique
+  email         String?   @unique
+  emailVerified Boolean   @default(false)
+  passwordHash  String?
   /// "local" | "google" — how the account was created / primary auth
   provider      String    @default("local")
+  phoneNumber   String?
+  avatarUrl     String?
+  fullName      String?
   /// "MALE" | "FEMALE" | "OTHER"
   gender        String?
   dateOfBirth   DateTime?
@@ -100,12 +102,13 @@ model UserSession {
   id           String    @id @default(uuid())
   userId       String
   refreshToken String    @unique
-  deviceInfo   String?
+  deviceInfo   String? // "Chrome on Windows", "iPhone App"
   ipAddress    String?
   expiresAt    DateTime
   createdAt    DateTime  @default(now())
   revokedAt    DateTime?
-  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
   @@map("UserSessions")
@@ -128,7 +131,6 @@ model UserRole {
 // ─── People ────────────────────────────────────────────────────────────────────
 
 model Employee {
-<<<<<<< Updated upstream
   id              String    @id @default(uuid())
   code            String
   restaurantId    String
@@ -146,30 +148,11 @@ model Employee {
   modifiedBy      String?
   metadata        Json?
 
-=======
-  id                String             @id @default(uuid())
-  code              String
-  address           String?
-  position          String
-  hireDate          DateTime           @db.Date
-  terminationDate   DateTime?          @db.Date
-  salary            Decimal            @db.Decimal(18, 2)
-  salaryType        String
-  isActive          Boolean            @default(true)
-  createdBy         String?
-  modifiedBy        String?
-  createdAt         DateTime           @default(now())
-  metadata          Json?
-  restaurantId      String
-  updatedAt         DateTime
-  userId            String?            @unique
-  schedules         EmployeeSchedule[]
-  Restaurants       Restaurants        @relation(fields: [restaurantId], references: [id])
->>>>>>> Stashed changes
   user              User?              @relation(fields: [userId], references: [id])
   restaurant        Restaurant         @relation(fields: [restaurantId], references: [id])
   ordersHandled     Order[]
   paymentsProcessed Payment[]
+  schedules         EmployeeSchedule[]
 
   @@unique([code, restaurantId])
   @@index([restaurantId])
@@ -177,7 +160,6 @@ model Employee {
 }
 
 model Customer {
-<<<<<<< Updated upstream
   id              String    @id @default(uuid())
   userId          String    @unique
   membershipLevel String?
@@ -193,23 +175,7 @@ model Customer {
   orders             Order[]
   reservations       Reservation[]
   pointsTransactions PointsTransaction[]
-=======
-  id                 String              @id @default(uuid())
-  membershipLevel    String?
-  loyaltyPoints      Int                 @default(0)
-  isActive           Boolean             @default(true)
-  createdBy          String?
-  modifiedBy         String?
-  createdAt          DateTime            @default(now())
-  metadata           Json?
-  updatedAt          DateTime
-  userId             String              @unique
-  Users              User                @relation(fields: [userId], references: [id])
->>>>>>> Stashed changes
   feedbacks          Feedback[]
-  orders             Order[]
-  pointsTransactions PointsTransaction[]
-  reservations       Reservation[]
 
   @@map("Customers")
 }
@@ -217,7 +183,6 @@ model Customer {
 // ─── Floor & Table ─────────────────────────────────────────────────────────────
 
 model Floor {
-<<<<<<< Updated upstream
   id           String   @id @default(uuid())
   name         String
   restaurantId String
@@ -233,29 +198,12 @@ model Floor {
 
   restaurant Restaurant @relation(fields: [restaurantId], references: [id])
   tables     Table[]
-=======
-  id           String      @id @default(uuid())
-  name         String
-  imageUrl     String?
-  isActive     Boolean     @default(true)
-  createdBy    String?
-  modifiedBy   String?
-  height       Decimal     @default(0.0) @db.Decimal(8, 2)
-  width        Decimal     @default(0.0) @db.Decimal(8, 2)
-  createdAt    DateTime    @default(now())
-  metadata     Json?
-  restaurantId String
-  updatedAt    DateTime
-  Restaurants  Restaurants @relation(fields: [restaurantId], references: [id])
-  tables       Table[]
->>>>>>> Stashed changes
 
   @@index([restaurantId])
   @@map("Floors")
 }
 
 model Table {
-<<<<<<< Updated upstream
   id                 String   @id @default(uuid())
   code               String
   restaurantId       String
@@ -273,50 +221,19 @@ model Table {
   isActive           Boolean  @default(true)
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
-=======
-  id                 String             @id @default(uuid())
-  code               String
-  type               String
-  seatingCapacity    Int
-  shape              String
-  positionX          Decimal            @db.Decimal(8, 2)
-  positionY          Decimal            @db.Decimal(8, 2)
-  width              Decimal            @db.Decimal(6, 2)
-  height             Decimal            @db.Decimal(6, 2)
-  rotation           Decimal            @db.Decimal(5, 2)
-  has3DView          Boolean            @default(false)
-  viewDescription    String?
-  defaultViewUrl     String?
-  isActive           Boolean            @default(true)
->>>>>>> Stashed changes
   createdBy          String?
   modifiedBy         String?
   tableStatusId      String
   qrCodeUrl          String?
-<<<<<<< Updated upstream
   floorId            String   @default("00000000-0000-0000-0000-000000000000")
   metadata           Json?
-=======
-  floorId            String             @default("00000000-0000-0000-0000-000000000000")
->>>>>>> Stashed changes
   cubeBackImageUrl   String?
   cubeBottomImageUrl String?
   cubeFrontImageUrl  String?
   cubeLeftImageUrl   String?
   cubeRightImageUrl  String?
   cubeTopImageUrl    String?
-  createdAt          DateTime           @default(now())
-  metadata           Json?
-  restaurantId       String
-  updatedAt          DateTime
-  reservations       ReservationTable[]
-  table3DModels      Table3DModel?
-  sessions           TableSession[]
-  floor              Floor              @relation(fields: [floorId], references: [id])
-  Restaurants        Restaurants        @relation(fields: [restaurantId], references: [id])
-  StatusValues       StatusValue        @relation(fields: [tableStatusId], references: [id])
 
-<<<<<<< Updated upstream
   restaurant    Restaurant         @relation(fields: [restaurantId], references: [id])
   floor         Floor              @relation(fields: [floorId], references: [id])
   tableStatus   StatusValue        @relation("TableStatus", fields: [tableStatusId], references: [id])
@@ -324,8 +241,6 @@ model Table {
   sessions      TableSession[]
   reservations  ReservationTable[]
 
-=======
->>>>>>> Stashed changes
   @@unique([code, restaurantId])
   @@index([restaurantId])
   @@map("Tables")
@@ -346,7 +261,6 @@ model Table3DModel {
   allowZoom         Boolean
   minZoom           Decimal  @db.Decimal(4, 2)
   maxZoom           Decimal  @db.Decimal(4, 2)
-<<<<<<< Updated upstream
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
   createdBy         String?
@@ -354,19 +268,10 @@ model Table3DModel {
   metadata          Json?
 
   table Table @relation(fields: [tableId], references: [id], onDelete: Cascade)
-=======
-  createdBy         String?
-  modifiedBy        String?
-  createdAt         DateTime @default(now())
-  metadata          Json?
-  updatedAt         DateTime
-  table             Table    @relation(fields: [tableId], references: [id], onDelete: Cascade)
->>>>>>> Stashed changes
 
   @@map("Table3DModels")
 }
 
-<<<<<<< Updated upstream
 // ─── Menu ──────────────────────────────────────────────────────────────────────
 
 model Category {
@@ -389,43 +294,17 @@ model Category {
   children   Category[]                @relation("CategoryHierarchy")
   dishes     Dish[]
   promotions PromotionApplicableItem[]
-=======
-model Category {
-  id           String                    @id @default(uuid())
-  name         String
-  description  String
-  imageUrl     String?
-  parentId     String?
-  isActive     Boolean                   @default(true)
-  createdBy    String?
-  modifiedBy   String?
-  displayOrder Int                       @default(0)
-  createdAt    DateTime                  @default(now())
-  metadata     Json?
-  restaurantId String
-  updatedAt    DateTime
-  parent       Category?                 @relation("CategoryHierarchy", fields: [parentId], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  children     Category[]                @relation("CategoryHierarchy")
-  Restaurants  Restaurants               @relation(fields: [restaurantId], references: [id])
-  dishes       Dish[]
-  promotions   PromotionApplicableItem[]
->>>>>>> Stashed changes
 
   @@index([restaurantId])
   @@map("Categories")
 }
 
 model Dish {
-<<<<<<< Updated upstream
   id                 String   @id @default(uuid())
-=======
-  id                 String                    @id @default(uuid())
->>>>>>> Stashed changes
   categoryId         String
   restaurantId       String
   name               String
   description        String
-<<<<<<< Updated upstream
   price              Decimal  @db.Decimal(18, 2)
   unit               String
   isVegetarian       Boolean  @default(false)
@@ -446,34 +325,11 @@ model Dish {
   recipes      DishRecipe[]
   promotions   PromotionApplicableItem[]
   comboDetails ComboDetail[]
-=======
-  price              Decimal                   @db.Decimal(18, 2)
-  unit               String
-  isVegetarian       Boolean                   @default(false)
-  isSpicy            Boolean                   @default(false)
-  isBestSeller       Boolean                   @default(false)
-  isActive           Boolean                   @default(true)
-  autoDisableByStock Boolean                   @default(false)
-  createdBy          String?
-  modifiedBy         String?
-  createdAt          DateTime                  @default(now())
-  metadata           Json?
-  restaurantId       String
-  updatedAt          DateTime
-  comboDetails       ComboDetail[]
-  images             DishImage[]
-  recipes            DishRecipe[]
-  category           Category                  @relation(fields: [categoryId], references: [id])
-  Restaurants        Restaurants               @relation(fields: [restaurantId], references: [id])
-  orderDetails       OrderDetail[]
-  promotions         PromotionApplicableItem[]
->>>>>>> Stashed changes
 
   @@index([restaurantId])
   @@index([categoryId])
   @@index([isActive])
   @@index([isBestSeller])
-  @@index([restaurantId])
   @@map("Dishes")
 }
 
@@ -483,7 +339,6 @@ model DishImage {
   imageUrl     String
   displayOrder Int
   isActive     Boolean
-<<<<<<< Updated upstream
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
   createdBy    String?
@@ -492,20 +347,10 @@ model DishImage {
   metadata     Json?
 
   dish Dish @relation(fields: [dishId], references: [id], onDelete: Cascade)
-=======
-  createdBy    String?
-  modifiedBy   String?
-  imageType    Int      @default(0)
-  createdAt    DateTime @default(now())
-  metadata     Json?
-  updatedAt    DateTime
-  dish         Dish     @relation(fields: [dishId], references: [id], onDelete: Cascade)
->>>>>>> Stashed changes
 
   @@map("DishImages")
 }
 
-<<<<<<< Updated upstream
 // ─── Ingredients & Stock ───────────────────────────────────────────────────────
 
 model IngredientCategory {
@@ -523,22 +368,6 @@ model IngredientCategory {
 
   restaurant  Restaurant   @relation(fields: [restaurantId], references: [id])
   ingredients Ingredient[]
-=======
-model IngredientCategory {
-  id           String       @id @default(uuid())
-  name         String
-  code         String
-  description  String?
-  isActive     Boolean
-  createdBy    String?
-  modifiedBy   String?
-  createdAt    DateTime     @default(now())
-  metadata     Json?
-  restaurantId String
-  updatedAt    DateTime
-  Restaurants  Restaurants  @relation(fields: [restaurantId], references: [id])
-  ingredients  Ingredient[]
->>>>>>> Stashed changes
 
   @@unique([code, restaurantId])
   @@index([restaurantId])
@@ -546,19 +375,13 @@ model IngredientCategory {
 }
 
 model Supplier {
-<<<<<<< Updated upstream
   id           String   @id @default(uuid())
   name         String
   restaurantId String
-=======
-  id           String       @id @default(uuid())
-  name         String
->>>>>>> Stashed changes
   phone        String?
   email        String?
   address      String?
   isActive     Boolean
-<<<<<<< Updated upstream
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
   createdBy    String?
@@ -567,23 +390,12 @@ model Supplier {
 
   restaurant  Restaurant   @relation(fields: [restaurantId], references: [id])
   ingredients Ingredient[]
-=======
-  createdBy    String?
-  modifiedBy   String?
-  createdAt    DateTime     @default(now())
-  metadata     Json?
-  restaurantId String
-  updatedAt    DateTime
-  ingredients  Ingredient[]
-  Restaurants  Restaurants  @relation(fields: [restaurantId], references: [id])
->>>>>>> Stashed changes
 
   @@index([restaurantId])
   @@map("Suppliers")
 }
 
 model Ingredient {
-<<<<<<< Updated upstream
   id                   String   @id @default(uuid())
   name                 String
   code                 String
@@ -608,31 +420,6 @@ model Ingredient {
   inventoryStock    InventoryStock?
   stockTransactions StockTransaction[]
   dishRecipes       DishRecipe[]
-=======
-  id                   String              @id @default(uuid())
-  name                 String
-  code                 String
-  unit                 String
-  minStockLevel        Decimal             @db.Decimal(10, 3)
-  maxStockLevel        Decimal             @db.Decimal(10, 3)
-  supplierId           String?
-  type                 String?
-  isActive             Boolean
-  createdBy            String?
-  modifiedBy           String?
-  ingredientCategoryId String?
-  status               Int                 @default(0)
-  createdAt            DateTime            @default(now())
-  metadata             Json?
-  restaurantId         String
-  updatedAt            DateTime
-  dishRecipes          DishRecipe[]
-  category             IngredientCategory? @relation(fields: [ingredientCategoryId], references: [id])
-  Restaurants          Restaurants         @relation(fields: [restaurantId], references: [id])
-  supplier             Supplier?           @relation(fields: [supplierId], references: [id])
-  inventoryStock       InventoryStock?
-  stockTransactions    StockTransaction[]
->>>>>>> Stashed changes
 
   @@unique([code, restaurantId])
   @@index([restaurantId])
@@ -640,12 +427,11 @@ model Ingredient {
 }
 
 model InventoryStock {
-  id              String     @id @default(uuid())
-  ingredientId    String     @unique
-  currentQuantity Decimal    @db.Decimal(10, 3)
+  id              String    @id @default(uuid())
+  ingredientId    String    @unique
+  currentQuantity Decimal   @db.Decimal(10, 3)
   lastRestockDate DateTime?
   lastUpdated     DateTime
-<<<<<<< Updated upstream
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
   createdBy       String?
@@ -653,20 +439,11 @@ model InventoryStock {
   metadata        Json?
 
   ingredient Ingredient @relation(fields: [ingredientId], references: [id], onDelete: Cascade)
-=======
-  createdBy       String?
-  modifiedBy      String?
-  createdAt       DateTime   @default(now())
-  metadata        Json?
-  updatedAt       DateTime
-  ingredient      Ingredient @relation(fields: [ingredientId], references: [id], onDelete: Cascade)
->>>>>>> Stashed changes
 
   @@map("InventoryStocks")
 }
 
 model StockTransaction {
-<<<<<<< Updated upstream
   id              String   @id @default(uuid())
   ingredientId    String
   transactionType String?
@@ -681,21 +458,6 @@ model StockTransaction {
   metadata        Json?
 
   ingredient Ingredient @relation(fields: [ingredientId], references: [id])
-=======
-  id              String     @id @default(uuid())
-  ingredientId    String
-  transactionType String?
-  quantity        Decimal    @db.Decimal(10, 3)
-  unitPrice       Decimal    @db.Decimal(18, 2)
-  totalAmount     Decimal    @db.Decimal(18, 2)
-  reference       String?
-  createdBy       String?
-  modifiedBy      String?
-  createdAt       DateTime   @default(now())
-  metadata        Json?
-  updatedAt       DateTime
-  ingredient      Ingredient @relation(fields: [ingredientId], references: [id])
->>>>>>> Stashed changes
 
   @@index([ingredientId])
   @@index([createdAt])
@@ -703,7 +465,6 @@ model StockTransaction {
 }
 
 model DishRecipe {
-<<<<<<< Updated upstream
   id           String   @id @default(uuid())
   dishId       String
   ingredientId String
@@ -716,24 +477,10 @@ model DishRecipe {
 
   dish       Dish       @relation(fields: [dishId], references: [id], onDelete: Cascade)
   ingredient Ingredient @relation(fields: [ingredientId], references: [id])
-=======
-  id           String     @id @default(uuid())
-  dishId       String
-  ingredientId String
-  quantity     Decimal    @db.Decimal(10, 3)
-  createdBy    String?
-  modifiedBy   String?
-  createdAt    DateTime   @default(now())
-  metadata     Json?
-  updatedAt    DateTime
-  dish         Dish       @relation(fields: [dishId], references: [id], onDelete: Cascade)
-  ingredient   Ingredient @relation(fields: [ingredientId], references: [id])
->>>>>>> Stashed changes
 
   @@map("DishRecipes")
 }
 
-<<<<<<< Updated upstream
 // ─── Combos ────────────────────────────────────────────────────────────────────
 
 model MealCombo {
@@ -753,27 +500,9 @@ model MealCombo {
   metadata     Json?
 
   restaurant   Restaurant                @relation(fields: [restaurantId], references: [id])
-=======
-model MealCombo {
-  id           String                    @id @default(uuid())
-  name         String
-  code         String
-  description  String
-  imageUrl     String?
-  baseCost     Decimal                   @db.Decimal(18, 2)
-  price        Decimal                   @db.Decimal(18, 2)
-  isActive     Boolean
-  createdBy    String?
-  modifiedBy   String?
-  createdAt    DateTime                  @default(now())
-  metadata     Json?
-  restaurantId String
-  updatedAt    DateTime
->>>>>>> Stashed changes
   comboDetails ComboDetail[]
-  Restaurants  Restaurants               @relation(fields: [restaurantId], references: [id])
-  orderDetails OrderDetail[]
   promotions   PromotionApplicableItem[]
+  orderDetails OrderDetail[]
 
   @@unique([code, restaurantId])
   @@index([restaurantId])
@@ -781,7 +510,6 @@ model MealCombo {
 }
 
 model ComboDetail {
-<<<<<<< Updated upstream
   id         String   @id @default(uuid())
   comboId    String
   dishId     String
@@ -794,19 +522,6 @@ model ComboDetail {
 
   combo MealCombo @relation(fields: [comboId], references: [id], onDelete: Cascade)
   dish  Dish      @relation(fields: [dishId], references: [id])
-=======
-  id         String    @id @default(uuid())
-  comboId    String
-  dishId     String
-  quantity   Int
-  createdBy  String?
-  modifiedBy String?
-  createdAt  DateTime  @default(now())
-  metadata   Json?
-  updatedAt  DateTime
-  combo      MealCombo @relation(fields: [comboId], references: [id], onDelete: Cascade)
-  dish       Dish      @relation(fields: [dishId], references: [id])
->>>>>>> Stashed changes
 
   @@map("ComboDetails")
 }
@@ -821,21 +536,12 @@ model LoyaltyPointBand {
   discountPercentage Decimal  @db.Decimal(5, 2)
   benefitDescription String
   isActive           Boolean
-<<<<<<< Updated upstream
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
   createdBy          String?
   modifiedBy         String?
   logoColor          String?
   metadata           Json?
-=======
-  createdBy          String?
-  modifiedBy         String?
-  logoColor          String?
-  createdAt          DateTime @default(now())
-  metadata           Json?
-  updatedAt          DateTime
->>>>>>> Stashed changes
 
   @@map("LoyaltyPointBands")
 }
@@ -843,12 +549,8 @@ model LoyaltyPointBand {
 // ─── Notifications ─────────────────────────────────────────────────────────────
 
 model Notification {
-<<<<<<< Updated upstream
   id               String    @id @default(uuid())
   restaurantId     String?
-=======
-  id               String       @id @default(uuid())
->>>>>>> Stashed changes
   recipientId      String?
   notificationType String?
   isBroadcast      Boolean
@@ -858,21 +560,11 @@ model Notification {
   priority         String?
   isPublished      Boolean
   expiryDate       DateTime?
-<<<<<<< Updated upstream
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt
   createdBy        String?
   modifiedBy       String?
   metadata         Json?
-=======
-  createdBy        String?
-  modifiedBy       String?
-  createdAt        DateTime     @default(now())
-  metadata         Json?
-  restaurantId     String?
-  updatedAt        DateTime
-  Restaurants      Restaurants? @relation(fields: [restaurantId], references: [id])
->>>>>>> Stashed changes
 
   restaurant Restaurant? @relation(fields: [restaurantId], references: [id])
 
@@ -880,17 +572,12 @@ model Notification {
   @@index([recipientId])
   @@index([isPublished])
   @@index([createdAt])
-<<<<<<< Updated upstream
-=======
-  @@index([restaurantId])
->>>>>>> Stashed changes
   @@map("Notifications")
 }
 
 // ─── Promotions ────────────────────────────────────────────────────────────────
 
 model Promotion {
-<<<<<<< Updated upstream
   id                String   @id @default(uuid())
   code              String
   restaurantId      String
@@ -899,21 +586,11 @@ model Promotion {
   discountType      String   @default("PERCENTAGE")
   maxDiscountAmount Decimal  @db.Decimal(18, 2)
   minOrderAmount    Decimal  @db.Decimal(18, 2)
-=======
-  id                String                    @id @default(uuid())
-  code              String
-  name              String
-  discountValue     Decimal                   @db.Decimal(18, 2)
-  discountType      String                    @default("PERCENTAGE")
-  maxDiscountAmount Decimal                   @db.Decimal(18, 2)
-  minOrderAmount    Decimal                   @db.Decimal(18, 2)
->>>>>>> Stashed changes
   usageLimit        Int
   usagePerCustomer  Int
   validFrom         DateTime
   validTo           DateTime
   isActive          Boolean
-<<<<<<< Updated upstream
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
   createdBy         String?
@@ -923,17 +600,6 @@ model Promotion {
   restaurant      Restaurant                 @relation(fields: [restaurantId], references: [id])
   applicableItems PromotionApplicableItem[]
   histories       PromotionHistory[]
-=======
-  createdBy         String?
-  modifiedBy        String?
-  createdAt         DateTime                  @default(now())
-  metadata          Json?
-  restaurantId      String
-  updatedAt         DateTime
-  applicableItems   PromotionApplicableItem[]
-  histories         PromotionHistory[]
-  Restaurants       Restaurants               @relation(fields: [restaurantId], references: [id])
->>>>>>> Stashed changes
 
   @@unique([code, restaurantId])
   @@index([restaurantId])
@@ -941,16 +607,11 @@ model Promotion {
 }
 
 model PromotionApplicableItem {
-<<<<<<< Updated upstream
   id         String   @id @default(uuid())
-=======
-  id          String     @id @default(uuid())
->>>>>>> Stashed changes
   promotionId String
   dishId      String?
   categoryId  String?
   comboId     String?
-<<<<<<< Updated upstream
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
   createdBy   String?
@@ -961,17 +622,6 @@ model PromotionApplicableItem {
   dish      Dish?      @relation(fields: [dishId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   category  Category?  @relation(fields: [categoryId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   combo     MealCombo? @relation(fields: [comboId], references: [id], onDelete: NoAction, onUpdate: NoAction)
-=======
-  createdBy   String?
-  modifiedBy  String?
-  createdAt   DateTime   @default(now())
-  metadata    Json?
-  updatedAt   DateTime
-  category    Category?  @relation(fields: [categoryId], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  combo       MealCombo? @relation(fields: [comboId], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  dish        Dish?      @relation(fields: [dishId], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  promotion   Promotion  @relation(fields: [promotionId], references: [id], onDelete: Cascade)
->>>>>>> Stashed changes
 
   @@map("PromotionApplicableItems")
 }
@@ -979,7 +629,6 @@ model PromotionApplicableItem {
 // ─── Status ────────────────────────────────────────────────────────────────────
 
 model StatusType {
-<<<<<<< Updated upstream
   id         String   @id @default(uuid())
   code       String   @unique
   createdAt  DateTime @default(now())
@@ -988,22 +637,12 @@ model StatusType {
   modifiedBy String?
   metadata   Json?
 
-=======
-  id           String        @id
-  code         String        @unique
-  createdBy    String?
-  modifiedBy   String?
-  createdAt    DateTime      @default(now())
-  metadata     Json?
-  updatedAt    DateTime
->>>>>>> Stashed changes
   statusValues StatusValue[]
 
   @@map("StatusTypes")
 }
 
 model StatusValue {
-<<<<<<< Updated upstream
   id           String   @id @default(uuid())
   statusTypeId String
   code         String
@@ -1023,26 +662,6 @@ model StatusValue {
   employeeSchedules EmployeeSchedule[] @relation("ScheduleStatus")
   reservations      Reservation[]      @relation("ReservationStatus")
   orderDetails      OrderDetail[]      @relation("OrderDetailStatus")
-=======
-  id                String             @id
-  statusTypeId      String
-  code              String
-  name              String
-  colorCode         String?
-  isDefault         Boolean            @default(false)
-  createdBy         String?
-  modifiedBy        String?
-  displayOrder      Int                @default(1)
-  isSystem          Boolean            @default(true)
-  createdAt         DateTime           @default(now())
-  metadata          Json?
-  updatedAt         DateTime
-  employeeSchedules EmployeeSchedule[]
-  orderDetails      OrderDetail[]
-  reservations      Reservation[]
-  statusType        StatusType         @relation(fields: [statusTypeId], references: [id])
-  Tables            Table[]
->>>>>>> Stashed changes
 
   @@map("StatusValues")
 }
@@ -1050,7 +669,6 @@ model StatusValue {
 // ─── Scheduling ────────────────────────────────────────────────────────────────
 
 model EmployeeSchedule {
-<<<<<<< Updated upstream
   id           String    @id @default(uuid())
   employeeId   String
   workDate     DateTime  @db.Date
@@ -1067,23 +685,6 @@ model EmployeeSchedule {
 
   employee    Employee    @relation(fields: [employeeId], references: [id])
   statusValue StatusValue @relation("ScheduleStatus", fields: [statusId], references: [id])
-=======
-  id           String      @id @default(uuid())
-  employeeId   String
-  workDate     DateTime    @db.Date
-  startTime    DateTime    @db.Time(6)
-  endTime      DateTime    @db.Time(6)
-  checkInTime  DateTime?
-  checkOutTime DateTime?
-  createdBy    String?
-  modifiedBy   String?
-  statusId     String
-  createdAt    DateTime    @default(now())
-  metadata     Json?
-  updatedAt    DateTime
-  employee     Employee    @relation(fields: [employeeId], references: [id])
-  statusValue  StatusValue @relation(fields: [statusId], references: [id])
->>>>>>> Stashed changes
 
   @@index([employeeId])
   @@index([workDate])
@@ -1094,7 +695,6 @@ model EmployeeSchedule {
 // ─── Reservations ──────────────────────────────────────────────────────────────
 
 model ReservationTable {
-<<<<<<< Updated upstream
   id            String   @id @default(uuid())
   reservationId String
   tableId       String
@@ -1105,32 +705,20 @@ model ReservationTable {
 
   reservation Reservation @relation(fields: [reservationId], references: [id], onDelete: Cascade)
   table       Table       @relation(fields: [tableId], references: [id])
-=======
-  id            String      @id @default(uuid())
-  reservationId String
-  tableId       String
-  assignedAt    DateTime    @default(now())
-  assignedBy    String?
-  createdAt     DateTime    @default(now())
-  updatedAt     DateTime
-  reservation   Reservation @relation(fields: [reservationId], references: [id], onDelete: Cascade)
-  table         Table       @relation(fields: [tableId], references: [id])
->>>>>>> Stashed changes
 
   @@unique([reservationId, tableId])
   @@map("ReservationTables")
 }
 
 model Reservation {
-  id                  String             @id @default(uuid())
+  id                  String    @id @default(uuid())
   customerId          String
   restaurantId        String
   numberOfGuests      Int
   time                DateTime
   specialRequests     String?
-  depositAmount       Decimal            @db.Decimal(18, 2)
+  depositAmount       Decimal   @db.Decimal(18, 2)
   checkedInAt         DateTime?
-<<<<<<< Updated upstream
   createdAt           DateTime  @default(now())
   updatedAt           DateTime  @updatedAt
   createdBy           String?
@@ -1146,36 +734,17 @@ model Reservation {
   orders      Order[]
   payments    Payment[]
   tables      ReservationTable[]
-=======
-  createdBy           String?
-  modifiedBy          String?
-  reservationStatusId String
-  confirmationCode    String?            @unique
-  paymentDeadline     DateTime?
-  createdAt           DateTime           @default(now())
-  metadata            Json?
-  restaurantId        String
-  updatedAt           DateTime
-  orders              Order[]
-  payments            Payment[]
-  tables              ReservationTable[]
-  customer            Customer           @relation(fields: [customerId], references: [id])
-  statusValue         StatusValue        @relation(fields: [reservationStatusId], references: [id])
-  Restaurants         Restaurants        @relation(fields: [restaurantId], references: [id])
->>>>>>> Stashed changes
 
   @@index([restaurantId])
   @@index([customerId])
   @@index([reservationStatusId])
   @@index([time])
-  @@index([restaurantId])
   @@map("Reservations")
 }
 
 // ─── Orders & Payments ─────────────────────────────────────────────────────────
 
 model Order {
-<<<<<<< Updated upstream
   id             String    @id @default(uuid())
   reference      String    @unique
   restaurantId   String
@@ -1200,63 +769,28 @@ model Order {
   customer           Customer?           @relation(fields: [customerId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   reservation        Reservation?        @relation(fields: [reservationId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   employee           Employee?           @relation(fields: [handledBy], references: [id], onDelete: NoAction, onUpdate: NoAction)
-=======
-  id                 String              @id @default(uuid())
-  reference          String              @unique
-  customerId         String?
-  reservationId      String?
-  subTotal           Decimal             @db.Decimal(18, 2)
-  discountAmount     Decimal             @db.Decimal(18, 2)
-  taxAmount          Decimal             @db.Decimal(18, 2)
-  serviceCharge      Decimal             @db.Decimal(18, 2)
-  totalAmount        Decimal             @db.Decimal(18, 2)
-  completedAt        DateTime?
-  cancelledAt        DateTime?
-  handledBy          String?
-  createdBy          String?
-  modifiedBy         String?
-  orderStatusId      String
-  createdAt          DateTime            @default(now())
-  metadata           Json?
-  restaurantId       String
-  updatedAt          DateTime
-  feedbacks          Feedback[]
->>>>>>> Stashed changes
   orderDetails       OrderDetail[]
-  customer           Customer?           @relation(fields: [customerId], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  employee           Employee?           @relation(fields: [handledBy], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  reservation        Reservation?        @relation(fields: [reservationId], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  Restaurants        Restaurants         @relation(fields: [restaurantId], references: [id])
   payments           Payment[]
   pointsTransactions PointsTransaction[]
   promotionHistories PromotionHistory[]
   tableSessions      TableSession[]
+  feedbacks          Feedback[]
 
   @@index([restaurantId])
   @@index([customerId])
   @@index([reservationId])
   @@index([orderStatusId])
-<<<<<<< Updated upstream
   @@index([createdAt])
-=======
->>>>>>> Stashed changes
   @@index([handledBy])
-  @@index([createdAt])
-  @@index([restaurantId])
   @@map("Orders")
 }
 
 model OrderDetail {
-<<<<<<< Updated upstream
   id           String   @id @default(uuid())
-=======
-  id           String        @id @default(uuid())
->>>>>>> Stashed changes
   orderId      String
   dishId       String?
   quantity     Int
   note         String?
-<<<<<<< Updated upstream
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
   createdBy    String?
@@ -1275,25 +809,6 @@ model OrderDetail {
   statusValue StatusValue   @relation("OrderDetailStatus", fields: [itemStatusId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   parent      OrderDetail?  @relation("OrderDetailHierarchy", fields: [parentId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   children    OrderDetail[] @relation("OrderDetailHierarchy")
-=======
-  createdBy    String?
-  modifiedBy   String?
-  itemStatusId String
-  unitPrice    Decimal       @default(0.0) @db.Decimal(18, 2)
-  comboId      String?
-  parentId     String?
-  comboName    String?
-  comboPrice   Decimal?      @db.Decimal(18, 2)
-  createdAt    DateTime      @default(now())
-  metadata     Json?
-  updatedAt    DateTime
-  combo        MealCombo?    @relation(fields: [comboId], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  dish         Dish?         @relation(fields: [dishId], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  statusValue  StatusValue   @relation(fields: [itemStatusId], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  order        Order         @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  parent       OrderDetail?  @relation("OrderDetailHierarchy", fields: [parentId], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  children     OrderDetail[] @relation("OrderDetailHierarchy")
->>>>>>> Stashed changes
 
   @@index([orderId])
   @@index([dishId])
@@ -1315,18 +830,17 @@ model PaymentMethod {
 }
 
 model Payment {
-  id              String         @id @default(uuid())
+  id              String    @id @default(uuid())
   orderId         String?
   reservationId   String?
   paymentMethodId String
   transactionId   String?
-  amount          Decimal        @db.Decimal(18, 2)
-  cashReceive     Decimal        @db.Decimal(18, 2)
-  paymentDate     DateTime       @default(now())
-  cashback        Decimal        @db.Decimal(18, 2)
+  amount          Decimal   @db.Decimal(18, 2)
+  cashReceive     Decimal   @db.Decimal(18, 2)
+  paymentDate     DateTime  @default(now())
+  cashback        Decimal   @db.Decimal(18, 2)
   refundDate      DateTime?
   processedBy     String?
-<<<<<<< Updated upstream
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
   createdBy       String?
@@ -1341,21 +855,6 @@ model Payment {
   reservation   Reservation?  @relation(fields: [reservationId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   employee      Employee?     @relation(fields: [processedBy], references: [id], onDelete: NoAction, onUpdate: NoAction)
   paymentMethod PaymentMethod @relation(fields: [paymentMethodId], references: [id])
-=======
-  createdBy       String?
-  modifiedBy      String?
-  checkoutUrl     String?
-  payOSOrderCode  BigInt?        @unique
-  status          Int            @default(0)
-  purpose         Int            @default(0)
-  createdAt       DateTime       @default(now())
-  metadata        Json?
-  updatedAt       DateTime
-  order           Order?         @relation(fields: [orderId], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  PaymentMethods  PaymentMethods @relation(fields: [paymentMethodId], references: [id])
-  employee        Employee?      @relation(fields: [processedBy], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  reservation     Reservation?   @relation(fields: [reservationId], references: [id], onDelete: NoAction, onUpdate: NoAction)
->>>>>>> Stashed changes
 
   @@index([orderId])
   @@index([reservationId])
@@ -1369,7 +868,6 @@ model Payment {
 model PointsTransaction {
   id          String   @id @default(uuid())
   customerId  String
-<<<<<<< Updated upstream
   type        String // "EARN" | "REDEEM" | "BONUS" | "ADJUSTMENT" | "EXPIRE"
   points      Int
   orderId     String?
@@ -1383,20 +881,6 @@ model PointsTransaction {
 
   customer Customer @relation(fields: [customerId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   order    Order?   @relation(fields: [orderId], references: [id], onDelete: NoAction, onUpdate: NoAction)
-=======
-  type        String
-  points      Int
-  orderId     String?
-  description String?
-  createdBy   String?
-  modifiedBy  String?
-  createdAt   DateTime @default(now())
-  metadata    Json?
-  sourceType  String?
-  updatedAt   DateTime
-  customer    Customer @relation(fields: [customerId], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  order       Order?   @relation(fields: [orderId], references: [id], onDelete: NoAction, onUpdate: NoAction)
->>>>>>> Stashed changes
 
   @@map("PointsTransactions")
 }
@@ -1405,7 +889,6 @@ model PromotionHistory {
   id             String   @id @default(uuid())
   promotionId    String
   orderId        String
-<<<<<<< Updated upstream
   discountAmount Decimal  @db.Decimal(18, 2)
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
@@ -1415,16 +898,6 @@ model PromotionHistory {
 
   order     Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
   promotion Promotion @relation(fields: [promotionId], references: [id])
-=======
-  discountAmount Decimal   @db.Decimal(18, 2)
-  createdBy      String?
-  modifiedBy     String?
-  createdAt      DateTime  @default(now())
-  metadata       Json?
-  updatedAt      DateTime
-  order          Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  promotion      Promotion @relation(fields: [promotionId], references: [id])
->>>>>>> Stashed changes
 
   @@map("PromotionHistories")
 }
@@ -1438,7 +911,6 @@ model TableSession {
   startedAt  DateTime
   endedAt    DateTime?
   isActive   Boolean
-<<<<<<< Updated upstream
   createdAt  DateTime  @default(now())
   updatedAt  DateTime  @updatedAt
   createdBy  String?
@@ -1447,15 +919,6 @@ model TableSession {
 
   table Table  @relation(fields: [tableId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   order Order? @relation(fields: [orderId], references: [id], onDelete: NoAction, onUpdate: NoAction)
-=======
-  createdBy  String?
-  modifiedBy String?
-  createdAt  DateTime  @default(now())
-  metadata   Json?
-  updatedAt  DateTime
-  order      Order?    @relation(fields: [orderId], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  table      Table     @relation(fields: [tableId], references: [id], onDelete: NoAction, onUpdate: NoAction)
->>>>>>> Stashed changes
 
   @@index([tableId])
   @@index([isActive])
@@ -1466,7 +929,6 @@ model TableSession {
 // ─── Feedback ──────────────────────────────────────────────────────────────────
 
 model Feedback {
-<<<<<<< Updated upstream
   id         String   @id @default(uuid())
   orderId    String
   customerId String
@@ -1483,23 +945,6 @@ model Feedback {
   order    Order           @relation(fields: [orderId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   customer Customer        @relation(fields: [customerId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   images   FeedbackImage[]
-=======
-  id          String          @id @default(uuid())
-  orderId     String
-  customerId  String
-  rating      Int
-  comment     String?
-  isPublished Boolean
-  isAnonymous Boolean
-  createdBy   String?
-  modifiedBy  String?
-  createdAt   DateTime        @default(now())
-  metadata    Json?
-  updatedAt   DateTime
-  images      FeedbackImage[]
-  customer    Customer        @relation(fields: [customerId], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  order       Order           @relation(fields: [orderId], references: [id], onDelete: NoAction, onUpdate: NoAction)
->>>>>>> Stashed changes
 
   @@unique([orderId, customerId])
   @@map("Feedbacks")
@@ -1511,7 +956,6 @@ model FeedbackImage {
   imageUrl     String
   displayOrder Int
   isCover      Boolean
-<<<<<<< Updated upstream
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
   createdBy    String?
@@ -1519,19 +963,10 @@ model FeedbackImage {
   metadata     Json?
 
   feedback Feedback @relation(fields: [feedbackId], references: [id], onDelete: Cascade)
-=======
-  createdBy    String?
-  modifiedBy   String?
-  createdAt    DateTime @default(now())
-  metadata     Json?
-  updatedAt    DateTime
-  feedback     Feedback @relation(fields: [feedbackId], references: [id], onDelete: Cascade)
->>>>>>> Stashed changes
 
   @@map("FeedbackImages")
 }
 
-<<<<<<< Updated upstream
 // ─── AI Chat ───────────────────────────────────────────────────────────────────
 
 model AIChatSession {
@@ -1669,132 +1104,3 @@ model RestaurantBucket {
   @@map("RestaurantBuckets")
 }
 
-=======
-/// This model contains an expression index which requires additional setup for migrations. Visit https://pris.ly/d/expression-indexes for more info.
-model DocumentChunks {
-  id                  String                @id
-  documentId          String
-  content             String
-  embedding           Unsupported("vector")
-  metadata            Json?
-  createdAt           DateTime              @default(now())
-  RestaurantDocuments RestaurantDocuments   @relation(fields: [documentId], references: [id], onDelete: Cascade)
-
-  @@index([documentId])
-}
-
-model PaymentMethods {
-  id        String    @id
-  code      String    @unique
-  name      String
-  isActive  Boolean   @default(true)
-  createdAt DateTime  @default(now())
-  Payments  Payment[]
-}
-
-model RestaurantApplications {
-  id                                             String    @id
-  userId                                         String
-  restaurantName                                 String
-  slug                                           String
-  description                                    String?
-  address                                        String
-  phone                                          String
-  email                                          String
-  logoUrl                                        String?
-  latitude                                       Float?
-  longitude                                      Float?
-  cuisineType                                    String?   @default("other")
-  businessLicenseEnc                             String?
-  ownershipProofEnc                              String?
-  nationalIdEnc                                  String?
-  nationalIdBackEnc                              String?
-  status                                         String    @default("PENDING")
-  reviewedBy                                     String?
-  reviewNote                                     String?
-  reviewedAt                                     DateTime?
-  createdAt                                      DateTime  @default(now())
-  updatedAt                                      DateTime
-  Users_RestaurantApplications_reviewedByToUsers User?     @relation("RestaurantApplications_reviewedByToUsers", fields: [reviewedBy], references: [id])
-  Users_RestaurantApplications_userIdToUsers     User      @relation("RestaurantApplications_userIdToUsers", fields: [userId], references: [id], onDelete: Cascade)
-
-  @@index([status])
-  @@index([userId])
-}
-
-model RestaurantBuckets {
-  id                  String                @id
-  restaurantId        String
-  name                String
-  url                 String
-  description         String?
-  isChatEnabled       Boolean               @default(true)
-  createdAt           DateTime              @default(now())
-  updatedAt           DateTime
-  chunkOverlap        Int                   @default(100)
-  chunkSize           Int                   @default(800)
-  chunkingStrategy    String                @default("FIXED")
-  isMounted           Boolean               @default(false)
-  Restaurants         Restaurants           @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
-  RestaurantDocuments RestaurantDocuments[]
-
-  @@unique([restaurantId, name])
-}
-
-model RestaurantDocuments {
-  id                String             @id
-  restaurantId      String
-  filename          String
-  fileUrl           String
-  fileType          String
-  status            String             @default("PENDING")
-  createdAt         DateTime           @default(now())
-  updatedAt         DateTime
-  bucketId          String?
-  DocumentChunks    DocumentChunks[]
-  RestaurantBuckets RestaurantBuckets? @relation(fields: [bucketId], references: [id], onDelete: Cascade)
-  Restaurants       Restaurants        @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
-
-  @@index([bucketId])
-  @@index([restaurantId])
-}
-
-model Restaurants {
-  id                   String                @id
-  name                 String
-  slug                 String                @unique
-  ownerId              String
-  planType             String                @default("FREE")
-  logoUrl              String?
-  description          String?
-  address              String?
-  phone                String?
-  email                String?
-  primaryColor         String?               @default("#FF380B")
-  isActive             Boolean               @default(true)
-  createdAt            DateTime              @default(now())
-  updatedAt            DateTime
-  metadata             Json?
-  cuisineType          String?               @default("other")
-  latitude             Float?
-  longitude            Float?
-  AIChatSessions       AIChatSession[]
-  Categories           Category[]
-  Dishes               Dish[]
-  Employees            Employee[]
-  Floors               Floor[]
-  IngredientCategories IngredientCategory[]
-  Ingredients          Ingredient[]
-  MealCombos           MealCombo[]
-  Notifications        Notification[]
-  Orders               Order[]
-  Promotions           Promotion[]
-  Reservations         Reservation[]
-  RestaurantBuckets    RestaurantBuckets[]
-  RestaurantDocuments  RestaurantDocuments[]
-  Users                User                  @relation(fields: [ownerId], references: [id])
-  Suppliers            Supplier[]
-  Tables               Table[]
-  UserRoles            UserRole[]
-}
->>>>>>> Stashed changes

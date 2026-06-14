@@ -7,7 +7,7 @@
  */
 
 import { Router, type Router as ExpressRouter } from 'express';
-import { authMiddleware } from './auth';
+import { authMiddleware } from '../models/routes/auth';
 import { getMyProfile, updateMyProfile, changePassword } from '../controllers/user.controller';
 
 const router: ExpressRouter = Router();

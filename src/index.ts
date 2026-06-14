@@ -6,6 +6,7 @@ import tenantRoutes from './models/routes/tenants';
 import restaurantApplicationRoutes from './models/routes/restaurant-applications';
 import restaurantRoutes from './models/routes/restaurants';
 import userRoutes from './models/routes/users';
+import employeeRoutes from './models/routes/employees';
 import aiRoutes from './models/routes/ai';
 import categoryRoutes from './models/routes/categories';
 import dishRoutes from './models/routes/dishes';
@@ -35,6 +36,7 @@ app.use((req, res, next) => {
 // Routes
 app.use(API_ROUTES.AUTH.BASE, authRoutes);
 app.use(API_ROUTES.USERS.BASE, userRoutes);
+app.use(API_ROUTES.EMPLOYEES.BASE, employeeRoutes);
 app.use('/api/restaurants', restaurantRoutes);
 app.use(API_ROUTES.TENANTS.BASE, tenantRoutes);
 app.use(API_ROUTES.RESTAURANT_APPLICATIONS.BASE, restaurantApplicationRoutes);
