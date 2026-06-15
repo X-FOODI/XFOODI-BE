@@ -3,7 +3,7 @@ import { walletService } from '../../services/wallet.service';
 import { requireRole } from '../../middlewares/requireRole';
 import { authMiddleware } from './auth';
 
-const router = Router();
+const router: Router = Router();
 
 router.use(authMiddleware);
 

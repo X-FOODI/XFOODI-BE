@@ -5,7 +5,7 @@ import { authMiddleware } from './auth';
 import { ENV } from '../../config/env';
 import QRCode from 'qrcode';
 
-const router = Router();
+const router: Router = Router();
 
 cloudinary.config({
   cloud_name: ENV.CLOUDINARY.CLOUD_NAME,

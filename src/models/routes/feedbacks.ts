@@ -2,7 +2,7 @@ import { Router, Response } from 'express';
 import { feedbackService } from '../../services/feedback.service';
 import { requireRole } from '../../middlewares/requireRole';
 
-const router = Router();
+const router: Router = Router();
 
 // ── Customer: submit feedback for an order ───────────────────────────────────
 router.post('/orders/:orderId', requireRole('Customer', 'Owner', 'Admin'), async (req: any, res: Response) => {

@@ -3,7 +3,7 @@ import { reservationService } from '../../services/reservation.service';
 import { requireRole } from '../../middlewares/requireRole';
 import { authMiddleware } from './auth';
 
-const router = Router();
+const router: Router = Router();
 
 // ── Customer: create reservation ─────────────────────────────────────────────
 router.post('/', authMiddleware, requireRole('Customer', 'Owner', 'Admin'), async (req: any, res: Response) => {

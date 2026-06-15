@@ -9,7 +9,7 @@ import {
 } from '../../controllers/order.controller';
 import { getIO } from '../../socket';
 
-const router = Router();
+const router: Router = Router();
 
 // ── Test API ─────────────────────────────────────────────────────────────────
 // Simulates a mock order broadcast for testing socket connections.

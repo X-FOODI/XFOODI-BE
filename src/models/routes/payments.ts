@@ -4,7 +4,7 @@ import { requireRole } from '../../middlewares/requireRole';
 import { PaymentPurpose } from '../../enums/payment.enum';
 import { authMiddleware } from './auth';
 
-const router = Router();
+const router: Router = Router();
 
 // ── List payments (staff/admin) ──────────────────────────────────────────────
 router.get('/', authMiddleware, requireRole('Owner', 'Admin', 'Staff'), async (req, res) => {
