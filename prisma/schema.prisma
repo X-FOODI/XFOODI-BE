@@ -2,6 +2,10 @@ generator client {
   provider = "prisma-client-js"
 }
 
+generator dbml {
+  provider = "prisma-dbml-generator"
+}
+
 datasource db {
   provider  = "postgresql"
   url       = env("DATABASE_URL")
@@ -48,9 +52,11 @@ model Restaurant {
   aiChatSessions       AIChatSession[]
   documents            RestaurantDocument[]
   buckets              RestaurantBucket[]
+  wallet               RestaurantWallet?
 
   @@map("Restaurants")
 }
+
 
 // ─── Identity & Auth ───────────────────────────────────────────────────────────
 
@@ -309,6 +315,7 @@ model Dish {
   description        String
   price              Decimal  @db.Decimal(18, 2)
   unit               String
+  imageUrl           String?
   isVegetarian       Boolean  @default(false)
   isSpicy            Boolean  @default(false)
   isBestSeller       Boolean  @default(false)
@@ -1073,7 +1080,7 @@ model DocumentChunk {
   id         String   @id @default(uuid())
   documentId String
   content    String   @db.Text
-  embedding  Unsupported("vector(768)")
+  embedding  Unsupported("public.vector(768)")
   metadata   Json?
   createdAt  DateTime @default(now())
 
@@ -1104,5 +1111,74 @@ model RestaurantBucket {
 
   @@unique([restaurantId, name])
   @@map("RestaurantBuckets")
+}
+
+// ─── Restaurant Wallet (Revenue) ───────────────────────────────────────────────
+
+/// Tracks each restaurant owner's accumulated revenue.
+/// Money physically sits in admin's bank account; this is a ledger balance.
+model RestaurantWallet {
+  id             String   @id @default(uuid())
+  restaurantId   String   @unique
+  balance        Decimal  @default(0) @db.Decimal(18, 2) // Available to withdraw (Online Transfer)
+  cashBalance    Decimal  @default(0) @db.Decimal(18, 2) // Directly collected cash
+  lifetimeEarned Decimal  @default(0) @db.Decimal(18, 2) // Total ever earned (Cash + Online Transfer)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  restaurant    Restaurant           @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  transactions  WalletTransaction[]
+  withdrawals   WithdrawalRequest[]
+
+  @@map("RestaurantWallets")
+}
+
+model WalletTransaction {
+  id           String   @id @default(uuid())
+  walletId     String
+  type         String   // "ORDER_REVENUE" | "WITHDRAWAL_DEBIT" | "ADJUSTMENT"
+  amount       Decimal  @db.Decimal(18, 2)
+  balanceBefore Decimal @db.Decimal(18, 2)
+  balanceAfter Decimal  @db.Decimal(18, 2)
+  orderId      String?
+  paymentId    String?
+  description  String?
+  metadata     Json?
+  createdAt    DateTime @default(now())
+
+  wallet RestaurantWallet @relation(fields: [walletId], references: [id], onDelete: Cascade)
+
+  @@index([walletId])
+  @@index([type])
+  @@index([createdAt])
+  @@map("WalletTransactions")
+}
+
+/// Withdrawal request from restaurant owner.
+/// Admin approves → PayOS disburses → balance deducted.
+model WithdrawalRequest {
+  id             String    @id @default(uuid())
+  walletId       String
+  restaurantId   String
+  amount         Decimal   @db.Decimal(18, 2)
+  status         String    @default("PENDING") // PENDING | PROCESSING | COMPLETED | FAILED | CANCELLED
+  bankCode       String    // e.g. "MB", "VCB"
+  bankBin        String    // e.g. "970422" for MBBank
+  accountNumber  String
+  accountName    String
+  adminNote      String?
+  rejectionReason String?
+  externalTxId   String?   // PayOS transaction ID
+  processedBy    String?   // Admin userId
+  processedAt    DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  wallet     RestaurantWallet @relation(fields: [walletId], references: [id])
+
+  @@index([walletId])
+  @@index([restaurantId])
+  @@index([status])
+  @@map("WithdrawalRequests")
 }
 
