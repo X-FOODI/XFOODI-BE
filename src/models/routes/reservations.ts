@@ -16,9 +16,15 @@ router.post('/', authMiddleware, requireRole('Customer', 'Owner', 'Admin'), asyn
     const { prismaStorage } = await import('../../lib/prisma');
     const db = prismaStorage.getStore() as InstanceType<typeof PrismaClient>;
 
-    const customer = await db.customer.findFirst({ where: { userId: user.id } });
+    let customer = await db.customer.findFirst({ where: { userId: user.id } });
     if (!customer) {
-      return res.status(400).json({ success: false, message: 'Customer profile not found' });
+      customer = await db.customer.create({
+        data: {
+          userId: user.id,
+          loyaltyPoints: 0,
+          isActive: true
+        }
+      });
     }
 
     const dto = {
@@ -59,8 +65,16 @@ router.get('/my', authMiddleware, requireRole('Customer'), async (req: any, res:
     const { PrismaClient } = await import('@prisma/client');
     const db = prismaStorage.getStore() as InstanceType<typeof PrismaClient>;
 
-    const customer = await db.customer.findFirst({ where: { userId: req.user.id } });
-    if (!customer) return res.json({ success: true, data: [] });
+    let customer = await db.customer.findFirst({ where: { userId: req.user.id } });
+    if (!customer) {
+      customer = await db.customer.create({
+        data: {
+          userId: req.user.id,
+          loyaltyPoints: 0,
+          isActive: true
+        }
+      });
+    }
 
     const { restaurantId } = req.query;
     const reservations = await reservationService.getMyReservations(customer.id, restaurantId as string);

@@ -17,6 +17,7 @@ import floorsRoutes from './models/routes/floors';
 import tablesRoutes from './models/routes/tables';
 import reservationRoutes from './models/routes/reservations';
 import paymentRoutes from './models/routes/payments';
+import feedbackRoutes from './models/routes/feedbacks';
 import walletRoutes from './models/routes/wallet';
 import { API_ROUTES } from './constants/routes';
 import { ENV } from './config/env';
@@ -214,6 +215,7 @@ app.use('/api/floors', floorsRoutes);
 app.use('/api/tables', tablesRoutes);
 app.use('/api/reservations', reservationRoutes);
 app.use('/api/payments', paymentRoutes);
+app.use('/api/feedbacks', feedbackRoutes);
 app.use('/api/wallet', walletRoutes);
 
 // Health check endpoint
