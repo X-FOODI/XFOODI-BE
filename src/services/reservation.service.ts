@@ -56,6 +56,20 @@ export class ReservationService {
     const pendingStatus = await this.getStatusByCode('PENDING');
     if (!pendingStatus) throw new Error('Status PENDING not configured');
 
+    // Calculate deposit amount dynamically (25,000 VND per seat capacity of selected tables, or per guest if auto-arranged)
+    let calculatedDeposit = 0;
+    if (dto.tableIds && dto.tableIds.length > 0) {
+      const tables = await prisma.table.findMany({
+        where: { id: { in: dto.tableIds } },
+        select: { seatingCapacity: true }
+      });
+      for (const t of tables) {
+        calculatedDeposit += t.seatingCapacity * 25000;
+      }
+    } else {
+      calculatedDeposit = dto.numberOfGuests * 25000;
+    }
+
     const reservation = await prisma.reservation.create({
       data: {
         restaurantId: dto.restaurantId,
@@ -63,7 +77,7 @@ export class ReservationService {
         numberOfGuests: dto.numberOfGuests,
         time: new Date(dto.time),
         specialRequests: dto.specialRequests,
-        depositAmount: dto.depositAmount ?? 0,
+        depositAmount: calculatedDeposit,
         reservationStatusId: pendingStatus.id,
         confirmationCode: generateConfirmationCode(),
         ...(dto.tableIds && dto.tableIds.length > 0
