@@ -151,3 +151,55 @@ export const sendApplicationRejectedEmail = async (
     `,
   });
 };
+
+export const sendReservationConfirmationEmail = async (
+  email: string,
+  details: {
+    restaurantName: string;
+    confirmationCode: string;
+    numberOfGuests: number;
+    time: string;
+    specialRequests?: string;
+  }
+) => {
+  const formattedTime = new Date(details.time).toLocaleString('vi-VN', {
+    timeZone: 'Asia/Ho_Chi_Minh',
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  });
+
+  await sendEmail({
+    to: email,
+    from: FROM,
+    replyTo: ENV.SENDGRID.EMAIL_REPLY_TO,
+    subject: `[XFoodi] Xác nhận đặt bàn thành công tại ${details.restaurantName}`,
+    text: `Đặt bàn thành công! Mã nhận bàn của bạn là ${details.confirmationCode}. Thời gian: ${formattedTime}, Số khách: ${details.numberOfGuests}.`,
+    html: `
+      <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto; border: 1px solid #e5e7eb; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 6px rgba(0,0,0,0.05);">
+        <div style="background-color: #ff380b; padding: 24px; text-align: center;">
+          <h2 style="color: white; margin: 0; font-size: 24px;">Xác Nhận Đặt Bàn Thành Công</h2>
+        </div>
+        <div style="padding: 24px; color: #1f2937; line-height: 1.6;">
+          <p>Xin chào quý khách,</p>
+          <p>Cảm ơn quý khách đã tin tưởng và đặt bàn qua nền tảng <strong>XFoodi</strong>. Dưới đây là thông tin chi tiết về đặt bàn của quý khách:</p>
+          
+          <div style="background-color: #f9fafb; border: 1px solid #f3f4f6; border-radius: 6px; padding: 18px; margin: 20px 0;">
+            <p style="margin: 0 0 8px 0;"><strong>Nhà hàng:</strong> ${details.restaurantName}</p>
+            <p style="margin: 0 0 8px 0;"><strong>Thời gian:</strong> ${formattedTime}</p>
+            <p style="margin: 0 0 8px 0;"><strong>Số lượng khách:</strong> ${details.numberOfGuests} người</p>
+            ${details.specialRequests ? `<p style="margin: 0 0 8px 0;"><strong>Yêu cầu đặc biệt:</strong> ${details.specialRequests}</p>` : ''}
+            <div style="margin-top: 16px; padding-top: 16px; border-top: 1px dashed #e5e7eb; text-align: center;">
+              <span style="font-size: 14px; color: #6b7280; display: block; margin-bottom: 4px;">MÃ NHẬN BÀN CỦA BẠN</span>
+              <strong style="font-size: 28px; color: #ff380b; letter-spacing: 2px;">${details.confirmationCode}</strong>
+            </div>
+          </div>
+          
+          <p>Quý khách vui lòng xuất trình <strong>Mã nhận bàn</strong> ở trên cho nhân viên khi đến nhà hàng để được tiếp đón chu đáo nhất.</p>
+          <p style="margin-top: 32px; font-size: 13px; color: #6b7280; text-align: center; border-top: 1px solid #f3f4f6; padding-top: 16px;">
+            Nếu cần hỗ trợ hoặc hủy đặt bàn, quý khách vui lòng liên hệ trực tiếp với nhà hàng.
+          </p>
+        </div>
+      </div>
+    `,
+  });
+};
