@@ -869,15 +869,21 @@ router.get('/config', async (req: any, res: any) => {
     }
 
     const metadata = (restaurant.metadata as any) || {};
-    const aiConfig = metadata.aiConfig || {
-      isChatEnabled: true,
-      aiModel: ENV.AI.DEFAULT_MODEL,
-      temperature: restaurantId === 'system' ? ENV.AI.DEFAULT_TEMPERATURE : 0.2,
-      welcomeMessage: restaurantId === 'system' 
-        ? 'Trợ lý ảo hỗ trợ tìm hiểu về nền tảng SaaS quản lý nhà hàng XFoodi. Hãy hỏi tôi về các gói dịch vụ, giá thành hoặc cách đăng ký ngay!'
-        : `Chào mừng bạn đến với ${restaurant.name}! Tôi có thể tư vấn món ăn ngon, cách đặt bàn hay kết nối trực tiếp đến nhân viên phục vụ giúp bạn.`,
-      systemPrompt: ''
-    };
+    const defaultSuggestions = restaurantId === 'system'
+      ? ['Tính năng XFoodi 💡', 'Gói dịch vụ 🏷️', 'Cách đăng ký 📋']
+      : ['Xem thực đơn 📜', 'Giờ mở cửa 🕐', 'Đặt bàn 📅', 'Gọi phục vụ 🔔'];
+    const aiConfig = metadata.aiConfig
+      ? { quickSuggestions: defaultSuggestions, ...metadata.aiConfig }
+      : {
+          isChatEnabled: true,
+          aiModel: ENV.AI.DEFAULT_MODEL,
+          temperature: restaurantId === 'system' ? ENV.AI.DEFAULT_TEMPERATURE : 0.2,
+          welcomeMessage: restaurantId === 'system'
+            ? 'Trợ lý ảo hỗ trợ tìm hiểu về nền tảng SaaS quản lý nhà hàng XFoodi. Hãy hỏi tôi về các gói dịch vụ, giá thành hoặc cách đăng ký ngay!'
+            : `Chào mừng bạn đến với ${restaurant.name}! Tôi có thể tư vấn món ăn ngon, cách đặt bàn hay kết nối trực tiếp đến nhân viên phục vụ giúp bạn.`,
+          systemPrompt: '',
+          quickSuggestions: defaultSuggestions
+        };
 
     return res.json({ success: true, data: aiConfig });
   } catch (err: any) {
@@ -904,7 +910,7 @@ router.post('/config', authMiddleware, tenantGuard, async (req: any, res: any) =
       return res.status(400).json({ success: false, message: 'Không tìm thấy nhà hàng.' });
     }
 
-    const { isChatEnabled, aiModel, temperature, welcomeMessage, systemPrompt } = req.body;
+    const { isChatEnabled, aiModel, temperature, welcomeMessage, systemPrompt, quickSuggestions } = req.body;
 
     const restaurant = await prisma.restaurant.findUnique({
       where: { id: restaurantId }
@@ -920,7 +926,8 @@ router.post('/config', authMiddleware, tenantGuard, async (req: any, res: any) =
       aiModel: aiModel || ENV.AI.DEFAULT_MODEL,
       temperature: temperature !== undefined ? Number(temperature) : 0.2,
       welcomeMessage: welcomeMessage || '',
-      systemPrompt: systemPrompt || ''
+      systemPrompt: systemPrompt || '',
+      quickSuggestions: Array.isArray(quickSuggestions) ? quickSuggestions : []
     };
 
     await prisma.restaurant.update({

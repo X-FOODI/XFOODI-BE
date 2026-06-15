@@ -7,6 +7,78 @@ export interface ChatMessage {
   content: string;
 }
 
+/** 
+ * Hybrid RRF search (vector + full-text).
+ * Falls back to text-only search when pgvector is not installed (error 42704).
+ */
+async function hybridSearchChunks(
+  restaurantId: string,
+  queryVectorStr: string,
+  rewrittenQuery: string,
+  extraWhere = ''  // e.g. "AND (rd.\"bucketId\" IS NULL OR rb.\"isChatEnabled\" = true)"
+): Promise<any[]> {
+  // ── Try 1: Full hybrid RRF (vector + text) ──────────────────
+  try {
+    return await prisma.$queryRawUnsafe<any[]>(
+      `WITH vector_matches AS (
+          SELECT dc.id, ROW_NUMBER() OVER (ORDER BY dc.embedding <=> $1::vector) as rank
+          FROM "DocumentChunks" dc
+          JOIN "RestaurantDocuments" rd ON dc."documentId" = rd.id
+          LEFT JOIN "RestaurantBuckets" rb ON rd."bucketId" = rb.id
+          WHERE rd."restaurantId" = $2 AND rd.status = 'INDEXED'
+            ${extraWhere}
+          LIMIT 100
+        ),
+        text_matches AS (
+          SELECT dc.id, ROW_NUMBER() OVER (ORDER BY ts_rank(to_tsvector('simple', dc.content), plainto_tsquery('simple', $3)) DESC) as rank
+          FROM "DocumentChunks" dc
+          JOIN "RestaurantDocuments" rd ON dc."documentId" = rd.id
+          LEFT JOIN "RestaurantBuckets" rb ON rd."bucketId" = rb.id
+          WHERE rd."restaurantId" = $2 AND rd.status = 'INDEXED'
+            ${extraWhere}
+            AND to_tsvector('simple', dc.content) @@ plainto_tsquery('simple', $3)
+          LIMIT 100
+        )
+        SELECT dc.content, rd.filename,
+               (COALESCE(1.0 / (60.0 + vm.rank), 0.0) + COALESCE(1.0 / (60.0 + tm.rank), 0.0)) as rrf_score
+        FROM "DocumentChunks" dc
+        JOIN "RestaurantDocuments" rd ON dc."documentId" = rd.id
+        LEFT JOIN vector_matches vm ON dc.id = vm.id
+        LEFT JOIN text_matches tm ON dc.id = tm.id
+        WHERE vm.id IS NOT NULL OR tm.id IS NOT NULL
+        ORDER BY rrf_score DESC
+        LIMIT 10`,
+      queryVectorStr,
+      restaurantId,
+      rewrittenQuery
+    );
+  } catch (vecErr: any) {
+    // ── Fallback: text-only search when pgvector not installed (code 42704) ──
+    const isPgVectorMissing =
+      vecErr?.meta?.code === '42704' ||
+      (typeof vecErr?.message === 'string' && vecErr.message.includes('vector'));
+
+    if (!isPgVectorMissing) throw vecErr; // Re-throw unrelated errors
+
+    console.warn('[RAGService] pgvector not available, falling back to full-text search only.');
+
+    return await prisma.$queryRawUnsafe<any[]>(
+      `SELECT dc.content, rd.filename,
+              ts_rank(to_tsvector('simple', dc.content), plainto_tsquery('simple', $1)) as rrf_score
+       FROM "DocumentChunks" dc
+       JOIN "RestaurantDocuments" rd ON dc."documentId" = rd.id
+       LEFT JOIN "RestaurantBuckets" rb ON rd."bucketId" = rb.id
+       WHERE rd."restaurantId" = $2 AND rd.status = 'INDEXED'
+         ${extraWhere}
+         AND to_tsvector('simple', dc.content) @@ plainto_tsquery('simple', $1)
+       ORDER BY rrf_score DESC
+       LIMIT 10`,
+      rewrittenQuery,
+      restaurantId
+    );
+  }
+}
+
 export class RAGService {
   /**
    * Streaming generator for Restaurant RAG Query.
@@ -109,39 +181,12 @@ Tóm tắt ngắn gọn:`;
       const queryEmbedding = await AIService.generateEmbedding(rewrittenQuery);
       const queryVectorStr = `[${queryEmbedding.join(',')}]`;
 
-      // 6. Reciprocal Rank Fusion (RRF) Hybrid Search
-      const dbChunks = await prisma.$queryRawUnsafe<any[]>(
-        `WITH vector_matches AS (
-          SELECT dc.id, ROW_NUMBER() OVER (ORDER BY dc.embedding <=> $1::vector) as rank
-          FROM "DocumentChunks" dc
-          JOIN "RestaurantDocuments" rd ON dc."documentId" = rd.id
-          LEFT JOIN "RestaurantBuckets" rb ON rd."bucketId" = rb.id
-          WHERE rd."restaurantId" = $2 AND rd.status = 'INDEXED'
-            AND (rd."bucketId" IS NULL OR rb."isChatEnabled" = true)
-          LIMIT 100
-        ),
-        text_matches AS (
-          SELECT dc.id, ROW_NUMBER() OVER (ORDER BY ts_rank(to_tsvector('simple', dc.content), plainto_tsquery('simple', $3)) DESC) as rank
-          FROM "DocumentChunks" dc
-          JOIN "RestaurantDocuments" rd ON dc."documentId" = rd.id
-          LEFT JOIN "RestaurantBuckets" rb ON rd."bucketId" = rb.id
-          WHERE rd."restaurantId" = $2 AND rd.status = 'INDEXED'
-            AND (rd."bucketId" IS NULL OR rb."isChatEnabled" = true)
-            AND to_tsvector('simple', dc.content) @@ plainto_tsquery('simple', $3)
-          LIMIT 100
-        )
-        SELECT dc.content, rd.filename,
-               (COALESCE(1.0 / (60.0 + vm.rank), 0.0) + COALESCE(1.0 / (60.0 + tm.rank), 0.0)) as rrf_score
-        FROM "DocumentChunks" dc
-        JOIN "RestaurantDocuments" rd ON dc."documentId" = rd.id
-        LEFT JOIN vector_matches vm ON dc.id = vm.id
-        LEFT JOIN text_matches tm ON dc.id = tm.id
-        WHERE vm.id IS NOT NULL OR tm.id IS NOT NULL
-        ORDER BY rrf_score DESC
-        LIMIT 10`,
-        queryVectorStr,
+      // 6. Hybrid Search (RRF vector+text, with text-only fallback if pgvector unavailable)
+      const dbChunks = await hybridSearchChunks(
         restaurantId,
-        rewrittenQuery
+        queryVectorStr,
+        rewrittenQuery,
+        `AND (rd."bucketId" IS NULL OR rb."isChatEnabled" = true)`
       );
 
       // 6.5. Cohere Rerank
@@ -244,7 +289,15 @@ Ví dụ:
 - Để làm trống giỏ hàng: [ACTION: CLEAR_CART]
 - Để xem giỏ hàng: [ACTION: OPEN_CART]
 - Để gọi phục vụ: [ACTION: CALL_WAITER]
-Đảm bảo định dạng JSON trong thẻ ACTION hoàn toàn hợp lệ và chính xác với DISH_ID lấy từ danh sách món ăn ở trên.`;
+Đảm bảo định dạng JSON trong thẻ ACTION hoàn toàn hợp lệ và chính xác với DISH_ID lấy từ danh sách món ăn ở trên.
+
+4. Khi phù hợp, nhúng đúng 1 thẻ [UI:] vào CUỐI câu trả lời để hiển thị giao diện tương tác.
+- Khi AI gợi ý 1 món ăn cụ thể và khách tỏ ra quan tâm → thêm:
+[UI: DISH_CONFIRM {"id":"DISH_ID","name":"Tên Món","price":75000}]
+(Thay bằng id/name/price thực từ danh sách menu)
+- Khi khách muốn ĐẶT BÀN → thêm:
+[UI: BOOKING_FORM {"restaurantName":"${restaurant.name}"}]
+- KHÔNG dùng cả [ACTION:] và [UI:] cùng lúc cho cùng 1 hành động.`;
 
       // 9. Assemble contents for generation
       const contents: any[] = [];
@@ -404,33 +457,9 @@ Tóm tắt ngắn gọn:`;
         const queryEmbedding = await AIService.generateEmbedding(rewrittenQuery);
         const queryVectorStr = `[${queryEmbedding.join(',')}]`;
 
-        const dbChunks = await prisma.$queryRawUnsafe<any[]>(
-          `WITH vector_matches AS (
-            SELECT dc.id, ROW_NUMBER() OVER (ORDER BY dc.embedding <=> $1::vector) as rank
-            FROM "DocumentChunks" dc
-            JOIN "RestaurantDocuments" rd ON dc."documentId" = rd.id
-            WHERE rd."restaurantId" = $2 AND rd.status = 'INDEXED'
-            LIMIT 100
-          ),
-          text_matches AS (
-            SELECT dc.id, ROW_NUMBER() OVER (ORDER BY ts_rank(to_tsvector('simple', dc.content), plainto_tsquery('simple', $3)) DESC) as rank
-            FROM "DocumentChunks" dc
-            JOIN "RestaurantDocuments" rd ON dc."documentId" = rd.id
-            WHERE rd."restaurantId" = $2 AND rd.status = 'INDEXED'
-              AND to_tsvector('simple', dc.content) @@ plainto_tsquery('simple', $3)
-            LIMIT 100
-          )
-          SELECT dc.content, rd.filename,
-                 (COALESCE(1.0 / (60.0 + vm.rank), 0.0) + COALESCE(1.0 / (60.0 + tm.rank), 0.0)) as rrf_score
-          FROM "DocumentChunks" dc
-          JOIN "RestaurantDocuments" rd ON dc."documentId" = rd.id
-          LEFT JOIN vector_matches vm ON dc.id = vm.id
-          LEFT JOIN text_matches tm ON dc.id = tm.id
-          WHERE vm.id IS NOT NULL OR tm.id IS NOT NULL
-          ORDER BY rrf_score DESC
-          LIMIT 10`,
-          queryVectorStr,
+        const dbChunks = await hybridSearchChunks(
           'system',
+          queryVectorStr,
           rewrittenQuery
         );
 
@@ -492,7 +521,22 @@ Chính sách gói dịch vụ tham khảo:
 
 Quy tắc:
 1. Trả lời lịch sự, ngắn gọn và hữu ích.
-2. Nếu câu hỏi không liên quan gì đến XFoodi, hãy từ chối lịch sự: "Tôi là trợ lý ảo của XFoodi và chỉ có thể trả lời các câu hỏi liên quan đến nền tảng quản lý nhà hàng XFoodi."`;
+2. Nếu câu hỏi không liên quan gì đến XFoodi, hãy từ chối lịch sự: "Tôi là trợ lý ảo của XFoodi và chỉ có thể trả lời các câu hỏi liên quan đến nền tảng quản lý nhà hàng XFoodi."
+
+== HƯỚNG DẪN UI CARD TƯƠNG TÁC ==
+Khi phù hợp, nhúng đúng 1 thẻ [UI:] vào CUỐI câu trả lời để hiển thị giao diện tương tác. JSON phải hợp lệ.
+
+• Người dùng hỏi GIÁ, GÓI DỊCH VỤ, CHI PHÍ → thêm:
+[UI: PRICING_CARD {"highlight":"pro"}]
+
+• Người dùng hỏi TÍNH NĂNG, SO SÁNH, CHỨC NĂNG → thêm:
+[UI: FEATURE_CARD {"features":["Gọi món QR","Đặt bàn online","KDS nhà bếp","Quản lý kho","Báo cáo & thống kê","AI Chatbot RAG","Sơ đồ bàn 3D","Quản lý nhân viên"]}]
+
+• Người dùng muốn ĐĂNG KÝ, DÙNG THỬ, TÌM HIỂU THÊM → thêm:
+[UI: CTA_CARD {"action":"register","label":"Đăng ký dùng thử miễn phí 🚀","url":"/register-restaurant","note":"Miễn phí, không cần thẻ tín dụng"}]
+
+• Người dùng hỏi QUY TRÌNH ĐĂNG KÝ, CÁC BƯỚC → thêm:
+[UI: STEPS_CARD {"steps":["Điền form đăng ký nhà hàng","Admin kiểm duyệt hồ sơ trong 24h","Nhận subdomain riêng của nhà hàng","Cấu hình menu & bắt đầu vận hành"]}]`;
 
       const customPrompt = systemAiConfig.systemPrompt || defaultSystemPrompt;
 

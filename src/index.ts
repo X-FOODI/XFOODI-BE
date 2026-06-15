@@ -19,6 +19,8 @@ import reservationRoutes from './models/routes/reservations';
 import paymentRoutes from './models/routes/payments';
 import feedbackRoutes from './models/routes/feedbacks';
 import walletRoutes from './models/routes/wallet';
+import employeeRoutes from './models/routes/employees';
+import customerRoutes from './routes/customer.routes';
 import { API_ROUTES } from './constants/routes';
 import { ENV } from './config/env';
 import { UploadQueueService } from './services/uploadQueue.service';
@@ -39,7 +41,13 @@ const corsOptions = {
     if (!origin) return callback(null, true);
     const isLocalSubdomain = /^https?:\/\/[a-zA-Z0-9-]+\.localhost(:\d+)?$/.test(origin);
     const isProdSubdomain = /^https?:\/\/([a-zA-Z0-9-]+\.)?xfoodi\.website$/.test(origin);
-    const allowed = isLocalSubdomain || isProdSubdomain || origin === 'http://localhost:3000' || origin === ENV.FRONTEND_URL;
+    const allowed =
+      isLocalSubdomain ||
+      isProdSubdomain ||
+      origin === 'http://localhost:3000' ||
+      origin === 'http://localhost:3001' ||
+      origin === 'http://localhost:3002' ||
+      origin === ENV.FRONTEND_URL;
     callback(null, allowed);
   },
   credentials: true
@@ -203,8 +211,33 @@ app.use((req, res, next) => {
 // Routes
 app.use(API_ROUTES.AUTH.BASE, authRoutes);
 app.use(API_ROUTES.USERS.BASE, userRoutes);
+app.use(API_ROUTES.EMPLOYEES.BASE, employeeRoutes);
 app.use('/api/restaurants', restaurantRoutes);
 app.use(API_ROUTES.TENANTS.BASE, tenantRoutes);
+app.use('/api/restaurant/customers', customerRoutes);
+
+// Mock /api/restaurants/me - returns restaurant info for the logged-in owner
+app.get('/api/restaurants/me', (req, res) => {
+  res.json({
+    success: true,
+    data: {
+      id: 'mock-tenant-id-12345',
+      name: 'Demo Restaurant',
+      slug: 'demo',
+      email: 'contact@demo.xfoodi.website',
+      phone: '0123456789',
+      address: '123 Main St',
+      logoUrl: null,
+      owner: {
+        id: 'owner-id',
+        fullName: 'Trần Văn Chủ',
+        email: 'owner-test@xfoodi.com',
+        avatarUrl: null
+      }
+    }
+  });
+});
+
 app.use(API_ROUTES.RESTAURANT_APPLICATIONS.BASE, restaurantApplicationRoutes);
 app.use('/api/upload', uploadRoutes);
 app.use('/api/orders', ordersRoutes);
@@ -240,3 +273,4 @@ server.listen(PORT, () => {
   console.log(`- Tenant API: http://localhost:${PORT}${API_ROUTES.TENANTS.BASE}`);
   console.log(`- Restaurant Applications: http://localhost:${PORT}${API_ROUTES.RESTAURANT_APPLICATIONS.BASE}`);
 });
+
