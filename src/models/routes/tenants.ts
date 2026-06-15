@@ -28,8 +28,14 @@ router.get('/', async (req, res) => {
 router.get('/:domain', async (req, res) => {
   try {
     const { domain } = req.params;
-    // Strip .localhost or other suffixes for local dev
-    const slug = domain.replace(/\.localhost$/, '');
+    const BASE_DOMAIN = 'xfoodi.website';
+    let slug = domain.trim().toLowerCase();
+
+    if (slug.endsWith('.localhost')) {
+      slug = slug.replace(/\.localhost$/, '');
+    } else if (slug.endsWith(`.${BASE_DOMAIN}`)) {
+      slug = slug.replace(new RegExp(`\\.${BASE_DOMAIN}$`), '');
+    }
 
     const restaurant = await prisma.restaurant.findFirst({
       where: {

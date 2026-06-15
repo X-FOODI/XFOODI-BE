@@ -48,7 +48,7 @@ router.get('/', async (_req: any, res: any) => {
  * Dùng restaurantId từ JWT payload
  * ⚠️ PHẢI đứng trước /:slug để tránh bị match nhầm
  */
-router.get('/me', authMiddleware, tenantGuard, async (req: any, res: any) => {
+router.get('/me', authMiddleware, async (req: any, res: any) => {
   try {
     let restaurantId: string | undefined = req.user?.restaurantId;
 
@@ -108,6 +108,8 @@ router.get('/me', authMiddleware, tenantGuard, async (req: any, res: any) => {
         planType: true,
         isActive: true,
         createdAt: true,
+        primaryColor: true,
+        metadata: true,
         owner: {
           select: {
             id: true,
@@ -173,6 +175,71 @@ router.get('/:slug', async (req: any, res: any) => {
   } catch (err) {
     console.error('[RestaurantRoute] GET /:slug error:', err);
     return res.status(500).json({ success: false, message: 'Lỗi server.' });
+  }
+});
+
+/**
+ * PUT /api/restaurants/me
+ * Update settings for the current user's restaurant
+ */
+router.put('/me', authMiddleware, async (req: any, res: any) => {
+  try {
+    const restaurantId: string | undefined = req.user?.restaurantId;
+
+    if (!restaurantId) {
+      return res.status(404).json({
+        success: false,
+        message: 'Bạn chưa có nhà hàng hoặc chưa được duyệt làm Owner.',
+      });
+    }
+
+    const {
+      name,
+      description,
+      address,
+      phone,
+      email,
+      logoUrl,
+      primaryColor,
+      metadata, // expected to contain coverImage, operatingHours, socialLinks, gallery
+    } = req.body;
+
+    const updatedRestaurant = await prisma.restaurant.update({
+      where: { id: restaurantId },
+      data: {
+        ...(name && { name }),
+        ...(description !== undefined && { description }),
+        ...(address !== undefined && { address }),
+        ...(phone !== undefined && { phone }),
+        ...(email !== undefined && { email }),
+        ...(logoUrl !== undefined && { logoUrl }),
+        ...(primaryColor !== undefined && { primaryColor }),
+        ...(metadata !== undefined && { metadata }),
+      },
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        email: true,
+        phone: true,
+        address: true,
+        description: true,
+        logoUrl: true,
+        primaryColor: true,
+        metadata: true,
+      },
+    });
+
+    return res.json({
+      success: true,
+      data: updatedRestaurant,
+    });
+  } catch (err) {
+    console.error('[RestaurantRoute] PUT /me error:', err);
+    return res.status(500).json({
+      success: false,
+      message: 'Lỗi server khi cập nhật thông tin.',
+    });
   }
 });
 

@@ -31,6 +31,7 @@ const DISH_SELECT = {
   description: true,
   price: true,
   unit: true,
+  imageUrl: true,
   isVegetarian: true,
   isSpicy: true,
   isBestSeller: true,
@@ -54,6 +55,7 @@ function toDishResponse(d: any): DishResponse {
     description: d.description,
     price: d.price instanceof Decimal ? d.price.toFixed(2) : String(d.price),
     unit: d.unit,
+    imageUrl: d.imageUrl,
     isVegetarian: d.isVegetarian,
     isSpicy: d.isSpicy,
     isBestSeller: d.isBestSeller,
@@ -116,6 +118,7 @@ export async function createDish(
       description: body.description.trim(),
       price: new Decimal(priceNum),
       unit: body.unit.trim(),
+      imageUrl: body.imageUrl || null,
       isVegetarian: body.isVegetarian ?? false,
       isSpicy: body.isSpicy ?? false,
       isBestSeller: body.isBestSeller ?? false,
@@ -251,6 +254,7 @@ export async function updateDish(
     updateData.price = new Decimal(priceNum);
   }
   if (body.unit !== undefined) updateData.unit = body.unit.trim();
+  if (body.imageUrl !== undefined) updateData.imageUrl = body.imageUrl;
   if (body.isVegetarian !== undefined) updateData.isVegetarian = body.isVegetarian;
   if (body.isSpicy !== undefined) updateData.isSpicy = body.isSpicy;
   if (body.isBestSeller !== undefined) updateData.isBestSeller = body.isBestSeller;

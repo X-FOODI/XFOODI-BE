@@ -221,11 +221,18 @@ router.post(API_ROUTES.AUTH.LOGIN, async (req, res) => {
       return res.status(400).json({ success: false, message: 'Email and password are required' });
     }
 
-    const scopedEmail = await getTenantScopedEmail(email, req.headers);
-    
-    // Find the user by email first to check roles for rate limiting & isolation
+    const unscopedEmail = email.trim().toLowerCase();
+    const loginFailKey = `login_fail:${unscopedEmail}`;
+
+    // Check rate limit
+    const fails = await redisClient.get(loginFailKey);
+    if (fails && parseInt(fails) >= 5) {
+      return res.status(429).json({ success: false, message: 'Too many failed login attempts. Please try again later (after 15 minutes).' });
+    }
+
+    // Find the user by email directly in the active database schema
     const user = await prisma.user.findFirst({
-      where: { email: scopedEmail },
+      where: { email: unscopedEmail },
       include: {
         roles: {
           include: {
@@ -257,7 +264,7 @@ router.post(API_ROUTES.AUTH.LOGIN, async (req, res) => {
     // Dual-Tier Rate Limiting Check
     if (process.env.NODE_ENV !== 'development') {
       if (isAdminUser) {
-        const adminFails = await redisClient.get(`admin_login_fail:${scopedEmail}`);
+        const adminFails = await redisClient.get(`admin_login_fail:${unscopedEmail}`);
         if (adminFails && parseInt(adminFails) >= 3) {
           return res.status(429).json({
             success: false,
@@ -265,7 +272,7 @@ router.post(API_ROUTES.AUTH.LOGIN, async (req, res) => {
           });
         }
       } else {
-        const fails = await redisClient.get(`login_fail:${scopedEmail}`);
+        const fails = await redisClient.get(`login_fail:${unscopedEmail}`);
         if (fails && parseInt(fails) >= 10) {
           return res.status(429).json({
             success: false,
@@ -286,15 +293,15 @@ router.post(API_ROUTES.AUTH.LOGIN, async (req, res) => {
       if (process.env.NODE_ENV !== 'development') {
         if (isAdminUser) {
           // Increment admin fail count (1 hour block)
-          const currentFails = await redisClient.incr(`admin_login_fail:${scopedEmail}`);
+          const currentFails = await redisClient.incr(`admin_login_fail:${unscopedEmail}`);
           if (currentFails === 1) {
-            await redisClient.expire(`admin_login_fail:${scopedEmail}`, 3600); // 1 hour TTL
+            await redisClient.expire(`admin_login_fail:${unscopedEmail}`, 3600); // 1 hour TTL
           }
         } else {
           // Increment standard fail count (15 minutes block)
-          const currentFails = await redisClient.incr(`login_fail:${scopedEmail}`);
+          const currentFails = await redisClient.incr(`login_fail:${unscopedEmail}`);
           if (currentFails === 1) {
-            await redisClient.expire(`login_fail:${scopedEmail}`, 900); // 15 minutes TTL
+            await redisClient.expire(`login_fail:${unscopedEmail}`, 900); // 15 minutes TTL
           }
         }
       }
@@ -304,9 +311,9 @@ router.post(API_ROUTES.AUTH.LOGIN, async (req, res) => {
     // Reset fail count on success
     if (process.env.NODE_ENV !== 'development') {
       if (isAdminUser) {
-        await redisClient.del(`admin_login_fail:${scopedEmail}`);
+        await redisClient.del(`admin_login_fail:${unscopedEmail}`);
       } else {
-        await redisClient.del(`login_fail:${scopedEmail}`);
+        await redisClient.del(`login_fail:${unscopedEmail}`);
       }
     }
 
