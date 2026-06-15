@@ -322,8 +322,8 @@ export class PaymentService {
     const content = payload.content ?? '';
 
     // Fast Path: Try to parse slug and route directly
-    // Pattern: XFOODI\s+([A-Za-z0-9\-]+)\s+(ORD|RES)\s+([A-Z0-9\-]+)
-    const newFormatMatch = content.match(/XFOODI\s+([A-Za-z0-9\-]+)\s+(ORD|RES)\s+([A-Z0-9\-]+)/i);
+    // Pattern: XFOODI\s+([A-Za-z0-9-]+)\s+(ORD|RES)\s+([A-Z0-9-]+)
+    const newFormatMatch = content.match(/XFOODI\s+([A-Za-z0-9-]+)\s+(ORD|RES)\s+([A-Z0-9-]+)/i);
 
     if (newFormatMatch) {
       const slug = newFormatMatch[1].toLowerCase();
@@ -360,7 +360,7 @@ export class PaymentService {
       where: { isActive: true },
     });
 
-    const ordMatch = content.match(/ORD\s+([A-Z0-9\-]+)/i) || content.match(/(ORD\-[A-Z0-9\-]+)/i);
+    const ordMatch = content.match(/ORD\s+([A-Z0-9-]+)/i) || content.match(/(ORD-[A-Z0-9-]+)/i);
     const resMatch = content.match(/RES\s+([A-Z0-9]+)/i);
 
     const type = ordMatch ? 'ORD' : (resMatch ? 'RES' : null);
