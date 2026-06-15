@@ -65,6 +65,8 @@ Table Users {
   lastLoginAt DateTime
   createdAt DateTime [default: `now()`, not null]
   updatedAt DateTime [not null]
+  resetOtp String
+  resetOtpExpires DateTime
   twoFactorEnabled Boolean [not null, default: false]
   twoFactorSecret String
   twoFactorBackupCodes String[] [not null]
@@ -600,6 +602,8 @@ Table Reservations {
   specialRequests String
   depositAmount Decimal [not null]
   checkedInAt DateTime
+  completedAt DateTime
+  reminderSentAt DateTime
   createdAt DateTime [default: `now()`, not null]
   updatedAt DateTime [not null]
   createdBy String
@@ -614,6 +618,19 @@ Table Reservations {
   orders Orders [not null]
   payments Payments [not null]
   tables ReservationTables [not null]
+  refunds Refunds [not null]
+}
+
+Table Refunds {
+  id String [pk]
+  reservationId String [not null]
+  amount Decimal [not null]
+  status String [not null, default: 'PENDING']
+  metadata Json
+  createdAt DateTime [default: `now()`, not null]
+  updatedAt DateTime [not null]
+  reservation Reservations [not null]
+  payments Payments [not null]
 }
 
 Table Orders {
@@ -703,10 +720,12 @@ Table Payments {
   metadata Json
   status Int [not null, default: 0]
   purpose Int [not null, default: 0]
+  refundId String
   order Orders
   reservation Reservations
   employee Employees
   paymentMethod PaymentMethods [not null]
+  refund Refunds
 }
 
 Table PointsTransactions {
@@ -1035,6 +1054,8 @@ Ref: Reservations.customerId > Customers.id
 
 Ref: Reservations.reservationStatusId > StatusValues.id
 
+Ref: Refunds.reservationId > Reservations.id [delete: No Action]
+
 Ref: Orders.restaurantId > Restaurants.id
 
 Ref: Orders.customerId > Customers.id [delete: No Action]
@@ -1060,6 +1081,8 @@ Ref: Payments.reservationId > Reservations.id [delete: No Action]
 Ref: Payments.processedBy > Employees.id [delete: No Action]
 
 Ref: Payments.paymentMethodId > PaymentMethods.id
+
+Ref: Payments.refundId > Refunds.id [delete: No Action]
 
 Ref: PointsTransactions.customerId > Customers.id [delete: No Action]
 

@@ -728,6 +728,8 @@ model Reservation {
   specialRequests     String?
   depositAmount       Decimal   @db.Decimal(18, 2)
   checkedInAt         DateTime?
+  completedAt         DateTime?
+  reminderSentAt      DateTime?
   createdAt           DateTime  @default(now())
   updatedAt           DateTime  @updatedAt
   createdBy           String?
@@ -743,12 +745,31 @@ model Reservation {
   orders      Order[]
   payments    Payment[]
   tables      ReservationTable[]
+  refunds     Refund[]
 
   @@index([restaurantId])
   @@index([customerId])
   @@index([reservationStatusId])
   @@index([time])
   @@map("Reservations")
+}
+
+// ─── Refunds ──────────────────────────────────────────────────────────────────
+
+model Refund {
+  id            String   @id @default(uuid())
+  reservationId String
+  amount        Decimal  @db.Decimal(18, 2)
+  status        String   @default("PENDING")  // PENDING | PROCESSING | COMPLETED | FAILED
+  metadata      Json?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  reservation Reservation @relation(fields: [reservationId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  payments    Payment[]
+
+  @@index([reservationId])
+  @@map("Refunds")
 }
 
 // ─── Orders & Payments ─────────────────────────────────────────────────────────
@@ -859,16 +880,19 @@ model Payment {
   metadata        Json?
   status          Int       @default(0)
   purpose         Int       @default(0)
+  refundId        String?
 
   order         Order?        @relation(fields: [orderId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   reservation   Reservation?  @relation(fields: [reservationId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   employee      Employee?     @relation(fields: [processedBy], references: [id], onDelete: NoAction, onUpdate: NoAction)
   paymentMethod PaymentMethod @relation(fields: [paymentMethodId], references: [id])
+  refund        Refund?       @relation(fields: [refundId], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   @@index([orderId])
   @@index([reservationId])
   @@index([status])
   @@index([paymentDate])
+  @@index([refundId])
   @@map("Payments")
 }
 

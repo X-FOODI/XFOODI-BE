@@ -115,8 +115,11 @@ router.post('/', async (req: any, res: Response) => {
         confirmationCode: reservation.confirmationCode || '',
         numberOfGuests: reservation.numberOfGuests,
         time: reservation.time.toISOString(),
+        depositAmount: typeof reservation.depositAmount === 'number'
+          ? reservation.depositAmount
+          : Number(reservation.depositAmount ?? 0),
         specialRequests: reservation.specialRequests || undefined,
-      }).catch((e) => console.error('Failed to send reservation confirmation email:', e));
+      }, reservation.id).catch((e) => console.error('Failed to send reservation confirmation email:', e));
     }
 
     return res.status(201).json({ success: true, data: reservation });
@@ -200,6 +203,45 @@ router.get('/code/:code', async (req, res) => {
   }
 });
 
+// ── Stats ─────────────────────────────────────────────────────────────────────
+router.get('/stats', authMiddleware, requireRole('Owner', 'Admin', 'Staff'), async (req: any, res: Response) => {
+  try {
+    const { restaurantId, period } = req.query;
+    if (!restaurantId) return res.status(400).json({ success: false, message: 'restaurantId required' });
+    if (!period || !['today', 'this_week', 'this_month'].includes(period as string)) {
+      return res.status(400).json({ success: false, message: 'Invalid period. Accepted values: today, this_week, this_month' });
+    }
+    const stats = await reservationService.getStats(restaurantId as string, period as 'today' | 'this_week' | 'this_month');
+    return res.json({ success: true, data: stats });
+  } catch (err: any) {
+    return res.status(err.statusCode ?? 500).json({ success: false, message: err.message });
+  }
+});
+
+// ── Update reservation ───────────────────────────────────────────────────────
+router.patch('/:id', authMiddleware, requireRole('Owner', 'Admin', 'Staff', 'Customer'), async (req: any, res: Response) => {
+  try {
+    const actorId = req.user?.sub || req.user?.id;
+    const updated = await reservationService.updateReservation(req.params.id, req.body, actorId);
+    return res.json({ success: true, data: updated });
+  } catch (err: any) {
+    const statusCode = err.statusCode ?? 400;
+    const body = err.body ?? { success: false, message: err.message };
+    return res.status(statusCode).json({ success: false, ...body });
+  }
+});
+
+// ── Complete reservation ─────────────────────────────────────────────────────
+router.post('/:id/complete', authMiddleware, requireRole('Owner', 'Admin', 'Staff'), async (req: any, res: Response) => {
+  try {
+    const actorId = req.user?.sub || req.user?.id;
+    const updated = await reservationService.completeReservation(req.params.id, actorId);
+    return res.json({ success: true, data: updated });
+  } catch (err: any) {
+    return res.status(err.statusCode ?? 400).json({ success: false, message: err.message });
+  }
+});
+
 // ── Get by ID ────────────────────────────────────────────────────────────────
 router.get('/:id', authMiddleware, requireRole('Owner', 'Admin', 'Staff', 'Customer'), async (req, res) => {
   try {
@@ -226,7 +268,8 @@ router.patch('/:id/status', authMiddleware, requireRole('Owner', 'Admin', 'Staff
 // ── Check-in by code ─────────────────────────────────────────────────────────
 router.post('/checkin/:code', authMiddleware, requireRole('Owner', 'Admin', 'Staff'), async (req, res) => {
   try {
-    const updated = await reservationService.checkIn(req.params.code);
+    const actorId = (req as any).user?.sub || (req as any).user?.id;
+    const updated = await reservationService.checkIn(req.params.code, actorId);
     return res.json({ success: true, data: updated });
   } catch (err: any) {
     return res.status(400).json({ success: false, message: err.message });
@@ -236,7 +279,8 @@ router.post('/checkin/:code', authMiddleware, requireRole('Owner', 'Admin', 'Sta
 // ── Cancel ───────────────────────────────────────────────────────────────────
 router.post('/:id/cancel', authMiddleware, requireRole('Owner', 'Admin', 'Staff', 'Customer'), async (req, res) => {
   try {
-    const updated = await reservationService.cancel(req.params.id);
+    const actorId = (req as any).user?.sub || (req as any).user?.id;
+    const updated = await reservationService.cancel(req.params.id, actorId);
     return res.json({ success: true, data: updated });
   } catch (err: any) {
     return res.status(400).json({ success: false, message: err.message });
