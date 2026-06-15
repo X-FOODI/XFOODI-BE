@@ -9,6 +9,7 @@ const router: Router = Router();
 router.post('/', authMiddleware, requireRole('Customer', 'Owner', 'Admin'), async (req: any, res: Response) => {
   try {
     const user = req.user;
+    const userId = user.sub || user.id;
     const prisma = (req as any).prismaClient ?? (await import('../../lib/prisma')).prismaStorage.getStore();
 
     // Resolve customerId from the logged-in user
@@ -16,11 +17,11 @@ router.post('/', authMiddleware, requireRole('Customer', 'Owner', 'Admin'), asyn
     const { prismaStorage } = await import('../../lib/prisma');
     const db = prismaStorage.getStore() as InstanceType<typeof PrismaClient>;
 
-    let customer = await db.customer.findFirst({ where: { userId: user.id } });
+    let customer = await db.customer.findFirst({ where: { userId } });
     if (!customer) {
       customer = await db.customer.create({
         data: {
-          userId: user.id,
+          userId,
           loyaltyPoints: 0,
           isActive: true
         }
@@ -65,11 +66,12 @@ router.get('/my', authMiddleware, requireRole('Customer'), async (req: any, res:
     const { PrismaClient } = await import('@prisma/client');
     const db = prismaStorage.getStore() as InstanceType<typeof PrismaClient>;
 
-    let customer = await db.customer.findFirst({ where: { userId: req.user.id } });
+    const userId = req.user.sub || req.user.id;
+    let customer = await db.customer.findFirst({ where: { userId } });
     if (!customer) {
       customer = await db.customer.create({
         data: {
-          userId: req.user.id,
+          userId,
           loyaltyPoints: 0,
           isActive: true
         }
