@@ -1,7 +1,6 @@
 import express from 'express';
 import http from 'http';
 import cors from 'cors';
-import http from 'http';
 import { initializeSocket } from './socket';
 import path from 'path';
 import authRoutes from './models/routes/auth';
