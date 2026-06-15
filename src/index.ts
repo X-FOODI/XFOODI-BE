@@ -1,6 +1,6 @@
 import express from 'express';
-import cors from 'cors';
 import http from 'http';
+import cors from 'cors';
 import { initializeSocket } from './socket';
 import path from 'path';
 import authRoutes from './models/routes/auth';
@@ -13,6 +13,8 @@ import ordersRoutes from './models/routes/orders';
 import aiRoutes from './models/routes/ai';
 import categoryRoutes from './models/routes/categories';
 import dishRoutes from './models/routes/dishes';
+import { registerSocialModule } from './modules/social/social.module';
+import { initSocialRealtime } from './modules/social/realtime/social-socket';
 import floorsRoutes from './models/routes/floors';
 import tablesRoutes from './models/routes/tables';
 import reservationRoutes from './models/routes/reservations';
@@ -28,6 +30,7 @@ import { startReservationCronJobs } from './cron/reservationCron';
 
 
 const app = express();
+const httpServer = http.createServer(app);
 const PORT = ENV.PORT;
 
 // Cache to store the sync state of tenants' Restaurant and Owner User records
@@ -55,7 +58,7 @@ const corsOptions = {
 };
 
 app.use(cors(corsOptions));
-app.use(express.json());
+app.use(express.json({ limit: '15mb' }));
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 
 // Multi-tenant database routing middleware using AsyncLocalStorage
@@ -245,6 +248,7 @@ app.use('/api/orders', ordersRoutes);
 app.use('/api/ai', aiRoutes);
 app.use(API_ROUTES.CATEGORIES.BASE, categoryRoutes);
 app.use(API_ROUTES.DISHES.BASE, dishRoutes);
+registerSocialModule(app);
 app.use('/api/floors', floorsRoutes);
 app.use('/api/tables', tablesRoutes);
 app.use('/api/reservations', reservationRoutes);
@@ -257,14 +261,14 @@ app.get(API_ROUTES.HEALTH.BASE, (req, res) => {
   res.json({ status: 'ok', message: 'XFoodi API is running' });
 });
 
-// Create HTTP server
-const server = http.createServer(app);
-
 // Initialize Socket.io
-initializeSocket(server);
+initializeSocket(httpServer);
+
+// Initialize Social Realtime
+initSocialRealtime(httpServer);
 
 // Start server
-server.listen(PORT, () => {
+httpServer.listen(PORT, () => {
   console.log(`🚀 XFoodi API Server running on http://localhost:${PORT}`);
   
   // Initialize Background Upload Queue
@@ -275,5 +279,7 @@ server.listen(PORT, () => {
   console.log(`- User API:  http://localhost:${PORT}${API_ROUTES.USERS.BASE}`);
   console.log(`- Tenant API: http://localhost:${PORT}${API_ROUTES.TENANTS.BASE}`);
   console.log(`- Restaurant Applications: http://localhost:${PORT}${API_ROUTES.RESTAURANT_APPLICATIONS.BASE}`);
+  console.log(`- Social API: http://localhost:${PORT}${API_ROUTES.SOCIAL.BASE}`);
+  console.log(`- Social realtime: http://localhost:${PORT}/hubs/social (Socket.io)`);
 });
 

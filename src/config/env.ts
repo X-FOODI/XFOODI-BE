@@ -39,9 +39,9 @@ export const ENV = {
   },
 
   CLOUDINARY: {
-    CLOUD_NAME: process.env.CLOUDINARY_CLOUD_NAME as string,
-    API_KEY: process.env.CLOUDINARY_API_KEY as string,
-    API_SECRET: process.env.CLOUDINARY_API_SECRET as string,
+    CLOUD_NAME: process.env.CLOUDINARY_CLOUD_NAME as string | undefined,
+    API_KEY: process.env.CLOUDINARY_API_KEY as string | undefined,
+    API_SECRET: process.env.CLOUDINARY_API_SECRET as string | undefined,
   },
 
   TWILIO: {
