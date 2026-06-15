@@ -11,11 +11,12 @@ router.post('/orders/:orderId', requireRole('Customer', 'Owner', 'Admin'), async
     const { PrismaClient } = await import('@prisma/client');
     const db = prismaStorage.getStore() as InstanceType<typeof PrismaClient>;
 
-    let customer = await db.customer.findFirst({ where: { userId: req.user.id } });
+    const userId = req.user.sub || req.user.id;
+    let customer = await db.customer.findFirst({ where: { userId } });
     if (!customer) {
       customer = await db.customer.create({
         data: {
-          userId: req.user.id,
+          userId,
           loyaltyPoints: 0,
           isActive: true
         }
@@ -81,7 +82,7 @@ router.get('/:id', async (req, res) => {
 router.patch('/:id', requireRole('Customer', 'Owner', 'Admin'), async (req: any, res: Response) => {
   try {
     const isAdmin = ['Owner', 'Admin'].some((r) => (req.user?.roles ?? []).includes(r));
-    const feedback = await feedbackService.update(req.params.id, req.body, req.user.id, isAdmin);
+    const feedback = await feedbackService.update(req.params.id, req.body, req.user.sub || req.user.id, isAdmin);
     return res.json({ success: true, data: feedback });
   } catch (err: any) {
     return res.status(400).json({ success: false, message: err.message });
@@ -103,7 +104,7 @@ router.patch('/:id/publish', requireRole('Owner', 'Admin', 'Staff'), async (req,
 router.delete('/:id', requireRole('Customer', 'Owner', 'Admin'), async (req: any, res: Response) => {
   try {
     const isAdmin = ['Owner', 'Admin'].some((r) => (req.user?.roles ?? []).includes(r));
-    await feedbackService.delete(req.params.id, req.user.id, isAdmin);
+    await feedbackService.delete(req.params.id, req.user.sub || req.user.id, isAdmin);
     return res.json({ success: true });
   } catch (err: any) {
     return res.status(400).json({ success: false, message: err.message });

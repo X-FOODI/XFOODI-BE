@@ -5,34 +5,123 @@ import { authMiddleware } from './auth';
 
 const router: Router = Router();
 
-// ── Customer: create reservation ─────────────────────────────────────────────
-router.post('/', authMiddleware, requireRole('Customer', 'Owner', 'Admin'), async (req: any, res: Response) => {
+// ── Customer: create reservation (supports guests) ─────────────────────────────
+router.post('/', async (req: any, res: Response) => {
   try {
-    const user = req.user;
-    const prisma = (req as any).prismaClient ?? (await import('../../lib/prisma')).prismaStorage.getStore();
+    let userId: string | null = null;
+    let userEmail: string | null = null;
 
-    // Resolve customerId from the logged-in user
-    const { PrismaClient } = await import('@prisma/client');
+    // Check if user is logged in
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      const token = authHeader.split(' ')[1];
+      try {
+        const { ENV } = await import('../../config/env');
+        const jwt = await import('jsonwebtoken');
+        const decoded: any = jwt.default.verify(token, ENV.JWT.ACCESS_SECRET);
+        userId = decoded.sub || decoded.id;
+        userEmail = decoded.email || decoded.unique_name;
+      } catch (err) {
+        // Token invalid/expired, proceed as guest
+      }
+    }
+
     const { prismaStorage } = await import('../../lib/prisma');
+    const { PrismaClient } = await import('@prisma/client');
     const db = prismaStorage.getStore() as InstanceType<typeof PrismaClient>;
 
-    let customer = await db.customer.findFirst({ where: { userId: user.id } });
-    if (!customer) {
-      customer = await db.customer.create({
-        data: {
-          userId: user.id,
-          loyaltyPoints: 0,
-          isActive: true
-        }
-      });
+    let customerId: string;
+
+    if (userId) {
+      // Logged-in user
+      let customer = await db.customer.findFirst({ where: { userId } });
+      if (!customer) {
+        customer = await db.customer.create({
+          data: {
+            userId,
+            loyaltyPoints: 0,
+            isActive: true
+          }
+        });
+      }
+      customerId = customer.id;
+      if (!userEmail) {
+        const userRec = await db.user.findUnique({ where: { id: userId } });
+        userEmail = userRec?.email || null;
+      }
+    } else {
+      // Guest user booking
+      const { email, fullName, phoneNumber } = req.body;
+      if (!email || !email.trim()) {
+        return res.status(400).json({ success: false, message: 'Email là bắt buộc khi đặt bàn với tư cách khách.' });
+      }
+
+      const { resolveRestaurantFromHeaders } = await import('../../lib/tenant');
+      const restaurant = await resolveRestaurantFromHeaders(req.headers);
+      const normalizedEmail = email.trim().toLowerCase();
+      const scopedEmail = restaurant ? `${restaurant.slug}:${normalizedEmail}` : normalizedEmail;
+
+      // Find user
+      let userRec = await db.user.findFirst({ where: { email: scopedEmail } });
+      if (!userRec) {
+        // Create guest user
+        userRec = await db.user.create({
+          data: {
+            email: scopedEmail,
+            userName: scopedEmail,
+            fullName: fullName || 'Khách vãng lai',
+            phoneNumber: phoneNumber || null,
+            provider: 'guest',
+            emailVerified: true,
+            isActive: true
+          }
+        });
+      }
+
+      // Find or create customer
+      let customer = await db.customer.findFirst({ where: { userId: userRec.id } });
+      if (!customer) {
+        customer = await db.customer.create({
+          data: {
+            userId: userRec.id,
+            loyaltyPoints: 0,
+            isActive: true
+          }
+        });
+      }
+      customerId = customer.id;
+      userEmail = scopedEmail;
     }
 
     const dto = {
       ...req.body,
-      customerId: customer.id,
+      customerId,
     };
 
     const reservation = await reservationService.createReservation(dto);
+
+    // Fetch restaurant name
+    const restaurantRec = await db.restaurant.findUnique({
+      where: { id: reservation.restaurantId },
+      select: { name: true }
+    });
+    const restaurantName = restaurantRec?.name || 'XFoodi Restaurant';
+
+    // Send confirmation email
+    if (userEmail) {
+      const { sendReservationConfirmationEmail } = await import('../../lib/email');
+      sendReservationConfirmationEmail(userEmail, {
+        restaurantName,
+        confirmationCode: reservation.confirmationCode || '',
+        numberOfGuests: reservation.numberOfGuests,
+        time: reservation.time.toISOString(),
+        depositAmount: typeof reservation.depositAmount === 'number'
+          ? reservation.depositAmount
+          : Number(reservation.depositAmount ?? 0),
+        specialRequests: reservation.specialRequests || undefined,
+      }, reservation.id).catch((e) => console.error('Failed to send reservation confirmation email:', e));
+    }
+
     return res.status(201).json({ success: true, data: reservation });
   } catch (err: any) {
     return res.status(400).json({ success: false, message: err.message });
@@ -65,11 +154,12 @@ router.get('/my', authMiddleware, requireRole('Customer'), async (req: any, res:
     const { PrismaClient } = await import('@prisma/client');
     const db = prismaStorage.getStore() as InstanceType<typeof PrismaClient>;
 
-    let customer = await db.customer.findFirst({ where: { userId: req.user.id } });
+    const userId = req.user.sub || req.user.id;
+    let customer = await db.customer.findFirst({ where: { userId } });
     if (!customer) {
       customer = await db.customer.create({
         data: {
-          userId: req.user.id,
+          userId,
           loyaltyPoints: 0,
           isActive: true
         }
@@ -113,6 +203,45 @@ router.get('/code/:code', async (req, res) => {
   }
 });
 
+// ── Stats ─────────────────────────────────────────────────────────────────────
+router.get('/stats', authMiddleware, requireRole('Owner', 'Admin', 'Staff'), async (req: any, res: Response) => {
+  try {
+    const { restaurantId, period } = req.query;
+    if (!restaurantId) return res.status(400).json({ success: false, message: 'restaurantId required' });
+    if (!period || !['today', 'this_week', 'this_month'].includes(period as string)) {
+      return res.status(400).json({ success: false, message: 'Invalid period. Accepted values: today, this_week, this_month' });
+    }
+    const stats = await reservationService.getStats(restaurantId as string, period as 'today' | 'this_week' | 'this_month');
+    return res.json({ success: true, data: stats });
+  } catch (err: any) {
+    return res.status(err.statusCode ?? 500).json({ success: false, message: err.message });
+  }
+});
+
+// ── Update reservation ───────────────────────────────────────────────────────
+router.patch('/:id', authMiddleware, requireRole('Owner', 'Admin', 'Staff', 'Customer'), async (req: any, res: Response) => {
+  try {
+    const actorId = req.user?.sub || req.user?.id;
+    const updated = await reservationService.updateReservation(req.params.id, req.body, actorId);
+    return res.json({ success: true, data: updated });
+  } catch (err: any) {
+    const statusCode = err.statusCode ?? 400;
+    const body = err.body ?? { success: false, message: err.message };
+    return res.status(statusCode).json({ success: false, ...body });
+  }
+});
+
+// ── Complete reservation ─────────────────────────────────────────────────────
+router.post('/:id/complete', authMiddleware, requireRole('Owner', 'Admin', 'Staff'), async (req: any, res: Response) => {
+  try {
+    const actorId = req.user?.sub || req.user?.id;
+    const updated = await reservationService.completeReservation(req.params.id, actorId);
+    return res.json({ success: true, data: updated });
+  } catch (err: any) {
+    return res.status(err.statusCode ?? 400).json({ success: false, message: err.message });
+  }
+});
+
 // ── Get by ID ────────────────────────────────────────────────────────────────
 router.get('/:id', authMiddleware, requireRole('Owner', 'Admin', 'Staff', 'Customer'), async (req, res) => {
   try {
@@ -139,7 +268,8 @@ router.patch('/:id/status', authMiddleware, requireRole('Owner', 'Admin', 'Staff
 // ── Check-in by code ─────────────────────────────────────────────────────────
 router.post('/checkin/:code', authMiddleware, requireRole('Owner', 'Admin', 'Staff'), async (req, res) => {
   try {
-    const updated = await reservationService.checkIn(req.params.code);
+    const actorId = (req as any).user?.sub || (req as any).user?.id;
+    const updated = await reservationService.checkIn(req.params.code, actorId);
     return res.json({ success: true, data: updated });
   } catch (err: any) {
     return res.status(400).json({ success: false, message: err.message });
@@ -149,7 +279,8 @@ router.post('/checkin/:code', authMiddleware, requireRole('Owner', 'Admin', 'Sta
 // ── Cancel ───────────────────────────────────────────────────────────────────
 router.post('/:id/cancel', authMiddleware, requireRole('Owner', 'Admin', 'Staff', 'Customer'), async (req, res) => {
   try {
-    const updated = await reservationService.cancel(req.params.id);
+    const actorId = (req as any).user?.sub || (req as any).user?.id;
+    const updated = await reservationService.cancel(req.params.id, actorId);
     return res.json({ success: true, data: updated });
   } catch (err: any) {
     return res.status(400).json({ success: false, message: err.message });

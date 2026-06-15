@@ -28,14 +28,14 @@ Table Restaurants {
   tables Tables [not null]
   categories Categories [not null]
   dishes Dishes [not null]
-  ingredients Ingredients [not null]
   ingredientCategories IngredientCategories [not null]
-  suppliers Suppliers [not null]
-  orders Orders [not null]
-  reservations Reservations [not null]
-  promotions Promotions [not null]
+  ingredients Ingredients [not null]
   mealCombos MealCombos [not null]
   notifications Notifications [not null]
+  orders Orders [not null]
+  promotions Promotions [not null]
+  reservations Reservations [not null]
+  suppliers Suppliers [not null]
   aiChatSessions AIChatSessions [not null]
   documents RestaurantDocuments [not null]
   buckets RestaurantBuckets [not null]
@@ -52,12 +52,12 @@ Table Users {
   id String [pk]
   userName String [unique]
   email String [unique]
-  emailVerified Boolean [not null, default: false]
   passwordHash String
-  provider String [not null, default: 'local', note: '"local" | "google" — how the account was created / primary auth']
   phoneNumber String
   avatarUrl String
   fullName String
+  provider String [not null, default: 'local', note: '"local" | "google" — how the account was created / primary auth']
+  emailVerified Boolean [not null, default: false]
   gender String [note: '"MALE" | "FEMALE" | "OTHER"']
   dateOfBirth DateTime
   address String
@@ -65,14 +65,27 @@ Table Users {
   lastLoginAt DateTime
   createdAt DateTime [default: `now()`, not null]
   updatedAt DateTime [not null]
+  resetOtp String
+  resetOtpExpires DateTime
   twoFactorEnabled Boolean [not null, default: false]
   twoFactorSecret String
   twoFactorBackupCodes String[] [not null]
-  employee Employees
   customer Customers
+  employee Employees
+  ownedRestaurants Restaurants [not null]
   roles UserRoles [not null]
   sessions UserSessions [not null]
-  ownedRestaurants Restaurants [not null]
+  socialPosts SocialPosts [not null]
+  socialComments SocialComments [not null]
+  socialReactions SocialReactions [not null]
+  socialShares SocialShares [not null]
+  savedPosts SavedPosts [not null]
+  bio String [note: 'Social community extensions (additive)']
+  coverImageUrl String
+  socialFollowers SocialFollows [not null]
+  socialFollowing SocialFollows [not null]
+  socialNotificationsReceived SocialNotifications [not null]
+  socialNotificationsSent SocialNotifications [not null]
   restaurantApplications RestaurantApplications [not null]
   reviewedApplications RestaurantApplications [not null]
 }
@@ -93,9 +106,9 @@ Table UserRoles {
   userId String [not null]
   roleId String [not null]
   restaurantId String
-  user Users [not null]
-  role Roles [not null]
   restaurant Restaurants
+  role Roles [not null]
+  user Users [not null]
 
   indexes {
     (userId, roleId) [pk]
@@ -105,8 +118,6 @@ Table UserRoles {
 Table Employees {
   id String [pk]
   code String [not null]
-  restaurantId String [not null]
-  userId String [unique]
   address String
   position String [not null]
   hireDate DateTime [not null]
@@ -114,16 +125,18 @@ Table Employees {
   salary Decimal [not null]
   salaryType String [not null]
   isActive Boolean [not null, default: true]
-  createdAt DateTime [default: `now()`, not null]
-  updatedAt DateTime [not null]
   createdBy String
   modifiedBy String
+  createdAt DateTime [default: `now()`, not null]
   metadata Json
-  user Users
+  restaurantId String [not null]
+  updatedAt DateTime [not null]
+  userId String [unique]
+  schedules EmployeeSchedules [not null]
   restaurant Restaurants [not null]
+  user Users
   ordersHandled Orders [not null]
   paymentsProcessed Payments [not null]
-  schedules EmployeeSchedules [not null]
 
   indexes {
     (code, restaurantId) [unique]
@@ -132,35 +145,35 @@ Table Employees {
 
 Table Customers {
   id String [pk]
-  userId String [unique, not null]
   membershipLevel String
   loyaltyPoints Int [not null, default: 0]
   isActive Boolean [not null, default: true]
-  createdAt DateTime [default: `now()`, not null]
-  updatedAt DateTime [not null]
   createdBy String
   modifiedBy String
+  createdAt DateTime [default: `now()`, not null]
   metadata Json
+  updatedAt DateTime [not null]
+  userId String [unique, not null]
   user Users [not null]
-  orders Orders [not null]
-  reservations Reservations [not null]
-  pointsTransactions PointsTransactions [not null]
   feedbacks Feedbacks [not null]
+  orders Orders [not null]
+  pointsTransactions PointsTransactions [not null]
+  reservations Reservations [not null]
 }
 
 Table Floors {
   id String [pk]
   name String [not null]
-  restaurantId String [not null]
   imageUrl String
   isActive Boolean [not null, default: true]
-  createdAt DateTime [default: `now()`, not null]
-  updatedAt DateTime [not null]
   createdBy String
   modifiedBy String
   height Decimal [not null, default: 0]
   width Decimal [not null, default: 0]
+  createdAt DateTime [default: `now()`, not null]
   metadata Json
+  restaurantId String [not null]
+  updatedAt DateTime [not null]
   restaurant Restaurants [not null]
   tables Tables [not null]
 }
@@ -168,7 +181,6 @@ Table Floors {
 Table Tables {
   id String [pk]
   code String [not null]
-  restaurantId String [not null]
   type String [not null]
   seatingCapacity Int [not null]
   shape String [not null]
@@ -181,26 +193,27 @@ Table Tables {
   viewDescription String
   defaultViewUrl String
   isActive Boolean [not null, default: true]
-  createdAt DateTime [default: `now()`, not null]
-  updatedAt DateTime [not null]
   createdBy String
   modifiedBy String
   tableStatusId String [not null]
   qrCodeUrl String
   floorId String [not null, default: '00000000-0000-0000-0000-000000000000']
-  metadata Json
   cubeBackImageUrl String
   cubeBottomImageUrl String
   cubeFrontImageUrl String
   cubeLeftImageUrl String
   cubeRightImageUrl String
   cubeTopImageUrl String
-  restaurant Restaurants [not null]
-  floor Floors [not null]
-  tableStatus StatusValues [not null]
-  table3DModels Table3DModels [not null]
-  sessions TableSessions [not null]
+  createdAt DateTime [default: `now()`, not null]
+  metadata Json
+  restaurantId String [not null]
+  updatedAt DateTime [not null]
   reservations ReservationTables [not null]
+  table3DModels Table3DModels
+  sessions TableSessions [not null]
+  floor Floors [not null]
+  restaurant Restaurants [not null]
+  tableStatus StatusValues [not null]
 
   indexes {
     (code, restaurantId) [unique]
@@ -222,11 +235,11 @@ Table Table3DModels {
   allowZoom Boolean [not null]
   minZoom Decimal [not null]
   maxZoom Decimal [not null]
-  createdAt DateTime [default: `now()`, not null]
-  updatedAt DateTime [not null]
   createdBy String
   modifiedBy String
+  createdAt DateTime [default: `now()`, not null]
   metadata Json
+  updatedAt DateTime [not null]
   table Tables [not null]
 }
 
@@ -234,19 +247,19 @@ Table Categories {
   id String [pk]
   name String [not null]
   description String [not null]
-  restaurantId String [not null]
   imageUrl String
   parentId String
   isActive Boolean [not null, default: true]
-  createdAt DateTime [default: `now()`, not null]
-  updatedAt DateTime [not null]
   createdBy String
   modifiedBy String
-  metadata Json
   displayOrder Int [not null, default: 0]
-  restaurant Restaurants [not null]
+  createdAt DateTime [default: `now()`, not null]
+  metadata Json
+  restaurantId String [not null]
+  updatedAt DateTime [not null]
   parent Categories
   children Categories [not null]
+  restaurant Restaurants [not null]
   dishes Dishes [not null]
   promotions PromotionApplicableItems [not null]
 }
@@ -254,7 +267,6 @@ Table Categories {
 Table Dishes {
   id String [pk]
   categoryId String [not null]
-  restaurantId String [not null]
   name String [not null]
   description String [not null]
   price Decimal [not null]
@@ -265,18 +277,19 @@ Table Dishes {
   isBestSeller Boolean [not null, default: false]
   isActive Boolean [not null, default: true]
   autoDisableByStock Boolean [not null, default: false]
-  createdAt DateTime [default: `now()`, not null]
-  updatedAt DateTime [not null]
   createdBy String
   modifiedBy String
+  createdAt DateTime [default: `now()`, not null]
   metadata Json
-  restaurant Restaurants [not null]
-  category Categories [not null]
-  orderDetails OrderDetails [not null]
+  restaurantId String [not null]
+  updatedAt DateTime [not null]
+  comboDetails ComboDetails [not null]
   images DishImages [not null]
   recipes DishRecipes [not null]
+  category Categories [not null]
+  restaurant Restaurants [not null]
+  orderDetails OrderDetails [not null]
   promotions PromotionApplicableItems [not null]
-  comboDetails ComboDetails [not null]
 }
 
 Table DishImages {
@@ -285,12 +298,12 @@ Table DishImages {
   imageUrl String [not null]
   displayOrder Int [not null]
   isActive Boolean [not null]
-  createdAt DateTime [default: `now()`, not null]
-  updatedAt DateTime [not null]
   createdBy String
   modifiedBy String
   imageType Int [not null, default: 0]
+  createdAt DateTime [default: `now()`, not null]
   metadata Json
+  updatedAt DateTime [not null]
   dish Dishes [not null]
 }
 
@@ -298,14 +311,14 @@ Table IngredientCategories {
   id String [pk]
   name String [not null]
   code String [not null]
-  restaurantId String [not null]
   description String
   isActive Boolean [not null]
-  createdAt DateTime [default: `now()`, not null]
-  updatedAt DateTime [not null]
   createdBy String
   modifiedBy String
+  createdAt DateTime [default: `now()`, not null]
   metadata Json
+  restaurantId String [not null]
+  updatedAt DateTime [not null]
   restaurant Restaurants [not null]
   ingredients Ingredients [not null]
 
@@ -317,44 +330,44 @@ Table IngredientCategories {
 Table Suppliers {
   id String [pk]
   name String [not null]
-  restaurantId String [not null]
   phone String
   email String
   address String
   isActive Boolean [not null]
-  createdAt DateTime [default: `now()`, not null]
-  updatedAt DateTime [not null]
   createdBy String
   modifiedBy String
+  createdAt DateTime [default: `now()`, not null]
   metadata Json
-  restaurant Restaurants [not null]
+  restaurantId String [not null]
+  updatedAt DateTime [not null]
   ingredients Ingredients [not null]
+  restaurant Restaurants [not null]
 }
 
 Table Ingredients {
   id String [pk]
   name String [not null]
   code String [not null]
-  restaurantId String [not null]
   unit String [not null]
   minStockLevel Decimal [not null]
   maxStockLevel Decimal [not null]
   supplierId String
   type String
   isActive Boolean [not null]
-  createdAt DateTime [default: `now()`, not null]
-  updatedAt DateTime [not null]
   createdBy String
   modifiedBy String
   ingredientCategoryId String
   status Int [not null, default: 0]
+  createdAt DateTime [default: `now()`, not null]
   metadata Json
-  restaurant Restaurants [not null]
+  restaurantId String [not null]
+  updatedAt DateTime [not null]
+  dishRecipes DishRecipes [not null]
   category IngredientCategories
+  restaurant Restaurants [not null]
   supplier Suppliers
   inventoryStock InventoryStocks
   stockTransactions StockTransactions [not null]
-  dishRecipes DishRecipes [not null]
 
   indexes {
     (code, restaurantId) [unique]
@@ -367,11 +380,11 @@ Table InventoryStocks {
   currentQuantity Decimal [not null]
   lastRestockDate DateTime
   lastUpdated DateTime [not null]
-  createdAt DateTime [default: `now()`, not null]
-  updatedAt DateTime [not null]
   createdBy String
   modifiedBy String
+  createdAt DateTime [default: `now()`, not null]
   metadata Json
+  updatedAt DateTime [not null]
   ingredient Ingredients [not null]
 }
 
@@ -383,11 +396,11 @@ Table StockTransactions {
   unitPrice Decimal [not null]
   totalAmount Decimal [not null]
   reference String
-  createdAt DateTime [default: `now()`, not null]
-  updatedAt DateTime [not null]
   createdBy String
   modifiedBy String
+  createdAt DateTime [default: `now()`, not null]
   metadata Json
+  updatedAt DateTime [not null]
   ingredient Ingredients [not null]
 }
 
@@ -396,11 +409,11 @@ Table DishRecipes {
   dishId String [not null]
   ingredientId String [not null]
   quantity Decimal [not null]
-  createdAt DateTime [default: `now()`, not null]
-  updatedAt DateTime [not null]
   createdBy String
   modifiedBy String
+  createdAt DateTime [default: `now()`, not null]
   metadata Json
+  updatedAt DateTime [not null]
   dish Dishes [not null]
   ingredient Ingredients [not null]
 }
@@ -409,21 +422,21 @@ Table MealCombos {
   id String [pk]
   name String [not null]
   code String [not null]
-  restaurantId String [not null]
   description String [not null]
   imageUrl String
   baseCost Decimal [not null]
   price Decimal [not null]
   isActive Boolean [not null]
-  createdAt DateTime [default: `now()`, not null]
-  updatedAt DateTime [not null]
   createdBy String
   modifiedBy String
+  createdAt DateTime [default: `now()`, not null]
   metadata Json
-  restaurant Restaurants [not null]
+  restaurantId String [not null]
+  updatedAt DateTime [not null]
   comboDetails ComboDetails [not null]
-  promotions PromotionApplicableItems [not null]
+  restaurant Restaurants [not null]
   orderDetails OrderDetails [not null]
+  promotions PromotionApplicableItems [not null]
 
   indexes {
     (code, restaurantId) [unique]
@@ -435,11 +448,11 @@ Table ComboDetails {
   comboId String [not null]
   dishId String [not null]
   quantity Int [not null]
-  createdAt DateTime [default: `now()`, not null]
-  updatedAt DateTime [not null]
   createdBy String
   modifiedBy String
+  createdAt DateTime [default: `now()`, not null]
   metadata Json
+  updatedAt DateTime [not null]
   combo MealCombos [not null]
   dish Dishes [not null]
 }
@@ -452,17 +465,16 @@ Table LoyaltyPointBands {
   discountPercentage Decimal [not null]
   benefitDescription String [not null]
   isActive Boolean [not null]
-  createdAt DateTime [default: `now()`, not null]
-  updatedAt DateTime [not null]
   createdBy String
   modifiedBy String
   logoColor String
+  createdAt DateTime [default: `now()`, not null]
   metadata Json
+  updatedAt DateTime [not null]
 }
 
 Table Notifications {
   id String [pk]
-  restaurantId String
   recipientId String
   notificationType String
   isBroadcast Boolean [not null]
@@ -472,18 +484,18 @@ Table Notifications {
   priority String
   isPublished Boolean [not null]
   expiryDate DateTime
-  createdAt DateTime [default: `now()`, not null]
-  updatedAt DateTime [not null]
   createdBy String
   modifiedBy String
+  createdAt DateTime [default: `now()`, not null]
   metadata Json
+  restaurantId String
+  updatedAt DateTime [not null]
   restaurant Restaurants
 }
 
 Table Promotions {
   id String [pk]
   code String [not null]
-  restaurantId String [not null]
   name String [not null]
   discountValue Decimal [not null]
   discountType String [not null, default: 'PERCENTAGE']
@@ -494,14 +506,15 @@ Table Promotions {
   validFrom DateTime [not null]
   validTo DateTime [not null]
   isActive Boolean [not null]
-  createdAt DateTime [default: `now()`, not null]
-  updatedAt DateTime [not null]
   createdBy String
   modifiedBy String
+  createdAt DateTime [default: `now()`, not null]
   metadata Json
-  restaurant Restaurants [not null]
+  restaurantId String [not null]
+  updatedAt DateTime [not null]
   applicableItems PromotionApplicableItems [not null]
   histories PromotionHistories [not null]
+  restaurant Restaurants [not null]
 
   indexes {
     (code, restaurantId) [unique]
@@ -514,25 +527,25 @@ Table PromotionApplicableItems {
   dishId String
   categoryId String
   comboId String
-  createdAt DateTime [default: `now()`, not null]
-  updatedAt DateTime [not null]
   createdBy String
   modifiedBy String
+  createdAt DateTime [default: `now()`, not null]
   metadata Json
-  promotion Promotions [not null]
-  dish Dishes
+  updatedAt DateTime [not null]
   category Categories
   combo MealCombos
+  dish Dishes
+  promotion Promotions [not null]
 }
 
 Table StatusTypes {
   id String [pk]
   code String [unique, not null]
-  createdAt DateTime [default: `now()`, not null]
-  updatedAt DateTime [not null]
   createdBy String
   modifiedBy String
+  createdAt DateTime [default: `now()`, not null]
   metadata Json
+  updatedAt DateTime [not null]
   statusValues StatusValues [not null]
 }
 
@@ -543,18 +556,18 @@ Table StatusValues {
   name String [not null]
   colorCode String
   isDefault Boolean [not null, default: false]
-  createdAt DateTime [default: `now()`, not null]
-  updatedAt DateTime [not null]
   createdBy String
   modifiedBy String
-  metadata Json
   displayOrder Int [not null, default: 1]
   isSystem Boolean [not null, default: true]
+  createdAt DateTime [default: `now()`, not null]
+  metadata Json
+  updatedAt DateTime [not null]
+  employeeSchedules EmployeeSchedules [not null]
+  orderDetails OrderDetails [not null]
+  reservations Reservations [not null]
   statusType StatusTypes [not null]
   tables Tables [not null]
-  employeeSchedules EmployeeSchedules [not null]
-  reservations Reservations [not null]
-  orderDetails OrderDetails [not null]
 }
 
 Table EmployeeSchedules {
@@ -565,12 +578,12 @@ Table EmployeeSchedules {
   endTime DateTime [not null]
   checkInTime DateTime
   checkOutTime DateTime
-  createdAt DateTime [default: `now()`, not null]
-  updatedAt DateTime [not null]
   createdBy String
   modifiedBy String
   statusId String [not null]
+  createdAt DateTime [default: `now()`, not null]
   metadata Json
+  updatedAt DateTime [not null]
   employee Employees [not null]
   statusValue StatusValues [not null]
 }
@@ -600,6 +613,8 @@ Table Reservations {
   specialRequests String
   depositAmount Decimal [not null]
   checkedInAt DateTime
+  completedAt DateTime
+  reminderSentAt DateTime
   createdAt DateTime [default: `now()`, not null]
   updatedAt DateTime [not null]
   createdBy String
@@ -614,12 +629,24 @@ Table Reservations {
   orders Orders [not null]
   payments Payments [not null]
   tables ReservationTables [not null]
+  refunds Refunds [not null]
+}
+
+Table Refunds {
+  id String [pk]
+  reservationId String [not null]
+  amount Decimal [not null]
+  status String [not null, default: 'PENDING']
+  metadata Json
+  createdAt DateTime [default: `now()`, not null]
+  updatedAt DateTime [not null]
+  reservation Reservations [not null]
+  payments Payments [not null]
 }
 
 Table Orders {
   id String [pk]
   reference String [unique, not null]
-  restaurantId String [not null]
   customerId String
   reservationId String
   subTotal Decimal [not null]
@@ -630,22 +657,23 @@ Table Orders {
   completedAt DateTime
   cancelledAt DateTime
   handledBy String
-  createdAt DateTime [default: `now()`, not null]
-  updatedAt DateTime [not null]
   createdBy String
   modifiedBy String
   orderStatusId String [not null]
+  createdAt DateTime [default: `now()`, not null]
   metadata Json
-  restaurant Restaurants [not null]
-  customer Customers
-  reservation Reservations
-  employee Employees
+  restaurantId String [not null]
+  updatedAt DateTime [not null]
+  feedbacks Feedbacks [not null]
   orderDetails OrderDetails [not null]
+  customer Customers
+  employee Employees
+  reservation Reservations
+  restaurant Restaurants [not null]
   payments Payments [not null]
   pointsTransactions PointsTransactions [not null]
   promotionHistories PromotionHistories [not null]
   tableSessions TableSessions [not null]
-  feedbacks Feedbacks [not null]
 }
 
 Table OrderDetails {
@@ -654,21 +682,21 @@ Table OrderDetails {
   dishId String
   quantity Int [not null]
   note String
-  createdAt DateTime [default: `now()`, not null]
-  updatedAt DateTime [not null]
   createdBy String
   modifiedBy String
   itemStatusId String [not null]
-  metadata Json
   unitPrice Decimal [not null, default: 0]
-  comboPrice Decimal
-  comboName String
   comboId String
   parentId String
-  order Orders [not null]
-  dish Dishes
+  comboName String
+  comboPrice Decimal
+  createdAt DateTime [default: `now()`, not null]
+  metadata Json
+  updatedAt DateTime [not null]
   combo MealCombos
+  dish Dishes
   statusValue StatusValues [not null]
+  order Orders [not null]
   parent OrderDetails
   children OrderDetails [not null]
 }
@@ -694,19 +722,21 @@ Table Payments {
   cashback Decimal [not null]
   refundDate DateTime
   processedBy String
-  createdAt DateTime [default: `now()`, not null]
-  updatedAt DateTime [not null]
   createdBy String
   modifiedBy String
   checkoutUrl String
   payOSOrderCode BigInt [unique]
-  metadata Json
   status Int [not null, default: 0]
   purpose Int [not null, default: 0]
+  refundId String
+  createdAt DateTime [default: `now()`, not null]
+  updatedAt DateTime [not null]
+  metadata Json
   order Orders
-  reservation Reservations
-  employee Employees
   paymentMethod PaymentMethods [not null]
+  employee Employees
+  reservation Reservations
+  refund Refunds
 }
 
 Table PointsTransactions {
@@ -715,13 +745,13 @@ Table PointsTransactions {
   type String [not null]
   points Int [not null]
   orderId String
-  sourceType String
   description String
-  createdAt DateTime [default: `now()`, not null]
-  updatedAt DateTime [not null]
   createdBy String
   modifiedBy String
+  createdAt DateTime [default: `now()`, not null]
   metadata Json
+  sourceType String
+  updatedAt DateTime [not null]
   customer Customers [not null]
   order Orders
 }
@@ -731,11 +761,11 @@ Table PromotionHistories {
   promotionId String [not null]
   orderId String [not null]
   discountAmount Decimal [not null]
-  createdAt DateTime [default: `now()`, not null]
-  updatedAt DateTime [not null]
   createdBy String
   modifiedBy String
+  createdAt DateTime [default: `now()`, not null]
   metadata Json
+  updatedAt DateTime [not null]
   order Orders [not null]
   promotion Promotions [not null]
 }
@@ -747,13 +777,13 @@ Table TableSessions {
   startedAt DateTime [not null]
   endedAt DateTime
   isActive Boolean [not null]
-  createdAt DateTime [default: `now()`, not null]
-  updatedAt DateTime [not null]
   createdBy String
   modifiedBy String
+  createdAt DateTime [default: `now()`, not null]
   metadata Json
-  table Tables [not null]
+  updatedAt DateTime [not null]
   order Orders
+  table Tables [not null]
 }
 
 Table Feedbacks {
@@ -764,14 +794,14 @@ Table Feedbacks {
   comment String
   isPublished Boolean [not null]
   isAnonymous Boolean [not null]
-  createdAt DateTime [default: `now()`, not null]
-  updatedAt DateTime [not null]
   createdBy String
   modifiedBy String
+  createdAt DateTime [default: `now()`, not null]
   metadata Json
-  order Orders [not null]
-  customer Customers [not null]
+  updatedAt DateTime [not null]
   images FeedbackImages [not null]
+  customer Customers [not null]
+  order Orders [not null]
 
   indexes {
     (orderId, customerId) [unique]
@@ -784,28 +814,28 @@ Table FeedbackImages {
   imageUrl String [not null]
   displayOrder Int [not null]
   isCover Boolean [not null]
-  createdAt DateTime [default: `now()`, not null]
-  updatedAt DateTime [not null]
   createdBy String
   modifiedBy String
+  createdAt DateTime [default: `now()`, not null]
   metadata Json
+  updatedAt DateTime [not null]
   feedback Feedbacks [not null]
 }
 
 Table AIChatSessions {
   id String [pk]
   sessionId String [unique, not null]
-  restaurantId String
   customerId String
   tableId String
   expiresAt DateTime [not null]
-  createdAt DateTime [default: `now()`, not null]
-  updatedAt DateTime [not null]
   createdBy String
   modifiedBy String
+  createdAt DateTime [default: `now()`, not null]
   metadata Json
-  restaurant Restaurants
+  restaurantId String
+  updatedAt DateTime [not null]
   messages AIChatMessages [not null]
+  restaurant Restaurants
 }
 
 Table AIChatMessages {
@@ -813,12 +843,140 @@ Table AIChatMessages {
   aiChatSessionId String [not null]
   role String [not null]
   content String [not null]
-  createdAt DateTime [default: `now()`, not null]
-  updatedAt DateTime [not null]
   createdBy String
   modifiedBy String
+  createdAt DateTime [default: `now()`, not null]
   metadata Json
+  updatedAt DateTime [not null]
   session AIChatSessions [not null]
+}
+
+Table SocialPosts {
+  id String [pk]
+  authorId String [not null]
+  content String [not null]
+  visibility String [not null, default: 'public', note: 'public | followers | private']
+  repostOfId String
+  createdAt DateTime [default: `now()`, not null]
+  updatedAt DateTime [not null]
+  author Users [not null]
+  repostOf SocialPosts
+  reposts SocialPosts [not null]
+  images SocialImages [not null]
+  comments SocialComments [not null]
+  reactions SocialReactions [not null]
+  shares SocialShares [not null]
+  savedBy SavedPosts [not null]
+  postHashtags SocialPostHashtags [not null]
+}
+
+Table SocialImages {
+  id String [pk]
+  postId String [not null]
+  imageUrl String [not null]
+  post SocialPosts [not null]
+}
+
+Table SocialComments {
+  id String [pk]
+  postId String [not null]
+  userId String [not null]
+  parentId String
+  content String [not null]
+  createdAt DateTime [default: `now()`, not null]
+  updatedAt DateTime [not null]
+  post SocialPosts [not null]
+  user Users [not null]
+  parent SocialComments
+  replies SocialComments [not null]
+}
+
+Table SocialReactions {
+  id String [pk]
+  postId String [not null]
+  userId String [not null]
+  type String [not null]
+  createdAt DateTime [default: `now()`, not null]
+  post SocialPosts [not null]
+  user Users [not null]
+
+  indexes {
+    (postId, userId) [unique]
+  }
+}
+
+Table SocialShares {
+  id String [pk]
+  postId String [not null]
+  userId String [not null]
+  createdAt DateTime [default: `now()`, not null]
+  post SocialPosts [not null]
+  user Users [not null]
+}
+
+Table SavedPosts {
+  id String [pk]
+  postId String [not null]
+  userId String [not null]
+  createdAt DateTime [default: `now()`, not null]
+  post SocialPosts [not null]
+  user Users [not null]
+
+  indexes {
+    (postId, userId) [unique]
+  }
+}
+
+Table SocialFollows {
+  id String [pk]
+  followerId String [not null]
+  followingId String [not null]
+  createdAt DateTime [default: `now()`, not null]
+  follower Users [not null]
+  following Users [not null]
+
+  indexes {
+    (followerId, followingId) [unique]
+  }
+
+  Note: 'Alias concept: SocialPostImage — persisted as SocialImage (legacy table)'
+}
+
+Table SocialHashtags {
+  id String [pk]
+  tag String [unique, not null]
+  postCount Int [not null, default: 0]
+  createdAt DateTime [default: `now()`, not null]
+  updatedAt DateTime [not null]
+  posts SocialPostHashtags [not null]
+}
+
+Table SocialPostHashtags {
+  postId String [not null]
+  hashtagId String [not null]
+  createdAt DateTime [default: `now()`, not null]
+  post SocialPosts [not null]
+  hashtag SocialHashtags [not null]
+
+  indexes {
+    (postId, hashtagId) [pk]
+  }
+}
+
+Table SocialNotifications {
+  id String [pk]
+  userId String [not null]
+  actorId String [not null]
+  type String [not null]
+  postId String
+  commentId String
+  message String
+  read Boolean [not null, default: false]
+  createdAt DateTime [default: `now()`, not null]
+  recipient Users [not null]
+  actor Users [not null]
+
+  Note: 'Alias concept: SocialBookmark — persisted as SavedPost (legacy table)'
 }
 
 Table RestaurantApplications {
@@ -951,35 +1109,35 @@ Ref: Restaurants.ownerId > Users.id
 
 Ref: UserSessions.userId > Users.id [delete: Cascade]
 
-Ref: UserRoles.userId > Users.id [delete: Cascade]
+Ref: UserRoles.restaurantId > Restaurants.id [delete: Cascade]
 
 Ref: UserRoles.roleId > Roles.id [delete: Cascade]
 
-Ref: UserRoles.restaurantId > Restaurants.id [delete: Cascade]
-
-Ref: Employees.userId - Users.id
+Ref: UserRoles.userId > Users.id [delete: Cascade]
 
 Ref: Employees.restaurantId > Restaurants.id
+
+Ref: Employees.userId - Users.id
 
 Ref: Customers.userId - Users.id
 
 Ref: Floors.restaurantId > Restaurants.id
 
-Ref: Tables.restaurantId > Restaurants.id
-
 Ref: Tables.floorId > Floors.id
+
+Ref: Tables.restaurantId > Restaurants.id
 
 Ref: Tables.tableStatusId > StatusValues.id
 
-Ref: Table3DModels.tableId > Tables.id [delete: Cascade]
-
-Ref: Categories.restaurantId > Restaurants.id
+Ref: Table3DModels.tableId - Tables.id [delete: Cascade]
 
 Ref: Categories.parentId - Categories.id [delete: No Action]
 
-Ref: Dishes.restaurantId > Restaurants.id
+Ref: Categories.restaurantId > Restaurants.id
 
 Ref: Dishes.categoryId > Categories.id
+
+Ref: Dishes.restaurantId > Restaurants.id
 
 Ref: DishImages.dishId > Dishes.id [delete: Cascade]
 
@@ -987,9 +1145,9 @@ Ref: IngredientCategories.restaurantId > Restaurants.id
 
 Ref: Suppliers.restaurantId > Restaurants.id
 
-Ref: Ingredients.restaurantId > Restaurants.id
-
 Ref: Ingredients.ingredientCategoryId > IngredientCategories.id
+
+Ref: Ingredients.restaurantId > Restaurants.id
 
 Ref: Ingredients.supplierId > Suppliers.id
 
@@ -1011,13 +1169,13 @@ Ref: Notifications.restaurantId > Restaurants.id
 
 Ref: Promotions.restaurantId > Restaurants.id
 
-Ref: PromotionApplicableItems.promotionId > Promotions.id [delete: Cascade]
-
-Ref: PromotionApplicableItems.dishId > Dishes.id [delete: No Action]
-
 Ref: PromotionApplicableItems.categoryId > Categories.id [delete: No Action]
 
 Ref: PromotionApplicableItems.comboId > MealCombos.id [delete: No Action]
+
+Ref: PromotionApplicableItems.dishId > Dishes.id [delete: No Action]
+
+Ref: PromotionApplicableItems.promotionId > Promotions.id [delete: Cascade]
 
 Ref: StatusValues.statusTypeId > StatusTypes.id
 
@@ -1035,31 +1193,35 @@ Ref: Reservations.customerId > Customers.id
 
 Ref: Reservations.reservationStatusId > StatusValues.id
 
-Ref: Orders.restaurantId > Restaurants.id
+Ref: Refunds.reservationId > Reservations.id [delete: No Action]
 
 Ref: Orders.customerId > Customers.id [delete: No Action]
 
-Ref: Orders.reservationId > Reservations.id [delete: No Action]
-
 Ref: Orders.handledBy > Employees.id [delete: No Action]
 
-Ref: OrderDetails.orderId > Orders.id [delete: Cascade]
+Ref: Orders.reservationId > Reservations.id [delete: No Action]
 
-Ref: OrderDetails.dishId > Dishes.id [delete: No Action]
+Ref: Orders.restaurantId > Restaurants.id
 
 Ref: OrderDetails.comboId > MealCombos.id [delete: No Action]
 
+Ref: OrderDetails.dishId > Dishes.id [delete: No Action]
+
 Ref: OrderDetails.itemStatusId > StatusValues.id [delete: No Action]
+
+Ref: OrderDetails.orderId > Orders.id [delete: Cascade]
 
 Ref: OrderDetails.parentId - OrderDetails.id [delete: No Action]
 
 Ref: Payments.orderId > Orders.id [delete: No Action]
 
-Ref: Payments.reservationId > Reservations.id [delete: No Action]
+Ref: Payments.paymentMethodId > PaymentMethods.id
 
 Ref: Payments.processedBy > Employees.id [delete: No Action]
 
-Ref: Payments.paymentMethodId > PaymentMethods.id
+Ref: Payments.reservationId > Reservations.id [delete: No Action]
+
+Ref: Payments.refundId > Refunds.id [delete: No Action]
 
 Ref: PointsTransactions.customerId > Customers.id [delete: No Action]
 
@@ -1069,19 +1231,55 @@ Ref: PromotionHistories.orderId > Orders.id [delete: Cascade]
 
 Ref: PromotionHistories.promotionId > Promotions.id
 
-Ref: TableSessions.tableId > Tables.id [delete: No Action]
-
 Ref: TableSessions.orderId > Orders.id [delete: No Action]
 
-Ref: Feedbacks.orderId > Orders.id [delete: No Action]
+Ref: TableSessions.tableId > Tables.id [delete: No Action]
 
 Ref: Feedbacks.customerId > Customers.id [delete: No Action]
+
+Ref: Feedbacks.orderId > Orders.id [delete: No Action]
 
 Ref: FeedbackImages.feedbackId > Feedbacks.id [delete: Cascade]
 
 Ref: AIChatSessions.restaurantId > Restaurants.id
 
 Ref: AIChatMessages.aiChatSessionId > AIChatSessions.id [delete: Cascade]
+
+Ref: SocialPosts.authorId > Users.id
+
+Ref: SocialPosts.repostOfId - SocialPosts.id [delete: Set Null]
+
+Ref: SocialImages.postId > SocialPosts.id [delete: Cascade]
+
+Ref: SocialComments.postId > SocialPosts.id [delete: Cascade]
+
+Ref: SocialComments.userId > Users.id
+
+Ref: SocialComments.parentId - SocialComments.id
+
+Ref: SocialReactions.postId > SocialPosts.id [delete: Cascade]
+
+Ref: SocialReactions.userId > Users.id
+
+Ref: SocialShares.postId > SocialPosts.id [delete: Cascade]
+
+Ref: SocialShares.userId > Users.id
+
+Ref: SavedPosts.postId > SocialPosts.id [delete: Cascade]
+
+Ref: SavedPosts.userId > Users.id
+
+Ref: SocialFollows.followerId > Users.id [delete: Cascade]
+
+Ref: SocialFollows.followingId > Users.id [delete: Cascade]
+
+Ref: SocialPostHashtags.postId > SocialPosts.id [delete: Cascade]
+
+Ref: SocialPostHashtags.hashtagId > SocialHashtags.id [delete: Cascade]
+
+Ref: SocialNotifications.userId > Users.id [delete: Cascade]
+
+Ref: SocialNotifications.actorId > Users.id [delete: Cascade]
 
 Ref: RestaurantApplications.userId > Users.id [delete: Cascade]
 
