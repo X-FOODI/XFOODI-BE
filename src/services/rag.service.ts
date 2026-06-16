@@ -11,12 +11,18 @@ export interface ChatMessage {
  * Hybrid RRF search (vector + full-text).
  * Falls back to text-only search when pgvector is not installed (error 42704).
  */
-async function hybridSearchChunks(
+export async function hybridSearchChunks(
   restaurantId: string,
   queryVectorStr: string,
   rewrittenQuery: string,
-  extraWhere = ''  // e.g. "AND (rd.\"bucketId\" IS NULL OR rb.\"isChatEnabled\" = true)"
+  extraWhere = '',  // e.g. "AND (rd.\"bucketId\" IS NULL OR rb.\"isChatEnabled\" = true)"
+  bucketId?: string // exact-match a single bucket (used by the KB test endpoints)
 ): Promise<any[]> {
+  const bucketFilter = bucketId ? `AND rd."bucketId" = $4` : '';
+  const hybridParams = bucketId
+    ? [queryVectorStr, restaurantId, rewrittenQuery, bucketId]
+    : [queryVectorStr, restaurantId, rewrittenQuery];
+
   // ── Try 1: Full hybrid RRF (vector + text) ──────────────────
   try {
     return await prisma.$queryRawUnsafe<any[]>(
@@ -26,7 +32,7 @@ async function hybridSearchChunks(
           JOIN "RestaurantDocuments" rd ON dc."documentId" = rd.id
           LEFT JOIN "RestaurantBuckets" rb ON rd."bucketId" = rb.id
           WHERE rd."restaurantId" = $2 AND rd.status = 'INDEXED'
-            ${extraWhere}
+            ${extraWhere} ${bucketFilter}
           LIMIT 100
         ),
         text_matches AS (
@@ -35,11 +41,11 @@ async function hybridSearchChunks(
           JOIN "RestaurantDocuments" rd ON dc."documentId" = rd.id
           LEFT JOIN "RestaurantBuckets" rb ON rd."bucketId" = rb.id
           WHERE rd."restaurantId" = $2 AND rd.status = 'INDEXED'
-            ${extraWhere}
+            ${extraWhere} ${bucketFilter}
             AND to_tsvector('simple', dc.content) @@ plainto_tsquery('simple', $3)
           LIMIT 100
         )
-        SELECT dc.content, rd.filename,
+        SELECT dc.content, rd.filename, dc."documentId" as "documentId",
                (COALESCE(1.0 / (60.0 + vm.rank), 0.0) + COALESCE(1.0 / (60.0 + tm.rank), 0.0)) as rrf_score
         FROM "DocumentChunks" dc
         JOIN "RestaurantDocuments" rd ON dc."documentId" = rd.id
@@ -48,9 +54,7 @@ async function hybridSearchChunks(
         WHERE vm.id IS NOT NULL OR tm.id IS NOT NULL
         ORDER BY rrf_score DESC
         LIMIT 10`,
-      queryVectorStr,
-      restaurantId,
-      rewrittenQuery
+      ...hybridParams
     );
   } catch (vecErr: any) {
     // ── Fallback: text-only search when pgvector not installed (code 42704) ──
@@ -62,19 +66,23 @@ async function hybridSearchChunks(
 
     console.warn('[RAGService] pgvector not available, falling back to full-text search only.');
 
+    const textOnlyBucketFilter = bucketId ? `AND rd."bucketId" = $3` : '';
+    const textOnlyParams = bucketId
+      ? [rewrittenQuery, restaurantId, bucketId]
+      : [rewrittenQuery, restaurantId];
+
     return await prisma.$queryRawUnsafe<any[]>(
-      `SELECT dc.content, rd.filename,
+      `SELECT dc.content, rd.filename, dc."documentId" as "documentId",
               ts_rank(to_tsvector('simple', dc.content), plainto_tsquery('simple', $1)) as rrf_score
        FROM "DocumentChunks" dc
        JOIN "RestaurantDocuments" rd ON dc."documentId" = rd.id
        LEFT JOIN "RestaurantBuckets" rb ON rd."bucketId" = rb.id
        WHERE rd."restaurantId" = $2 AND rd.status = 'INDEXED'
-         ${extraWhere}
+         ${extraWhere} ${textOnlyBucketFilter}
          AND to_tsvector('simple', dc.content) @@ plainto_tsquery('simple', $1)
        ORDER BY rrf_score DESC
        LIMIT 10`,
-      rewrittenQuery,
-      restaurantId
+      ...textOnlyParams
     );
   }
 }
