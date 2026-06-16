@@ -15,7 +15,8 @@ export class KnowledgeBaseService {
     filename: string,
     fileType: 'PDF' | 'TXT' | 'DOCX' | 'URL' | 'MD',
     fileUrl: string,
-    bucketId?: string
+    bucketId?: string,
+    versionId?: string
   ): Promise<any> {
     // Determine mounted status and chunking configuration of the bucket
     let isMounted = false;
@@ -43,6 +44,7 @@ export class KnowledgeBaseService {
         filename,
         fileUrl,
         fileType,
+        versionId: versionId || null,
         status: isMounted ? 'PROCESSING' : 'STORED',
       },
     });
@@ -103,6 +105,8 @@ export class KnowledgeBaseService {
         chunks = [text];
       } else if (chunkingStrategy === 'SEMANTIC') {
         chunks = this.chunkTextSemantic(text, chunkSize);
+      } else if (chunkingStrategy === 'ADAPTIVE') {
+        chunks = await this.chunkTextAdaptive(text);
       } else {
         chunks = this.chunkTextFixed(text, chunkSize, chunkOverlap);
       }
@@ -121,7 +125,7 @@ export class KnowledgeBaseService {
         // Save to pgvector using parameterized raw SQL and explicit JSONB cast ($5::jsonb)
         await prisma.$executeRawUnsafe(
           `INSERT INTO "DocumentChunks" (id, "documentId", content, embedding, metadata, "createdAt") 
-           VALUES ($1, $2, $3, $4::vector, $5::jsonb, NOW())`,
+           VALUES ($1, $2, $3, $4::public.vector, $5::jsonb, NOW())`,
           chunkId,
           documentId,
           chunkText,
@@ -146,6 +150,176 @@ export class KnowledgeBaseService {
       }).catch(() => {});
       throw err;
     }
+  }
+
+  private static async chunkTextAdaptive(text: string): Promise<string[]> {
+    return new Promise((resolve, reject) => {
+      const { spawn } = require('child_process');
+      const path = require('path');
+      const scriptPath = path.resolve(process.cwd(), 'scripts/adaptive_chunk.py');
+      
+      const pythonCommand = process.env.PYTHON_PATH || 'python';
+      const child = spawn(pythonCommand, [scriptPath]);
+      
+      let stdoutData = '';
+      let stderrData = '';
+      
+      child.stdout.on('data', (data: any) => {
+        stdoutData += data.toString();
+      });
+      
+      child.stderr.on('data', (data: any) => {
+        stderrData += data.toString();
+      });
+      
+      child.on('close', (code: number) => {
+        if (code !== 0) {
+          console.error(`[KBService] adaptive_chunk.py failed with code ${code}. Stderr: ${stderrData}`);
+          reject(new Error(`Adaptive chunking script failed: ${stderrData}`));
+          return;
+        }
+        
+        try {
+          const chunks = JSON.parse(stdoutData.trim());
+          if (Array.isArray(chunks)) {
+            resolve(chunks);
+          } else {
+            reject(new Error('Adaptive chunking script did not return a JSON array'));
+          }
+        } catch (e: any) {
+          console.error(`[KBService] Failed to parse JSON from adaptive_chunk.py. Output: ${stdoutData}`, e);
+          reject(new Error(`Failed to parse chunks JSON: ${e.message}`));
+        }
+      });
+      
+      child.stdin.write(text);
+      child.stdin.end();
+    });
+  }
+
+  public static async createSnapshot(
+    restaurantId: string,
+    bucketId: string | null,
+    versionName: string,
+    description?: string
+  ): Promise<any> {
+    const docs = await prisma.restaurantDocument.findMany({
+      where: { restaurantId, bucketId: bucketId || null, status: 'INDEXED' },
+      select: { filename: true, fileUrl: true, fileType: true, versionId: true }
+    });
+
+    const snapshot = await prisma.restaurantKBSnapshot.create({
+      data: {
+        restaurantId,
+        bucketId: bucketId || null,
+        versionName,
+        description: description || null,
+        documents: docs as any
+      }
+    });
+
+    return snapshot;
+  }
+
+  public static async rollbackToSnapshot(
+    restaurantId: string,
+    bucketId: string | null,
+    snapshotId: string
+  ): Promise<any> {
+    const snapshot = await prisma.restaurantKBSnapshot.findUnique({
+      where: { id: snapshotId }
+    });
+
+    if (!snapshot || snapshot.restaurantId !== restaurantId) {
+      throw new Error('Không tìm thấy bản lịch sử hoặc không có quyền.');
+    }
+
+    const targetDocs = (snapshot.documents as any) || [];
+    const targetUrls = Array.from(new Set<string>(targetDocs.map((d: any) => d.fileUrl as string)));
+
+    // 1. Delete all current documents not in the target snapshot
+    const docsToDelete = await prisma.restaurantDocument.findMany({
+      where: {
+        restaurantId,
+        bucketId: bucketId || null,
+        NOT: { fileUrl: { in: targetUrls } }
+      }
+    });
+
+    for (const doc of docsToDelete) {
+      await prisma.restaurantDocument.delete({ where: { id: doc.id } });
+    }
+
+    // 2. Restore documents in the snapshot
+    const { UploadQueueService } = await import('./uploadQueue.service');
+    const bucket = bucketId ? await prisma.restaurantBucket.findUnique({ where: { id: bucketId } }) : null;
+    const strategy = bucket?.chunkingStrategy || 'FIXED';
+    const size = bucket?.chunkSize || 800;
+    const overlap = bucket?.chunkOverlap || 100;
+
+    const restoredDocs = [];
+
+    for (const tDoc of targetDocs) {
+      // Check if it already exists
+      const existing = await prisma.restaurantDocument.findFirst({
+        where: {
+          restaurantId,
+          bucketId: bucketId || null,
+          fileUrl: tDoc.fileUrl
+        }
+      });
+
+      if (existing) {
+        if (existing.status === 'INDEXED') {
+          restoredDocs.push(existing);
+          continue; // Already successfully indexed
+        }
+        // If not indexed, re-trigger
+        await prisma.documentChunk.deleteMany({ where: { documentId: existing.id } });
+        await prisma.restaurantDocument.update({
+          where: { id: existing.id },
+          data: { status: 'PROCESSING' }
+        });
+        await UploadQueueService.addUploadJob({
+          documentId: existing.id,
+          restaurantId,
+          filename: existing.filename,
+          fileUrl: existing.fileUrl,
+          fileType: existing.fileType as 'PDF' | 'TXT' | 'MD',
+          chunkingStrategy: strategy,
+          chunkSize: size,
+          chunkOverlap: overlap
+        });
+        restoredDocs.push(existing);
+      } else {
+        // Recreate and process
+        const document = await prisma.restaurantDocument.create({
+          data: {
+            restaurantId,
+            bucketId: bucketId || null,
+            filename: tDoc.filename,
+            fileUrl: tDoc.fileUrl,
+            fileType: tDoc.fileType,
+            versionId: tDoc.versionId || null,
+            status: 'PROCESSING'
+          }
+        });
+
+        await UploadQueueService.addUploadJob({
+          documentId: document.id,
+          restaurantId,
+          filename: document.filename,
+          fileUrl: document.fileUrl,
+          fileType: document.fileType as 'PDF' | 'TXT' | 'MD',
+          chunkingStrategy: strategy,
+          chunkSize: size,
+          chunkOverlap: overlap
+        });
+        restoredDocs.push(document);
+      }
+    }
+
+    return { success: true, count: restoredDocs.length };
   }
 
   private static chunkTextFixed(text: string, chunkSize: number, overlap: number): string[] {
