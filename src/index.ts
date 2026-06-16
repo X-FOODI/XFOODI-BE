@@ -26,6 +26,7 @@ import customerRoutes from './routes/customer.routes';
 import { API_ROUTES } from './constants/routes';
 import { ENV } from './config/env';
 import { UploadQueueService } from './services/uploadQueue.service';
+import { startReservationCronJobs } from './cron/reservationCron';
 
 
 const app = express();
@@ -274,6 +275,8 @@ httpServer.listen(PORT, () => {
   
   // Initialize Background Upload Queue
   UploadQueueService.initialize();
+  // Start reservation cron jobs (reminder + payment deadline enforcement)
+  startReservationCronJobs();
   console.log(`- Auth API:  http://localhost:${PORT}${API_ROUTES.AUTH.BASE}`);
   console.log(`- User API:  http://localhost:${PORT}${API_ROUTES.USERS.BASE}`);
   console.log(`- Tenant API: http://localhost:${PORT}${API_ROUTES.TENANTS.BASE}`);
