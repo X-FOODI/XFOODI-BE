@@ -2,13 +2,13 @@ generator client {
   provider = "prisma-client-js"
 }
 
+
+
 datasource db {
   provider  = "postgresql"
   url       = env("DATABASE_URL")
   directUrl = env("DIRECT_URL")
 }
-
-// ─── Tenant Root ───────────────────────────────────────────────────────────────
 
 model Restaurant {
   id           String   @id @default(uuid())
@@ -37,41 +37,42 @@ model Restaurant {
   tables               Table[]
   categories           Category[]
   dishes               Dish[]
-  ingredients          Ingredient[]
   ingredientCategories IngredientCategory[]
-  suppliers            Supplier[]
-  orders               Order[]
-  reservations         Reservation[]
-  promotions           Promotion[]
+  ingredients          Ingredient[]
   mealCombos           MealCombo[]
   notifications        Notification[]
+  orders               Order[]
+  promotions           Promotion[]
+  reservations         Reservation[]
+  suppliers            Supplier[]
   aiChatSessions       AIChatSession[]
+  documents            RestaurantDocument[]
+  buckets              RestaurantBucket[]
+  wallet               RestaurantWallet?
 
   @@map("Restaurants")
 }
 
 // ─── Identity & Auth ───────────────────────────────────────────────────────────
-
 model Role {
-  id   String @id @default(uuid())
-  name String @unique
-
+  id        String     @id @default(uuid())
+  name      String     @unique
   userRoles UserRole[]
 
   @@map("Roles")
 }
 
 model User {
-  id            String    @id @default(uuid())
-  userName      String?   @unique
-  email         String?   @unique
-  emailVerified Boolean   @default(false)
-  passwordHash  String?
+  id               String        @id @default(uuid())
+  userName         String?       @unique
+  email            String?       @unique
+  passwordHash     String?
+  phoneNumber      String?
+  avatarUrl        String?
+  fullName         String?
   /// "local" | "google" — how the account was created / primary auth
-  provider      String    @default("local")
-  phoneNumber   String?
-  avatarUrl     String?
-  fullName      String?
+  provider         String        @default("local")
+  emailVerified    Boolean       @default(false)
   /// "MALE" | "FEMALE" | "OTHER"
   gender        String?
   dateOfBirth   DateTime?
@@ -80,16 +81,30 @@ model User {
   lastLoginAt   DateTime?
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
+  resetOtp      String?
+  resetOtpExpires DateTime?
 
   twoFactorEnabled     Boolean   @default(false)
   twoFactorSecret      String?
   twoFactorBackupCodes String[]  @default([])
 
-  employee         Employee?
   customer         Customer?
+  employee         Employee?
+  ownedRestaurants Restaurant[]  @relation("RestaurantOwner")
   roles            UserRole[]
   sessions         UserSession[]
-  ownedRestaurants Restaurant[] @relation("RestaurantOwner")
+  socialPosts      SocialPost[]
+  socialComments   SocialComment[]
+  socialReactions  SocialReaction[]
+  socialShares     SocialShare[]
+  savedPosts       SavedPost[]
+  /// Social community extensions (additive)
+  bio                        String?              @db.VarChar(500)
+  coverImageUrl              String?
+  socialFollowers            SocialFollow[]       @relation("UserSocialFollowers")
+  socialFollowing            SocialFollow[]       @relation("UserSocialFollowing")
+  socialNotificationsReceived SocialNotification[] @relation("NotificationRecipient")
+  socialNotificationsSent     SocialNotification[] @relation("NotificationActor")
   restaurantApplications RestaurantApplication[]
   reviewedApplications   RestaurantApplication[] @relation("ApplicationReviewer")
 
@@ -100,13 +115,12 @@ model UserSession {
   id           String    @id @default(uuid())
   userId       String
   refreshToken String    @unique
-  deviceInfo   String? // "Chrome on Windows", "iPhone App"
+  deviceInfo   String?
   ipAddress    String?
   expiresAt    DateTime
   createdAt    DateTime  @default(now())
   revokedAt    DateTime?
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
   @@map("UserSessions")
@@ -116,41 +130,37 @@ model UserRole {
   userId       String
   roleId       String
   restaurantId String?
-
-  user       User        @relation(fields: [userId], references: [id], onDelete: Cascade)
-  role       Role        @relation(fields: [roleId], references: [id], onDelete: Cascade)
-  restaurant Restaurant? @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  restaurant   Restaurant? @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  role         Role        @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  user         User        @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@id([userId, roleId])
   @@index([restaurantId])
   @@map("UserRoles")
 }
 
-// ─── People ────────────────────────────────────────────────────────────────────
-
 model Employee {
-  id              String    @id @default(uuid())
-  code            String
-  restaurantId    String
-  userId          String?   @unique
-  address         String?
-  position        String
-  hireDate        DateTime  @db.Date
-  terminationDate DateTime? @db.Date
-  salary          Decimal   @db.Decimal(18, 2)
-  salaryType      String
-  isActive        Boolean   @default(true)
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
-  createdBy       String?
-  modifiedBy      String?
-  metadata        Json?
-
-  user              User?              @relation(fields: [userId], references: [id])
+  id                String             @id @default(uuid())
+  code              String
+  address           String?
+  position          String
+  hireDate          DateTime           @db.Date
+  terminationDate   DateTime?          @db.Date
+  salary            Decimal            @db.Decimal(18, 2)
+  salaryType        String
+  isActive          Boolean            @default(true)
+  createdBy         String?
+  modifiedBy        String?
+  createdAt         DateTime           @default(now())
+  metadata          Json?
+  restaurantId      String
+  updatedAt         DateTime           @updatedAt
+  userId            String?            @unique
+  schedules         EmployeeSchedule[]
   restaurant        Restaurant         @relation(fields: [restaurantId], references: [id])
+  user              User?              @relation(fields: [userId], references: [id])
   ordersHandled     Order[]
   paymentsProcessed Payment[]
-  schedules         EmployeeSchedule[]
 
   @@unique([code, restaurantId])
   @@index([restaurantId])
@@ -158,86 +168,81 @@ model Employee {
 }
 
 model Customer {
-  id              String    @id @default(uuid())
-  userId          String    @unique
-  membershipLevel String?
-  loyaltyPoints   Int       @default(0)
-  isActive        Boolean   @default(true)
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
-  createdBy       String?
-  modifiedBy      String?
-  metadata        Json?
-
-  user               User                @relation(fields: [userId], references: [id])
-  orders             Order[]
-  reservations       Reservation[]
-  pointsTransactions PointsTransaction[]
+  id                 String              @id @default(uuid())
+  membershipLevel    String?
+  loyaltyPoints      Int                 @default(0)
+  isActive           Boolean             @default(true)
+  createdBy          String?
+  modifiedBy         String?
+  createdAt          DateTime            @default(now())
+  metadata           Json?
+  updatedAt          DateTime            @default(now()) @updatedAt
+  userId             String?             @unique
+  user               User?               @relation(fields: [userId], references: [id])
   feedbacks          Feedback[]
+  orders             Order[]
+  pointsTransactions PointsTransaction[]
+  reservations       Reservation[]
 
   @@map("Customers")
 }
 
-// ─── Floor & Table ─────────────────────────────────────────────────────────────
-
 model Floor {
-  id           String   @id @default(uuid())
+  id           String     @id @default(uuid())
   name         String
-  restaurantId String
   imageUrl     String?
-  isActive     Boolean  @default(true)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  isActive     Boolean    @default(true)
   createdBy    String?
   modifiedBy   String?
-  height       Decimal  @default(0.0) @db.Decimal(8, 2)
-  width        Decimal  @default(0.0) @db.Decimal(8, 2)
+  height       Decimal    @default(0.0) @db.Decimal(8, 2)
+  width        Decimal    @default(0.0) @db.Decimal(8, 2)
+  createdAt    DateTime   @default(now())
   metadata     Json?
-
-  restaurant Restaurant @relation(fields: [restaurantId], references: [id])
-  tables     Table[]
+  restaurantId String
+  updatedAt    DateTime   @updatedAt
+  restaurant   Restaurant @relation(fields: [restaurantId], references: [id])
+  tables       Table[]
 
   @@index([restaurantId])
   @@map("Floors")
 }
 
 model Table {
-  id                 String   @id @default(uuid())
+  id                 String             @id @default(uuid())
   code               String
-  restaurantId       String
   type               String
   seatingCapacity    Int
   shape              String
-  positionX          Decimal  @db.Decimal(8, 2)
-  positionY          Decimal  @db.Decimal(8, 2)
-  width              Decimal  @db.Decimal(6, 2)
-  height             Decimal  @db.Decimal(6, 2)
-  rotation           Decimal  @db.Decimal(5, 2)
-  has3DView          Boolean  @default(false)
+  positionX          Decimal            @db.Decimal(8, 2)
+  positionY          Decimal            @db.Decimal(8, 2)
+  width              Decimal            @db.Decimal(6, 2)
+  height             Decimal            @db.Decimal(6, 2)
+  rotation           Decimal            @db.Decimal(5, 2)
+  has3DView          Boolean            @default(false)
   viewDescription    String?
   defaultViewUrl     String?
-  isActive           Boolean  @default(true)
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+  isActive           Boolean            @default(true)
   createdBy          String?
   modifiedBy         String?
   tableStatusId      String
   qrCodeUrl          String?
-  floorId            String   @default("00000000-0000-0000-0000-000000000000")
-  metadata           Json?
+  floorId            String             @default("00000000-0000-0000-0000-000000000000")
   cubeBackImageUrl   String?
   cubeBottomImageUrl String?
   cubeFrontImageUrl  String?
   cubeLeftImageUrl   String?
   cubeRightImageUrl  String?
   cubeTopImageUrl    String?
-
-  restaurant    Restaurant         @relation(fields: [restaurantId], references: [id])
-  floor         Floor              @relation(fields: [floorId], references: [id])
-  tableStatus   StatusValue        @relation("TableStatus", fields: [tableStatusId], references: [id])
-  table3DModels Table3DModel[]
-  sessions      TableSession[]
-  reservations  ReservationTable[]
+  createdAt          DateTime           @default(now())
+  metadata           Json?
+  restaurantId       String
+  updatedAt          DateTime           @updatedAt
+  reservations       ReservationTable[]
+  table3DModels      Table3DModel?
+  sessions           TableSession[]
+  floor              Floor              @relation(fields: [floorId], references: [id])
+  restaurant         Restaurant         @relation(fields: [restaurantId], references: [id])
+  tableStatus        StatusValue        @relation("TableStatus", fields: [tableStatusId], references: [id])
 
   @@unique([code, restaurantId])
   @@index([restaurantId])
@@ -259,70 +264,66 @@ model Table3DModel {
   allowZoom         Boolean
   minZoom           Decimal  @db.Decimal(4, 2)
   maxZoom           Decimal  @db.Decimal(4, 2)
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
   createdBy         String?
   modifiedBy        String?
+  createdAt         DateTime @default(now())
   metadata          Json?
-
-  table Table @relation(fields: [tableId], references: [id], onDelete: Cascade)
+  updatedAt         DateTime @updatedAt
+  table             Table    @relation(fields: [tableId], references: [id], onDelete: Cascade)
 
   @@map("Table3DModels")
 }
 
-// ─── Menu ──────────────────────────────────────────────────────────────────────
-
 model Category {
-  id           String   @id @default(uuid())
+  id           String                    @id @default(uuid())
   name         String
   description  String
-  restaurantId String
   imageUrl     String?
   parentId     String?
-  isActive     Boolean  @default(true)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  isActive     Boolean                   @default(true)
   createdBy    String?
   modifiedBy   String?
+  displayOrder Int                       @default(0)
+  createdAt    DateTime                  @default(now())
   metadata     Json?
-  displayOrder Int      @default(0)
-
-  restaurant Restaurant                @relation(fields: [restaurantId], references: [id])
-  parent     Category?                 @relation("CategoryHierarchy", fields: [parentId], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  children   Category[]                @relation("CategoryHierarchy")
-  dishes     Dish[]
-  promotions PromotionApplicableItem[]
+  restaurantId String?
+  updatedAt    DateTime                  @default(now()) @updatedAt
+  parent       Category?                 @relation("CategoryHierarchy", fields: [parentId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  children     Category[]                @relation("CategoryHierarchy")
+  restaurant   Restaurant?               @relation(fields: [restaurantId], references: [id])
+  dishes       Dish[]
+  promotions   PromotionApplicableItem[]
 
   @@index([restaurantId])
   @@map("Categories")
 }
 
 model Dish {
-  id                 String   @id @default(uuid())
+  id                 String                    @id @default(uuid())
   categoryId         String
-  restaurantId       String
   name               String
   description        String
-  price              Decimal  @db.Decimal(18, 2)
+  price              Decimal                   @db.Decimal(18, 2)
   unit               String
-  isVegetarian       Boolean  @default(false)
-  isSpicy            Boolean  @default(false)
-  isBestSeller       Boolean  @default(false)
-  isActive           Boolean  @default(true)
-  autoDisableByStock Boolean  @default(false)
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+  imageUrl           String?
+  isVegetarian       Boolean                   @default(false)
+  isSpicy            Boolean                   @default(false)
+  isBestSeller       Boolean                   @default(false)
+  isActive           Boolean                   @default(true)
+  autoDisableByStock Boolean                   @default(false)
   createdBy          String?
   modifiedBy         String?
+  createdAt          DateTime                  @default(now())
   metadata           Json?
-
-  restaurant   Restaurant                @relation(fields: [restaurantId], references: [id])
-  category     Category                  @relation(fields: [categoryId], references: [id])
-  orderDetails OrderDetail[]
-  images       DishImage[]
-  recipes      DishRecipe[]
-  promotions   PromotionApplicableItem[]
-  comboDetails ComboDetail[]
+  restaurantId       String?
+  updatedAt          DateTime                  @default(now()) @updatedAt
+  comboDetails       ComboDetail[]
+  images             DishImage[]
+  recipes            DishRecipe[]
+  category           Category                  @relation(fields: [categoryId], references: [id])
+  restaurant         Restaurant?                @relation(fields: [restaurantId], references: [id])
+  orderDetails       OrderDetail[]
+  promotions         PromotionApplicableItem[]
 
   @@index([restaurantId])
   @@index([categoryId])
@@ -337,35 +338,31 @@ model DishImage {
   imageUrl     String
   displayOrder Int
   isActive     Boolean
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
   createdBy    String?
   modifiedBy   String?
   imageType    Int      @default(0)
+  createdAt    DateTime @default(now())
   metadata     Json?
-
-  dish Dish @relation(fields: [dishId], references: [id], onDelete: Cascade)
+  updatedAt    DateTime @updatedAt
+  dish         Dish     @relation(fields: [dishId], references: [id], onDelete: Cascade)
 
   @@map("DishImages")
 }
 
-// ─── Ingredients & Stock ───────────────────────────────────────────────────────
-
 model IngredientCategory {
-  id           String   @id @default(uuid())
+  id           String       @id @default(uuid())
   name         String
   code         String
-  restaurantId String
   description  String?
   isActive     Boolean
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
   createdBy    String?
   modifiedBy   String?
+  createdAt    DateTime     @default(now())
   metadata     Json?
-
-  restaurant  Restaurant   @relation(fields: [restaurantId], references: [id])
-  ingredients Ingredient[]
+  restaurantId String
+  updatedAt    DateTime     @updatedAt
+  restaurant   Restaurant   @relation(fields: [restaurantId], references: [id])
+  ingredients  Ingredient[]
 
   @@unique([code, restaurantId])
   @@index([restaurantId])
@@ -373,51 +370,49 @@ model IngredientCategory {
 }
 
 model Supplier {
-  id           String   @id @default(uuid())
+  id           String       @id @default(uuid())
   name         String
-  restaurantId String
   phone        String?
   email        String?
   address      String?
   isActive     Boolean
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
   createdBy    String?
   modifiedBy   String?
+  createdAt    DateTime     @default(now())
   metadata     Json?
-
-  restaurant  Restaurant   @relation(fields: [restaurantId], references: [id])
-  ingredients Ingredient[]
+  restaurantId String
+  updatedAt    DateTime     @updatedAt
+  ingredients  Ingredient[]
+  restaurant   Restaurant   @relation(fields: [restaurantId], references: [id])
 
   @@index([restaurantId])
   @@map("Suppliers")
 }
 
 model Ingredient {
-  id                   String   @id @default(uuid())
+  id                   String              @id @default(uuid())
   name                 String
   code                 String
-  restaurantId         String
   unit                 String
-  minStockLevel        Decimal  @db.Decimal(10, 3)
-  maxStockLevel        Decimal  @db.Decimal(10, 3)
+  minStockLevel        Decimal             @db.Decimal(10, 3)
+  maxStockLevel        Decimal             @db.Decimal(10, 3)
   supplierId           String?
   type                 String?
   isActive             Boolean
-  createdAt            DateTime @default(now())
-  updatedAt            DateTime @updatedAt
   createdBy            String?
   modifiedBy           String?
   ingredientCategoryId String?
-  status               Int      @default(0)
+  status               Int                 @default(0)
+  createdAt            DateTime            @default(now())
   metadata             Json?
-
-  restaurant        Restaurant          @relation(fields: [restaurantId], references: [id])
-  category          IngredientCategory? @relation(fields: [ingredientCategoryId], references: [id])
-  supplier          Supplier?           @relation(fields: [supplierId], references: [id])
-  inventoryStock    InventoryStock?
-  stockTransactions StockTransaction[]
-  dishRecipes       DishRecipe[]
+  restaurantId         String
+  updatedAt            DateTime            @updatedAt
+  dishRecipes          DishRecipe[]
+  category             IngredientCategory? @relation(fields: [ingredientCategoryId], references: [id])
+  restaurant           Restaurant          @relation(fields: [restaurantId], references: [id])
+  supplier             Supplier?           @relation(fields: [supplierId], references: [id])
+  inventoryStock       InventoryStock?
+  stockTransactions    StockTransaction[]
 
   @@unique([code, restaurantId])
   @@index([restaurantId])
@@ -425,37 +420,35 @@ model Ingredient {
 }
 
 model InventoryStock {
-  id              String    @id @default(uuid())
-  ingredientId    String    @unique
-  currentQuantity Decimal   @db.Decimal(10, 3)
+  id              String     @id @default(uuid())
+  ingredientId    String     @unique
+  currentQuantity Decimal    @db.Decimal(10, 3)
   lastRestockDate DateTime?
   lastUpdated     DateTime
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
   createdBy       String?
   modifiedBy      String?
+  createdAt       DateTime   @default(now())
   metadata        Json?
-
-  ingredient Ingredient @relation(fields: [ingredientId], references: [id], onDelete: Cascade)
+  updatedAt       DateTime   @updatedAt
+  ingredient      Ingredient @relation(fields: [ingredientId], references: [id], onDelete: Cascade)
 
   @@map("InventoryStocks")
 }
 
 model StockTransaction {
-  id              String   @id @default(uuid())
+  id              String     @id @default(uuid())
   ingredientId    String
   transactionType String?
-  quantity        Decimal  @db.Decimal(10, 3)
-  unitPrice       Decimal  @db.Decimal(18, 2)
-  totalAmount     Decimal  @db.Decimal(18, 2)
+  quantity        Decimal    @db.Decimal(10, 3)
+  unitPrice       Decimal    @db.Decimal(18, 2)
+  totalAmount     Decimal    @db.Decimal(18, 2)
   reference       String?
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
   createdBy       String?
   modifiedBy      String?
+  createdAt       DateTime   @default(now())
   metadata        Json?
-
-  ingredient Ingredient @relation(fields: [ingredientId], references: [id])
+  updatedAt       DateTime   @updatedAt
+  ingredient      Ingredient @relation(fields: [ingredientId], references: [id])
 
   @@index([ingredientId])
   @@index([createdAt])
@@ -463,44 +456,40 @@ model StockTransaction {
 }
 
 model DishRecipe {
-  id           String   @id @default(uuid())
+  id           String     @id @default(uuid())
   dishId       String
   ingredientId String
-  quantity     Decimal  @db.Decimal(10, 3)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  quantity     Decimal    @db.Decimal(10, 3)
   createdBy    String?
   modifiedBy   String?
+  createdAt    DateTime   @default(now())
   metadata     Json?
-
-  dish       Dish       @relation(fields: [dishId], references: [id], onDelete: Cascade)
-  ingredient Ingredient @relation(fields: [ingredientId], references: [id])
+  updatedAt    DateTime   @updatedAt
+  dish         Dish       @relation(fields: [dishId], references: [id], onDelete: Cascade)
+  ingredient   Ingredient @relation(fields: [ingredientId], references: [id])
 
   @@map("DishRecipes")
 }
 
-// ─── Combos ────────────────────────────────────────────────────────────────────
-
 model MealCombo {
-  id           String   @id @default(uuid())
+  id           String                    @id @default(uuid())
   name         String
   code         String
-  restaurantId String
   description  String
   imageUrl     String?
-  baseCost     Decimal  @db.Decimal(18, 2)
-  price        Decimal  @db.Decimal(18, 2)
+  baseCost     Decimal                   @db.Decimal(18, 2)
+  price        Decimal                   @db.Decimal(18, 2)
   isActive     Boolean
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
   createdBy    String?
   modifiedBy   String?
+  createdAt    DateTime                  @default(now())
   metadata     Json?
-
-  restaurant   Restaurant                @relation(fields: [restaurantId], references: [id])
+  restaurantId String
+  updatedAt    DateTime                  @updatedAt
   comboDetails ComboDetail[]
-  promotions   PromotionApplicableItem[]
+  restaurant   Restaurant                @relation(fields: [restaurantId], references: [id])
   orderDetails OrderDetail[]
+  promotions   PromotionApplicableItem[]
 
   @@unique([code, restaurantId])
   @@index([restaurantId])
@@ -508,23 +497,20 @@ model MealCombo {
 }
 
 model ComboDetail {
-  id         String   @id @default(uuid())
+  id         String    @id @default(uuid())
   comboId    String
   dishId     String
   quantity   Int
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
   createdBy  String?
   modifiedBy String?
+  createdAt  DateTime  @default(now())
   metadata   Json?
-
-  combo MealCombo @relation(fields: [comboId], references: [id], onDelete: Cascade)
-  dish  Dish      @relation(fields: [dishId], references: [id])
+  updatedAt  DateTime  @updatedAt
+  combo      MealCombo @relation(fields: [comboId], references: [id], onDelete: Cascade)
+  dish       Dish      @relation(fields: [dishId], references: [id])
 
   @@map("ComboDetails")
 }
-
-// ─── Loyalty ───────────────────────────────────────────────────────────────────
 
 model LoyaltyPointBand {
   id                 String   @id @default(uuid())
@@ -534,21 +520,18 @@ model LoyaltyPointBand {
   discountPercentage Decimal  @db.Decimal(5, 2)
   benefitDescription String
   isActive           Boolean
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
   createdBy          String?
   modifiedBy         String?
   logoColor          String?
+  createdAt          DateTime @default(now())
   metadata           Json?
+  updatedAt          DateTime @updatedAt
 
   @@map("LoyaltyPointBands")
 }
 
-// ─── Notifications ─────────────────────────────────────────────────────────────
-
 model Notification {
-  id               String    @id @default(uuid())
-  restaurantId     String?
+  id               String      @id @default(uuid())
   recipientId      String?
   notificationType String?
   isBroadcast      Boolean
@@ -558,13 +541,13 @@ model Notification {
   priority         String?
   isPublished      Boolean
   expiryDate       DateTime?
-  createdAt        DateTime  @default(now())
-  updatedAt        DateTime  @updatedAt
   createdBy        String?
   modifiedBy       String?
+  createdAt        DateTime    @default(now())
   metadata         Json?
-
-  restaurant Restaurant? @relation(fields: [restaurantId], references: [id])
+  restaurantId     String?
+  updatedAt        DateTime    @updatedAt
+  restaurant       Restaurant? @relation(fields: [restaurantId], references: [id])
 
   @@index([restaurantId])
   @@index([recipientId])
@@ -573,31 +556,28 @@ model Notification {
   @@map("Notifications")
 }
 
-// ─── Promotions ────────────────────────────────────────────────────────────────
-
 model Promotion {
-  id                String   @id @default(uuid())
+  id                String                    @id @default(uuid())
   code              String
-  restaurantId      String
   name              String
-  discountValue     Decimal  @db.Decimal(18, 2)
-  discountType      String   @default("PERCENTAGE")
-  maxDiscountAmount Decimal  @db.Decimal(18, 2)
-  minOrderAmount    Decimal  @db.Decimal(18, 2)
+  discountValue     Decimal                   @db.Decimal(18, 2)
+  discountType      String                    @default("PERCENTAGE")
+  maxDiscountAmount Decimal                   @db.Decimal(18, 2)
+  minOrderAmount    Decimal                   @db.Decimal(18, 2)
   usageLimit        Int
   usagePerCustomer  Int
   validFrom         DateTime
   validTo           DateTime
   isActive          Boolean
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
   createdBy         String?
   modifiedBy        String?
+  createdAt         DateTime                  @default(now())
   metadata          Json?
-
-  restaurant      Restaurant                 @relation(fields: [restaurantId], references: [id])
-  applicableItems PromotionApplicableItem[]
-  histories       PromotionHistory[]
+  restaurantId      String
+  updatedAt         DateTime                  @updatedAt
+  applicableItems   PromotionApplicableItem[]
+  histories         PromotionHistory[]
+  restaurant        Restaurant                @relation(fields: [restaurantId], references: [id])
 
   @@unique([code, restaurantId])
   @@index([restaurantId])
@@ -605,84 +585,76 @@ model Promotion {
 }
 
 model PromotionApplicableItem {
-  id         String   @id @default(uuid())
+  id          String     @id @default(uuid())
   promotionId String
   dishId      String?
   categoryId  String?
   comboId     String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
   createdBy   String?
   modifiedBy  String?
+  createdAt   DateTime   @default(now())
   metadata    Json?
-
-  promotion Promotion  @relation(fields: [promotionId], references: [id], onDelete: Cascade)
-  dish      Dish?      @relation(fields: [dishId], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  category  Category?  @relation(fields: [categoryId], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  combo     MealCombo? @relation(fields: [comboId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  updatedAt   DateTime   @updatedAt
+  category    Category?  @relation(fields: [categoryId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  combo       MealCombo? @relation(fields: [comboId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  dish        Dish?      @relation(fields: [dishId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  promotion   Promotion  @relation(fields: [promotionId], references: [id], onDelete: Cascade)
 
   @@map("PromotionApplicableItems")
 }
 
-// ─── Status ────────────────────────────────────────────────────────────────────
-
 model StatusType {
-  id         String   @id @default(uuid())
-  code       String   @unique
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
-  createdBy  String?
-  modifiedBy String?
-  metadata   Json?
-
+  id           String        @id @default(uuid())
+  code         String        @unique
+  createdBy    String?
+  modifiedBy   String?
+  createdAt    DateTime      @default(now())
+  metadata     Json?
+  updatedAt    DateTime      @updatedAt
   statusValues StatusValue[]
 
   @@map("StatusTypes")
 }
 
 model StatusValue {
-  id           String   @id @default(uuid())
-  statusTypeId String
-  code         String
-  name         String
-  colorCode    String?
-  isDefault    Boolean  @default(false)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-  createdBy    String?
-  modifiedBy   String?
-  metadata     Json?
-  displayOrder Int      @default(1)
-  isSystem     Boolean  @default(true)
-
+  id                String             @id @default(uuid())
+  statusTypeId      String
+  code              String
+  name              String
+  colorCode         String?
+  isDefault         Boolean            @default(false)
+  createdBy         String?
+  modifiedBy        String?
+  displayOrder      Int                @default(1)
+  isSystem          Boolean            @default(true)
+  createdAt         DateTime           @default(now())
+  metadata          Json?
+  updatedAt         DateTime           @updatedAt
+  employeeSchedules EmployeeSchedule[] @relation("ScheduleStatus")
+  orderDetails      OrderDetail[]      @relation("OrderDetailStatus")
+  reservations      Reservation[]      @relation("ReservationStatus")
   statusType        StatusType         @relation(fields: [statusTypeId], references: [id])
   tables            Table[]            @relation("TableStatus")
-  employeeSchedules EmployeeSchedule[] @relation("ScheduleStatus")
-  reservations      Reservation[]      @relation("ReservationStatus")
-  orderDetails      OrderDetail[]      @relation("OrderDetailStatus")
 
   @@map("StatusValues")
 }
 
-// ─── Scheduling ────────────────────────────────────────────────────────────────
-
 model EmployeeSchedule {
-  id           String    @id @default(uuid())
+  id           String      @id @default(uuid())
   employeeId   String
-  workDate     DateTime  @db.Date
-  startTime    DateTime  @db.Time
-  endTime      DateTime  @db.Time
+  workDate     DateTime    @db.Date
+  startTime    DateTime    @db.Time(6)
+  endTime      DateTime    @db.Time(6)
   checkInTime  DateTime?
   checkOutTime DateTime?
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
   createdBy    String?
   modifiedBy   String?
   statusId     String
+  createdAt    DateTime    @default(now())
   metadata     Json?
-
-  employee    Employee    @relation(fields: [employeeId], references: [id])
-  statusValue StatusValue @relation("ScheduleStatus", fields: [statusId], references: [id])
+  updatedAt    DateTime    @updatedAt
+  employee     Employee    @relation(fields: [employeeId], references: [id])
+  statusValue  StatusValue @relation("ScheduleStatus", fields: [statusId], references: [id])
 
   @@index([employeeId])
   @@index([workDate])
@@ -690,39 +662,38 @@ model EmployeeSchedule {
   @@map("EmployeeSchedules")
 }
 
-// ─── Reservations ──────────────────────────────────────────────────────────────
-
 model ReservationTable {
-  id            String   @id @default(uuid())
+  id            String      @id @default(uuid())
   reservationId String
   tableId       String
-  assignedAt    DateTime @default(now())
+  assignedAt    DateTime    @default(now())
   assignedBy    String?
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
-
-  reservation Reservation @relation(fields: [reservationId], references: [id], onDelete: Cascade)
-  table       Table       @relation(fields: [tableId], references: [id])
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+  reservation   Reservation @relation(fields: [reservationId], references: [id], onDelete: Cascade)
+  table         Table       @relation(fields: [tableId], references: [id])
 
   @@unique([reservationId, tableId])
   @@map("ReservationTables")
 }
 
 model Reservation {
-  id                  String    @id @default(uuid())
+  id                  String             @id @default(uuid())
   customerId          String
   restaurantId        String
   numberOfGuests      Int
   time                DateTime
   specialRequests     String?
-  depositAmount       Decimal   @db.Decimal(18, 2)
+  depositAmount       Decimal            @db.Decimal(18, 2)
   checkedInAt         DateTime?
-  createdAt           DateTime  @default(now())
-  updatedAt           DateTime  @updatedAt
+  completedAt         DateTime?
+  reminderSentAt      DateTime?
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
   createdBy           String?
   modifiedBy          String?
   reservationStatusId String
-  confirmationCode    String?   @unique
+  confirmationCode    String?            @unique
   metadata            Json?
   paymentDeadline     DateTime?
 
@@ -732,6 +703,7 @@ model Reservation {
   orders      Order[]
   payments    Payment[]
   tables      ReservationTable[]
+  refunds     Refund[]
 
   @@index([restaurantId])
   @@index([customerId])
@@ -740,39 +712,56 @@ model Reservation {
   @@map("Reservations")
 }
 
+// ─── Refunds ──────────────────────────────────────────────────────────────────
+
+model Refund {
+  id            String   @id @default(uuid())
+  reservationId String
+  amount        Decimal  @db.Decimal(18, 2)
+  status        String   @default("PENDING")  // PENDING | PROCESSING | COMPLETED | FAILED
+  metadata      Json?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  reservation Reservation @relation(fields: [reservationId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  payments    Payment[]
+
+  @@index([reservationId])
+  @@map("Refunds")
+}
+
 // ─── Orders & Payments ─────────────────────────────────────────────────────────
 
 model Order {
-  id             String    @id @default(uuid())
-  reference      String    @unique
-  restaurantId   String
-  customerId     String?
-  reservationId  String?
-  subTotal       Decimal   @db.Decimal(18, 2)
-  discountAmount Decimal   @db.Decimal(18, 2)
-  taxAmount      Decimal   @db.Decimal(18, 2)
-  serviceCharge  Decimal   @db.Decimal(18, 2)
-  totalAmount    Decimal   @db.Decimal(18, 2)
-  completedAt    DateTime?
-  cancelledAt    DateTime?
-  handledBy      String?
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
-  createdBy      String?
-  modifiedBy     String?
-  orderStatusId  String
-  metadata       Json?
-
-  restaurant         Restaurant          @relation(fields: [restaurantId], references: [id])
-  customer           Customer?           @relation(fields: [customerId], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  reservation        Reservation?        @relation(fields: [reservationId], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  employee           Employee?           @relation(fields: [handledBy], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  id                 String              @id @default(uuid())
+  reference          String              @unique
+  customerId         String?
+  reservationId      String?
+  subTotal           Decimal             @db.Decimal(18, 2)
+  discountAmount     Decimal             @db.Decimal(18, 2)
+  taxAmount          Decimal             @db.Decimal(18, 2)
+  serviceCharge      Decimal             @db.Decimal(18, 2)
+  totalAmount        Decimal             @db.Decimal(18, 2)
+  completedAt        DateTime?
+  cancelledAt        DateTime?
+  handledBy          String?
+  createdBy          String?
+  modifiedBy         String?
+  orderStatusId      String
+  createdAt          DateTime            @default(now())
+  metadata           Json?
+  restaurantId       String?
+  updatedAt          DateTime            @default(now()) @updatedAt
+  feedbacks          Feedback[]
   orderDetails       OrderDetail[]
+  customer           Customer?           @relation(fields: [customerId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  employee           Employee?           @relation(fields: [handledBy], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  reservation        Reservation?        @relation(fields: [reservationId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  restaurant         Restaurant?          @relation(fields: [restaurantId], references: [id])
   payments           Payment[]
   pointsTransactions PointsTransaction[]
   promotionHistories PromotionHistory[]
   tableSessions      TableSession[]
-  feedbacks          Feedback[]
 
   @@index([restaurantId])
   @@index([customerId])
@@ -784,29 +773,28 @@ model Order {
 }
 
 model OrderDetail {
-  id           String   @id @default(uuid())
+  id           String        @id @default(uuid())
   orderId      String
   dishId       String?
   quantity     Int
   note         String?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
   createdBy    String?
   modifiedBy   String?
   itemStatusId String
-  metadata     Json?
-  unitPrice    Decimal  @default(0.0) @db.Decimal(18, 2)
-  comboPrice   Decimal? @db.Decimal(18, 2)
-  comboName    String?
+  unitPrice    Decimal       @default(0.0) @db.Decimal(18, 2)
   comboId      String?
   parentId     String?
-
-  order       Order         @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  dish        Dish?         @relation(fields: [dishId], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  combo       MealCombo?    @relation(fields: [comboId], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  statusValue StatusValue   @relation("OrderDetailStatus", fields: [itemStatusId], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  parent      OrderDetail?  @relation("OrderDetailHierarchy", fields: [parentId], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  children    OrderDetail[] @relation("OrderDetailHierarchy")
+  comboName    String?
+  comboPrice   Decimal?      @db.Decimal(18, 2)
+  createdAt    DateTime      @default(now())
+  metadata     Json?
+  updatedAt    DateTime      @updatedAt
+  combo        MealCombo?    @relation(fields: [comboId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  dish         Dish?         @relation(fields: [dishId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  statusValue  StatusValue   @relation("OrderDetailStatus", fields: [itemStatusId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  order        Order         @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  parent       OrderDetail?  @relation("OrderDetailHierarchy", fields: [parentId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  children     OrderDetail[] @relation("OrderDetailHierarchy")
 
   @@index([orderId])
   @@index([dishId])
@@ -816,91 +804,87 @@ model OrderDetail {
 }
 
 model PaymentMethod {
-  id        String   @id @default(uuid())
-  code      String   @unique
+  id        String    @id @default(uuid())
+  code      String    @unique
   name      String
-  isActive  Boolean  @default(true)
-  createdAt DateTime @default(now())
-
-  payments Payment[]
+  isActive  Boolean   @default(true)
+  createdAt DateTime  @default(now())
+  payments  Payment[]
 
   @@map("PaymentMethods")
 }
 
 model Payment {
-  id              String    @id @default(uuid())
+  id              String        @id @default(uuid())
   orderId         String?
   reservationId   String?
   paymentMethodId String
   transactionId   String?
-  amount          Decimal   @db.Decimal(18, 2)
-  cashReceive     Decimal   @db.Decimal(18, 2)
-  paymentDate     DateTime  @default(now())
-  cashback        Decimal   @db.Decimal(18, 2)
+  amount          Decimal       @db.Decimal(18, 2)
+  cashReceive     Decimal       @db.Decimal(18, 2)
+  paymentDate     DateTime      @default(now())
+  cashback        Decimal       @db.Decimal(18, 2)
   refundDate      DateTime?
   processedBy     String?
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
   createdBy       String?
   modifiedBy      String?
   checkoutUrl     String?
-  payOSOrderCode  BigInt?   @unique
+  payOSOrderCode  BigInt?       @unique
+  status          Int           @default(0)
+  purpose         Int           @default(0)
+  refundId        String?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
   metadata        Json?
-  status          Int       @default(0)
-  purpose         Int       @default(0)
 
   order         Order?        @relation(fields: [orderId], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  reservation   Reservation?  @relation(fields: [reservationId], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  employee      Employee?     @relation(fields: [processedBy], references: [id], onDelete: NoAction, onUpdate: NoAction)
   paymentMethod PaymentMethod @relation(fields: [paymentMethodId], references: [id])
+  employee      Employee?     @relation(fields: [processedBy], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  reservation   Reservation?  @relation(fields: [reservationId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  refund        Refund?       @relation(fields: [refundId], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   @@index([orderId])
   @@index([reservationId])
   @@index([status])
   @@index([paymentDate])
+  @@index([refundId])
   @@map("Payments")
 }
-
-// ─── Points & Promotions History ───────────────────────────────────────────────
 
 model PointsTransaction {
   id          String   @id @default(uuid())
   customerId  String
-  type        String // "EARN" | "REDEEM" | "BONUS" | "ADJUSTMENT" | "EXPIRE"
+  type        String
   points      Int
   orderId     String?
-  sourceType  String? // "ORDER" | "REGISTRATION" | "MANUAL" | "SYSTEM"
   description String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
   createdBy   String?
   modifiedBy  String?
+  createdAt   DateTime @default(now())
   metadata    Json?
-
-  customer Customer @relation(fields: [customerId], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  order    Order?   @relation(fields: [orderId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  sourceType  String?
+  updatedAt   DateTime @updatedAt
+  customer    Customer @relation(fields: [customerId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  order       Order?   @relation(fields: [orderId], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   @@map("PointsTransactions")
 }
 
 model PromotionHistory {
-  id             String   @id @default(uuid())
+  id             String    @id @default(uuid())
   promotionId    String
   orderId        String
-  discountAmount Decimal  @db.Decimal(18, 2)
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  discountAmount Decimal   @db.Decimal(18, 2)
   createdBy      String?
   modifiedBy     String?
+  createdAt      DateTime  @default(now())
   metadata       Json?
-
-  order     Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  promotion Promotion @relation(fields: [promotionId], references: [id])
+  updatedAt      DateTime  @updatedAt
+  order          Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  promotion      Promotion @relation(fields: [promotionId], references: [id])
 
   @@map("PromotionHistories")
 }
-
-// ─── Table Sessions ────────────────────────────────────────────────────────────
 
 model TableSession {
   id         String    @id @default(uuid())
@@ -909,14 +893,13 @@ model TableSession {
   startedAt  DateTime
   endedAt    DateTime?
   isActive   Boolean
-  createdAt  DateTime  @default(now())
-  updatedAt  DateTime  @updatedAt
   createdBy  String?
   modifiedBy String?
+  createdAt  DateTime  @default(now())
   metadata   Json?
-
-  table Table  @relation(fields: [tableId], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  order Order? @relation(fields: [orderId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  updatedAt  DateTime  @updatedAt
+  order      Order?    @relation(fields: [orderId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  table      Table     @relation(fields: [tableId], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   @@index([tableId])
   @@index([isActive])
@@ -924,25 +907,22 @@ model TableSession {
   @@map("TableSessions")
 }
 
-// ─── Feedback ──────────────────────────────────────────────────────────────────
-
 model Feedback {
-  id         String   @id @default(uuid())
-  orderId    String
-  customerId String
-  rating     Int
-  comment    String?
+  id          String          @id @default(uuid())
+  orderId     String
+  customerId  String
+  rating      Int
+  comment     String?
   isPublished Boolean
   isAnonymous Boolean
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
-  createdBy  String?
-  modifiedBy String?
-  metadata   Json?
-
-  order    Order           @relation(fields: [orderId], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  customer Customer        @relation(fields: [customerId], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  images   FeedbackImage[]
+  createdBy   String?
+  modifiedBy  String?
+  createdAt   DateTime        @default(now())
+  metadata    Json?
+  updatedAt   DateTime        @updatedAt
+  images      FeedbackImage[]
+  customer    Customer        @relation(fields: [customerId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  order       Order           @relation(fields: [orderId], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   @@unique([orderId, customerId])
   @@map("Feedbacks")
@@ -954,53 +934,211 @@ model FeedbackImage {
   imageUrl     String
   displayOrder Int
   isCover      Boolean
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
   createdBy    String?
   modifiedBy   String?
+  createdAt    DateTime @default(now())
   metadata     Json?
-
-  feedback Feedback @relation(fields: [feedbackId], references: [id], onDelete: Cascade)
+  updatedAt    DateTime @updatedAt
+  feedback     Feedback @relation(fields: [feedbackId], references: [id], onDelete: Cascade)
 
   @@map("FeedbackImages")
 }
 
-// ─── AI Chat ───────────────────────────────────────────────────────────────────
-
 model AIChatSession {
-  id           String    @id @default(uuid())
-  sessionId    String    @unique
-  restaurantId String?
+  id           String          @id @default(uuid())
+  sessionId    String          @unique
   customerId   String?
   tableId      String?
   expiresAt    DateTime
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
   createdBy    String?
   modifiedBy   String?
+  createdAt    DateTime        @default(now())
   metadata     Json?
-
-  restaurant Restaurant?   @relation(fields: [restaurantId], references: [id])
-  messages   AIChatMessage[]
+  restaurantId String?
+  updatedAt    DateTime        @default(now()) @updatedAt
+  messages     AIChatMessage[]
+  restaurant   Restaurant?     @relation(fields: [restaurantId], references: [id])
 
   @@index([restaurantId])
   @@map("AIChatSessions")
 }
 
 model AIChatMessage {
-  id              String   @id @default(uuid())
+  id              String        @id @default(uuid())
   aiChatSessionId String
   role            String
   content         String
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
   createdBy       String?
   modifiedBy      String?
+  createdAt       DateTime      @default(now())
   metadata        Json?
-
-  session AIChatSession @relation(fields: [aiChatSessionId], references: [id], onDelete: Cascade)
+  updatedAt       DateTime      @default(now()) @updatedAt
+  session         AIChatSession @relation(fields: [aiChatSessionId], references: [id], onDelete: Cascade)
 
   @@map("AIChatMessages")
+}
+
+model SocialPost {
+  id          String   @id @default(uuid())
+  authorId    String
+  content     String   @db.Text
+  /// public | followers | private
+  visibility  String   @default("public")
+  repostOfId  String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  author       User                @relation(fields: [authorId], references: [id])
+  repostOf     SocialPost?         @relation("PostReposts", fields: [repostOfId], references: [id], onDelete: SetNull)
+  reposts      SocialPost[]        @relation("PostReposts")
+  images       SocialImage[]
+  comments     SocialComment[]
+  reactions    SocialReaction[]
+  shares       SocialShare[]
+  savedBy      SavedPost[]
+  postHashtags SocialPostHashtag[]
+
+  @@index([authorId])
+  @@index([createdAt])
+  @@index([visibility])
+  @@index([repostOfId])
+  @@map("SocialPosts")
+}
+
+model SocialImage {
+  id       String @id @default(uuid())
+  postId   String
+  imageUrl String
+
+  post SocialPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  @@index([postId])
+  @@map("SocialImages")
+}
+
+model SocialComment {
+  id        String   @id @default(uuid())
+  postId    String
+  userId    String
+  parentId  String?
+  content   String   @db.Text
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  post   SocialPost      @relation(fields: [postId], references: [id], onDelete: Cascade)
+  user   User            @relation(fields: [userId], references: [id])
+  parent SocialComment?  @relation("CommentReplies", fields: [parentId], references: [id])
+  replies SocialComment[] @relation("CommentReplies")
+
+  @@index([postId])
+  @@index([userId])
+  @@index([parentId])
+  @@map("SocialComments")
+}
+
+model SocialReaction {
+  id        String   @id @default(uuid())
+  postId    String
+  userId    String
+  type      String
+  createdAt DateTime @default(now())
+
+  post SocialPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+  user User       @relation(fields: [userId], references: [id])
+
+  @@unique([postId, userId])
+  @@index([postId])
+  @@map("SocialReactions")
+}
+
+model SocialShare {
+  id        String   @id @default(uuid())
+  postId    String
+  userId    String
+  createdAt DateTime @default(now())
+
+  post SocialPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+  user User       @relation(fields: [userId], references: [id])
+
+  @@index([postId])
+  @@index([userId])
+  @@map("SocialShares")
+}
+
+model SavedPost {
+  id        String   @id @default(uuid())
+  postId    String
+  userId    String
+  createdAt DateTime @default(now())
+
+  post SocialPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+  user User       @relation(fields: [userId], references: [id])
+
+  @@unique([postId, userId])
+  @@index([userId])
+  @@map("SavedPosts")
+}
+
+/// Alias concept: SocialPostImage — persisted as SocialImage (legacy table)
+model SocialFollow {
+  id          String   @id @default(uuid())
+  followerId  String
+  followingId String
+  createdAt   DateTime @default(now())
+
+  follower  User @relation("UserSocialFollowers", fields: [followerId], references: [id], onDelete: Cascade)
+  following User @relation("UserSocialFollowing", fields: [followingId], references: [id], onDelete: Cascade)
+
+  @@unique([followerId, followingId])
+  @@index([followerId])
+  @@index([followingId])
+  @@map("SocialFollows")
+}
+
+model SocialHashtag {
+  id        String   @id @default(uuid())
+  tag       String   @unique
+  postCount Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  posts SocialPostHashtag[]
+
+  @@index([postCount])
+  @@map("SocialHashtags")
+}
+
+model SocialPostHashtag {
+  postId    String
+  hashtagId String
+  createdAt DateTime @default(now())
+
+  post    SocialPost    @relation(fields: [postId], references: [id], onDelete: Cascade)
+  hashtag SocialHashtag @relation(fields: [hashtagId], references: [id], onDelete: Cascade)
+
+  @@id([postId, hashtagId])
+  @@index([hashtagId])
+  @@map("SocialPostHashtags")
+}
+
+/// Alias concept: SocialBookmark — persisted as SavedPost (legacy table)
+model SocialNotification {
+  id        String   @id @default(uuid())
+  userId    String
+  actorId   String
+  type      String
+  postId    String?
+  commentId String?
+  message   String?  @db.VarChar(500)
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  recipient User @relation("NotificationRecipient", fields: [userId], references: [id], onDelete: Cascade)
+  actor     User @relation("NotificationActor", fields: [actorId], references: [id], onDelete: Cascade)
+
+  @@index([userId, read, createdAt])
+  @@index([actorId])
+  @@map("SocialNotifications")
 }
 
 // ─── Restaurant Registration Applications ──────────────────────────────────────
@@ -1044,3 +1182,145 @@ model RestaurantApplication {
   @@index([status])
   @@map("RestaurantApplications")
 }
+
+model RestaurantDocument {
+  id           String   @id @default(uuid())
+  restaurantId String
+  bucketId     String?
+  filename     String
+  fileUrl      String
+  fileType     String   // "PDF" | "DOCX" | "TXT" | "URL"
+  versionId    String?  // S3 object version ID
+  status       String   @default("PENDING") // "PENDING" | "PROCESSING" | "INDEXED" | "FAILED"
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  restaurant   Restaurant        @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  bucket       RestaurantBucket? @relation(fields: [bucketId], references: [id], onDelete: Cascade)
+  chunks       DocumentChunk[]
+
+  @@index([restaurantId])
+  @@index([bucketId])
+  @@map("RestaurantDocuments")
+}
+
+model DocumentChunk {
+  id         String   @id @default(uuid())
+  documentId String
+  content    String   @db.Text
+  embedding  Unsupported("public.vector(768)")
+  metadata   Json?
+  createdAt  DateTime @default(now())
+
+  document   RestaurantDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@index([documentId])
+  @@map("DocumentChunks")
+}
+
+model RestaurantBucket {
+  id           String   @id @default(uuid())
+  restaurantId String
+  name         String
+  url          String
+  description  String?
+  isChatEnabled Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // Knowledge Base config
+  isMounted        Boolean  @default(false)
+  chunkingStrategy String   @default("FIXED") // "FIXED" | "SEMANTIC" | "NONE" | "ADAPTIVE"
+  chunkSize        Int      @default(800)
+  chunkOverlap     Int      @default(100)
+
+  restaurant   Restaurant           @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  documents    RestaurantDocument[]
+
+  @@unique([restaurantId, name])
+  @@map("RestaurantBuckets")
+}
+
+model RestaurantKBSnapshot {
+  id           String   @id @default(uuid())
+  restaurantId String
+  bucketId     String?
+  versionName  String
+  description  String?
+  createdAt    DateTime @default(now())
+  documents    Json     // Array of { filename, fileUrl, fileType, versionId }
+
+  @@index([restaurantId])
+  @@map("RestaurantKBSnapshots")
+}
+
+
+// ─── Restaurant Wallet (Revenue) ───────────────────────────────────────────────
+
+/// Tracks each restaurant owner's accumulated revenue.
+/// Money physically sits in admin's bank account; this is a ledger balance.
+model RestaurantWallet {
+  id             String   @id @default(uuid())
+  restaurantId   String   @unique
+  balance        Decimal  @default(0) @db.Decimal(18, 2) // Available to withdraw (Online Transfer)
+  cashBalance    Decimal  @default(0) @db.Decimal(18, 2) // Directly collected cash
+  lifetimeEarned Decimal  @default(0) @db.Decimal(18, 2) // Total ever earned (Cash + Online Transfer)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  restaurant    Restaurant           @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  transactions  WalletTransaction[]
+  withdrawals   WithdrawalRequest[]
+
+  @@map("RestaurantWallets")
+}
+
+model WalletTransaction {
+  id           String   @id @default(uuid())
+  walletId     String
+  type         String   // "ORDER_REVENUE" | "WITHDRAWAL_DEBIT" | "ADJUSTMENT"
+  amount       Decimal  @db.Decimal(18, 2)
+  balanceBefore Decimal @db.Decimal(18, 2)
+  balanceAfter Decimal  @db.Decimal(18, 2)
+  orderId      String?
+  paymentId    String?
+  description  String?
+  metadata     Json?
+  createdAt    DateTime @default(now())
+
+  wallet RestaurantWallet @relation(fields: [walletId], references: [id], onDelete: Cascade)
+
+  @@index([walletId])
+  @@index([type])
+  @@index([createdAt])
+  @@map("WalletTransactions")
+}
+
+/// Withdrawal request from restaurant owner.
+/// Admin approves → PayOS disburses → balance deducted.
+model WithdrawalRequest {
+  id             String    @id @default(uuid())
+  walletId       String
+  restaurantId   String
+  amount         Decimal   @db.Decimal(18, 2)
+  status         String    @default("PENDING") // PENDING | PROCESSING | COMPLETED | FAILED | CANCELLED
+  bankCode       String    // e.g. "MB", "VCB"
+  bankBin        String    // e.g. "970422" for MBBank
+  accountNumber  String
+  accountName    String
+  adminNote      String?
+  rejectionReason String?
+  externalTxId   String?   // PayOS transaction ID
+  processedBy    String?   // Admin userId
+  processedAt    DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  wallet     RestaurantWallet @relation(fields: [walletId], references: [id])
+
+  @@index([walletId])
+  @@index([restaurantId])
+  @@index([status])
+  @@map("WithdrawalRequests")
+}
+

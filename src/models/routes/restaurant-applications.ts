@@ -12,6 +12,7 @@ import {
 } from '../../lib/email';
 import { assignDefaultRole } from '../../services/role.service';
 import { ENV } from '../../config/env';
+import { runMigrationsForTenant, seedTenantDatabase } from '../../services/tenantDb.service';
 import { auditLogMiddleware } from '../../middlewares/auditLog';
 
 const router: ExpressRouter = Router();
@@ -406,7 +407,7 @@ router.post('/:id/approve', authMiddleware, requireRole('Admin', 'SuperAdmin'), 
     const application = await prisma.restaurantApplication.findUnique({
       where: { id },
       include: {
-        user: { select: { id: true, fullName: true, email: true } },
+        user: { select: { id: true, fullName: true, email: true, passwordHash: true, phoneNumber: true } },
       },
     });
 
@@ -470,8 +471,26 @@ router.post('/:id/approve', authMiddleware, requireRole('Admin', 'SuperAdmin'), 
       return { restaurant, updated };
     });
 
-    // 3. Assign Owner role (outside transaction to avoid nesting issues)
+    // 3. Assign Owner role in central database (outside transaction to avoid nesting issues)
     await assignDefaultRole(application.userId, 'Owner', result.restaurant.id);
+
+    try {
+      // 3.1. Programmatically run Prisma migrations on the new tenant's database schema
+      await runMigrationsForTenant(result.restaurant.slug);
+
+      // 3.2. Seed the new tenant's database with default roles and the Owner account
+      await seedTenantDatabase(result.restaurant.slug, {
+        id: application.user.id,
+        email: application.user.email!,
+        fullName: application.user.fullName || '',
+        phoneNumber: application.user.phoneNumber || undefined,
+        passwordHash: application.user.passwordHash || undefined,
+      });
+    } catch (dbError) {
+      console.error('[RestaurantApplication] Failed to initialize tenant database:', dbError);
+      // We log the error but don't crash the response since the central restaurant object was already successfully created.
+      // In production, we might want to flag this restaurant as "DB_PROVISION_FAILED" or similar.
+    }
 
     // 4. Send approval email (fire and forget)
     sendApplicationApprovedEmail(

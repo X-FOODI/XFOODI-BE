@@ -76,6 +76,7 @@ export const tenantGuard = async (req: any, res: Response, next: NextFunction) =
         
         if (isOwnerOrStaff) {
           if (req.user.restaurantId !== restaurant.id) {
+            console.log(`[TenantGuard] 403 Forbidden! user: ${req.user.email}, user.restaurantId: ${req.user.restaurantId}, tenant.id: ${restaurant.id}`);
             return res.status(403).json({
               success: false,
               message: "Access denied. You do not have permission to access this restaurant's resources.",

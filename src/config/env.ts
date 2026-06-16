@@ -39,9 +39,9 @@ export const ENV = {
   },
 
   CLOUDINARY: {
-    CLOUD_NAME: process.env.CLOUDINARY_CLOUD_NAME as string,
-    API_KEY: process.env.CLOUDINARY_API_KEY as string,
-    API_SECRET: process.env.CLOUDINARY_API_SECRET as string,
+    CLOUD_NAME: process.env.CLOUDINARY_CLOUD_NAME as string | undefined,
+    API_KEY: process.env.CLOUDINARY_API_KEY as string | undefined,
+    API_SECRET: process.env.CLOUDINARY_API_SECRET as string | undefined,
   },
 
   TWILIO: {
@@ -51,6 +51,24 @@ export const ENV = {
   },
 
   DOCUMENT_ENCRYPTION_KEY: process.env.DOCUMENT_ENCRYPTION_KEY as string,
+
+  GEMINI_API_KEY: process.env.GEMINI_API_KEY as string,
+  GEMINI_EMBEDDING_API_KEY: process.env.GEMINI_EMBEDDING_API_KEY as string,
+  COHERE_API_KEY: process.env.COHERE_API_KEY as string,
+
+  AI: {
+    DEFAULT_MODEL: process.env.GEMINI_DEFAULT_MODEL || 'gemini-2.5-flash',
+    EMBEDDING_MODEL: process.env.GEMINI_EMBEDDING_MODEL || 'gemini-embedding-001',
+    DEFAULT_TEMPERATURE: process.env.GEMINI_DEFAULT_TEMPERATURE ? parseFloat(process.env.GEMINI_DEFAULT_TEMPERATURE) : 0.4,
+    RAG_MAX_CHUNKS: process.env.RAG_MAX_CHUNKS ? parseInt(process.env.RAG_MAX_CHUNKS, 10) : 8,
+    RAG_HISTORY_SUMMARIZATION_THRESHOLD: process.env.RAG_HISTORY_SUMMARIZATION_THRESHOLD ? parseInt(process.env.RAG_HISTORY_SUMMARIZATION_THRESHOLD, 10) : 10,
+  },
+
+  SUPABASE: {
+    URL: process.env.SUPABASE_URL || 'https://turgkdnvkagomsdbwkah.supabase.co',
+    KEY: process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || '',
+    BUCKET: process.env.SUPABASE_BUCKET || 'knowledge-base',
+  },
 };
 
 // Validate required environment variables

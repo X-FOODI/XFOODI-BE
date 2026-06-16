@@ -39,3 +39,9 @@ tmp/
 temp/
 
 /src/generated/prisma
+
+# Scratch folder
+scratch/
+
+# Uploaded files
+uploads/

@@ -221,11 +221,18 @@ router.post(API_ROUTES.AUTH.LOGIN, async (req, res) => {
       return res.status(400).json({ success: false, message: 'Email and password are required' });
     }
 
-    const scopedEmail = await getTenantScopedEmail(email, req.headers);
-    
-    // Find the user by email first to check roles for rate limiting & isolation
+    const unscopedEmail = email.trim().toLowerCase();
+    const loginFailKey = `login_fail:${unscopedEmail}`;
+
+    // Check rate limit
+    const fails = await redisClient.get(loginFailKey);
+    if (fails && parseInt(fails) >= 5) {
+      return res.status(429).json({ success: false, message: 'Too many failed login attempts. Please try again later (after 15 minutes).' });
+    }
+
+    // Find the user by email directly in the active database schema
     const user = await prisma.user.findFirst({
-      where: { email: scopedEmail },
+      where: { email: unscopedEmail },
       include: {
         roles: {
           include: {
@@ -247,7 +254,7 @@ router.post(API_ROUTES.AUTH.LOGIN, async (req, res) => {
     const tenantDomain = (req.headers['x-tenant-domain'] || req.headers.host || '') as string;
     const isAdminDomain = tenantDomain.startsWith('admin.') || tenantDomain.includes('admin.localhost');
 
-    if (isAdminUser && !isAdminDomain) {
+    if (isAdminUser && !isAdminDomain && process.env.NODE_ENV !== 'development') {
       return res.status(403).json({
         success: false,
         message: 'Đây là tài khoản quản trị. Vui lòng truy cập trang quản trị để đăng nhập.'
@@ -255,21 +262,23 @@ router.post(API_ROUTES.AUTH.LOGIN, async (req, res) => {
     }
 
     // Dual-Tier Rate Limiting Check
-    if (isAdminUser) {
-      const adminFails = await redisClient.get(`admin_login_fail:${scopedEmail}`);
-      if (adminFails && parseInt(adminFails) >= 3) {
-        return res.status(429).json({
-          success: false,
-          message: 'Tài khoản quản trị đã bị tạm khóa do nhập sai mật khẩu quá 3 lần. Vui lòng thử lại sau 1 giờ.'
-        });
-      }
-    } else {
-      const fails = await redisClient.get(`login_fail:${scopedEmail}`);
-      if (fails && parseInt(fails) >= 10) {
-        return res.status(429).json({
-          success: false,
-          message: 'Quá nhiều lần đăng nhập thất bại. Vui lòng thử lại sau 15 phút.'
-        });
+    if (process.env.NODE_ENV !== 'development') {
+      if (isAdminUser) {
+        const adminFails = await redisClient.get(`admin_login_fail:${unscopedEmail}`);
+        if (adminFails && parseInt(adminFails) >= 3) {
+          return res.status(429).json({
+            success: false,
+            message: 'Tài khoản quản trị đã bị tạm khóa do nhập sai mật khẩu quá 3 lần. Vui lòng thử lại sau 1 giờ.'
+          });
+        }
+      } else {
+        const fails = await redisClient.get(`login_fail:${unscopedEmail}`);
+        if (fails && parseInt(fails) >= 10) {
+          return res.status(429).json({
+            success: false,
+            message: 'Quá nhiều lần đăng nhập thất bại. Vui lòng thử lại sau 15 phút.'
+          });
+        }
       }
     }
 
@@ -281,31 +290,36 @@ router.post(API_ROUTES.AUTH.LOGIN, async (req, res) => {
     const isMatch = await bcrypt.compare(password, user.passwordHash);
 
     if (!isMatch) {
-      if (isAdminUser) {
-        // Increment admin fail count (1 hour block)
-        const currentFails = await redisClient.incr(`admin_login_fail:${scopedEmail}`);
-        if (currentFails === 1) {
-          await redisClient.expire(`admin_login_fail:${scopedEmail}`, 3600); // 1 hour TTL
-        }
-      } else {
-        // Increment standard fail count (15 minutes block)
-        const currentFails = await redisClient.incr(`login_fail:${scopedEmail}`);
-        if (currentFails === 1) {
-          await redisClient.expire(`login_fail:${scopedEmail}`, 900); // 15 minutes TTL
+      if (process.env.NODE_ENV !== 'development') {
+        if (isAdminUser) {
+          // Increment admin fail count (1 hour block)
+          const currentFails = await redisClient.incr(`admin_login_fail:${unscopedEmail}`);
+          if (currentFails === 1) {
+            await redisClient.expire(`admin_login_fail:${unscopedEmail}`, 3600); // 1 hour TTL
+          }
+        } else {
+          // Increment standard fail count (15 minutes block)
+          const currentFails = await redisClient.incr(`login_fail:${unscopedEmail}`);
+          if (currentFails === 1) {
+            await redisClient.expire(`login_fail:${unscopedEmail}`, 900); // 15 minutes TTL
+          }
         }
       }
       return res.status(401).json({ success: false, message: 'Invalid email or password' });
     }
 
     // Reset fail count on success
-    if (isAdminUser) {
-      await redisClient.del(`admin_login_fail:${scopedEmail}`);
-    } else {
-      await redisClient.del(`login_fail:${scopedEmail}`);
+    if (process.env.NODE_ENV !== 'development') {
+      if (isAdminUser) {
+        await redisClient.del(`admin_login_fail:${unscopedEmail}`);
+      } else {
+        await redisClient.del(`login_fail:${unscopedEmail}`);
+      }
     }
 
     // ─── Google Authenticator 2FA Challenge ───
-    if (isAdminUser && user.twoFactorEnabled) {
+    const isDevMode = process.env.NODE_ENV === 'development' || process.env.NODE_ENV === 'dev' || process.env.NODE_ENV === undefined;
+    if (isAdminUser && user.twoFactorEnabled && !isDevMode) {
       // Sign short-lived temporary token (5 min) for 2FA validation
       const tempToken = jwt.sign(
         { userId: user.id, purpose: '2fa' },
@@ -527,6 +541,16 @@ router.get(API_ROUTES.AUTH.ME, authMiddleware, async (req: any, res: any) => {
       return res.status(401).json({ success: false, message: 'User not found' });
     }
 
+    const { roles, ownerRestaurantId } = await getFilteredRolesForUser(user.id, req.headers);
+    let restaurantSlug: string | null = null;
+    if (ownerRestaurantId) {
+      const rest = await prisma.restaurant.findUnique({
+        where: { id: ownerRestaurantId },
+        select: { slug: true }
+      });
+      restaurantSlug = rest?.slug ?? null;
+    }
+
     res.json({
       success: true,
       data: {
@@ -539,7 +563,9 @@ router.get(API_ROUTES.AUTH.ME, authMiddleware, async (req: any, res: any) => {
         dateOfBirth: user.dateOfBirth,
         address: user.address,
         role: req.user.role,
-        roles: [req.user.role]
+        roles,
+        restaurantId: ownerRestaurantId,
+        restaurantSlug
       }
     });
   } catch (error) {
