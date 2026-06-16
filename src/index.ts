@@ -78,10 +78,12 @@ app.use(async (req: any, res: any, next) => {
 
     const hostWithoutPort = domain.includes(':') ? domain.split(':')[0] : domain;
     const BASE_DOMAIN = process.env.NEXT_PUBLIC_BASE_DOMAIN || 'xfoodi.website';
+    const isLocalDevHost = hostWithoutPort === 'localhost' || hostWithoutPort === '127.0.0.1';
     let activeClient = centralPrisma;
 
     if (
       hostWithoutPort &&
+      !isLocalDevHost &&
       hostWithoutPort !== BASE_DOMAIN &&
       hostWithoutPort !== `www.${BASE_DOMAIN}` &&
       hostWithoutPort !== `admin.${BASE_DOMAIN}` &&

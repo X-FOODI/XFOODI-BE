@@ -293,10 +293,10 @@ export const toggleCustomerStatus = async (req: Request, res: Response) => {
     }
 
     // 3. Update User status
-    const targetUserId = customer ? customer.userId : id;
-    
+    const targetUserId = customer?.userId ?? id;
+
     const user = await prisma.user.findUnique({
-      where: { id: targetUserId }
+      where: { id: targetUserId },
     });
 
     if (!user) {

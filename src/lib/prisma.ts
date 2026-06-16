@@ -65,6 +65,17 @@ export const prisma = new Proxy({} as PrismaClient, {
       'userRole',
       'userSession',
       'restaurantApplication',
+      // Social community lives in the central (public) schema only
+      'socialPost',
+      'socialImage',
+      'socialComment',
+      'socialReaction',
+      'socialShare',
+      'savedPost',
+      'socialFollow',
+      'socialHashtag',
+      'socialPostHashtag',
+      'socialNotification',
     ];
 
     // Determine whether to use the central client or the tenant-specific client
