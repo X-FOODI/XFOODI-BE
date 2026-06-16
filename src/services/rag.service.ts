@@ -21,7 +21,7 @@ async function hybridSearchChunks(
   try {
     return await prisma.$queryRawUnsafe<any[]>(
       `WITH vector_matches AS (
-          SELECT dc.id, ROW_NUMBER() OVER (ORDER BY dc.embedding <=> $1::vector) as rank
+          SELECT dc.id, ROW_NUMBER() OVER (ORDER BY dc.embedding <=> $1::public.vector) as rank
           FROM "DocumentChunks" dc
           JOIN "RestaurantDocuments" rd ON dc."documentId" = rd.id
           LEFT JOIN "RestaurantBuckets" rb ON rd."bucketId" = rb.id
