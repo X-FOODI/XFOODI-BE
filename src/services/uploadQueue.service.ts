@@ -234,37 +234,39 @@ export class UploadQueueService {
   }
 
   public static async getFileBuffer(fileUrl: string): Promise<Buffer> {
-    if (fileUrl.startsWith('http://127.0.0.1:5000/uploads/kb/') || 
-        fileUrl.startsWith('http://localhost:5000/uploads/kb/') ||
-        fileUrl.startsWith('http://127.0.0.1:5000/api/uploads/kb/') ||
-        fileUrl.startsWith('http://localhost:5000/api/uploads/kb/')) {
+    // 1. Try local disk first if it's a local upload URL pattern or contains uploads/kb
+    if (fileUrl.includes('/uploads/kb/') || fileUrl.startsWith('file://local-storage/')) {
+      const cleanFilename = fileUrl.replace('file://local-storage/', '').split('/').pop() || '';
+      const localPath = path.resolve(process.cwd(), 'uploads/kb', cleanFilename);
+      if (fs.existsSync(localPath)) {
+        try {
+          return fs.readFileSync(localPath);
+        } catch (err) {
+          console.warn(`[UploadQueue] Failed to read local file: ${localPath}`, err);
+        }
+      }
+    }
+
+    // 2. Fetch via HTTP if it's a remote URL
+    if (fileUrl.startsWith('http://') || fileUrl.startsWith('https://')) {
+      const response = await axios.get(fileUrl, { responseType: 'arraybuffer' });
+      return Buffer.from(response.data);
+    }
+
+    // 3. Fallback: try extracting filename and reading locally
+    try {
       const cleanFilename = fileUrl.split('/').pop() || '';
       const localPath = path.resolve(process.cwd(), 'uploads/kb', cleanFilename);
       if (fs.existsSync(localPath)) {
         return fs.readFileSync(localPath);
       }
+    } catch (err) {
+      // ignore
     }
 
-    if (fileUrl.startsWith('http://') || fileUrl.startsWith('https://')) {
-      const response = await axios.get(fileUrl, { responseType: 'arraybuffer' });
-      return Buffer.from(response.data);
-    } else if (fileUrl.startsWith('file://local-storage/')) {
-      const cleanFilename = fileUrl.replace('file://local-storage/', '');
-      const localPath = path.resolve(process.cwd(), 'uploads/kb', cleanFilename);
-      return fs.readFileSync(localPath);
-    } else {
-      try {
-        const cleanFilename = fileUrl.split('/').pop() || '';
-        const localPath = path.resolve(process.cwd(), 'uploads/kb', cleanFilename);
-        if (fs.existsSync(localPath)) {
-          return fs.readFileSync(localPath);
-        }
-      } catch (err) {
-        // eslint-disable-next-line no-empty
-      }
-      const response = await axios.get(fileUrl, { responseType: 'arraybuffer' });
-      return Buffer.from(response.data);
-    }
+    // Ultimate fallback: try HTTP request anyway
+    const response = await axios.get(fileUrl, { responseType: 'arraybuffer' });
+    return Buffer.from(response.data);
   }
 
   private static async checkEvictionPolicy() {
