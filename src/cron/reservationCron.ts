@@ -163,6 +163,85 @@ async function runDeadlineJob(): Promise<void> {
   console.log(`[DeadlineJob] Done. Cancelled: ${cancelled}`);
 }
 
+// ── No-Show Check Job — runs every 1 minute ──────────────────────────────────
+// Finds CONFIRMED reservations whose time is older than 30 minutes from now,
+// not checked-in yet, and flags them for staff attention.
+
+async function runNoShowCheckJob(): Promise<void> {
+  console.log('[NoShowCheckJob] Running...');
+  let flagged = 0;
+  try {
+    const activeRestaurants = await centralPrisma.restaurant.findMany({
+      where: { isActive: true },
+      select: { id: true, slug: true, name: true },
+    });
+    for (const restaurant of activeRestaurants) {
+      try {
+        const tenantDbUrl = getTenantConnectionUrl(process.env.DATABASE_URL ?? '', restaurant.slug);
+        const tenantPrisma = getTenantPrisma(tenantDbUrl);
+        await prismaStorage.run(tenantPrisma, async () => {
+          const now = new Date();
+          const thirtyMinutesAgo = new Date(now.getTime() - 30 * 60 * 1000);
+
+          const lateReservations = await tenantPrisma.reservation.findMany({
+            where: {
+              restaurantId: restaurant.id,
+              time: { lt: thirtyMinutesAgo },
+              statusValue: { code: 'CONFIRMED' },
+              checkedInAt: null,
+            },
+            include: {
+              customer: { include: { user: { select: { fullName: true } } } },
+            },
+          });
+
+          for (const res of lateReservations) {
+            const existingMeta: any = (res as any).metadata ?? {};
+            
+            // Skip if manual cancellation review is pending
+            if (existingMeta.isCancellationManualReviewPending === true) {
+              continue;
+            }
+
+            // Skip if already resolved or flagged
+            if (existingMeta.noShowAutoPending === true || existingMeta.noShowResolved === true) {
+              continue;
+            }
+
+            // Flag as noShowAutoPending
+            await tenantPrisma.reservation.update({
+              where: { id: res.id },
+              data: {
+                metadata: {
+                  ...existingMeta,
+                  noShowAutoPending: true,
+                },
+              },
+            });
+
+            flagged++;
+
+            // Emit socket event to notify staff dashboard
+            try {
+              const { getIO } = await import('../socket');
+              getIO().to(`restaurant_${restaurant.id}`).emit('RESERVATION_LATE_30MIN', {
+                reservationId: res.id,
+                confirmationCode: res.confirmationCode ?? '',
+                customerName: res.customer?.user?.fullName ?? 'Khách vãng lai',
+              });
+            } catch { /* socket optional */ }
+          }
+        });
+      } catch (err: any) {
+        console.error(`[NoShowCheckJob] Tenant ${restaurant.slug}:`, err?.message);
+      }
+    }
+  } catch (err: any) {
+    console.error('[NoShowCheckJob] Fatal:', err?.message);
+  }
+  console.log(`[NoShowCheckJob] Done. Flagged: ${flagged}`);
+}
+
 // ── Export: start all reservation cron jobs ───────────────────────────────────
 export function startReservationCronJobs(): void {
   // Reminder job: every 15 minutes
@@ -171,11 +250,17 @@ export function startReservationCronJobs(): void {
     catch (e: any) { console.error('[ReminderJob] Uncaught:', e?.message); }
   });
 
-  // Payment deadline enforcement: every 5 minutes
-  cron.schedule('*/5 * * * *', async () => {
+  // Payment deadline enforcement: every 1 minute
+  cron.schedule('*/1 * * * *', async () => {
     try { await runDeadlineJob(); }
     catch (e: any) { console.error('[DeadlineJob] Uncaught:', e?.message); }
   });
 
-  console.log('[CronJobs] Reservation cron jobs started (reminder: */15, deadline: */5)');
+  // No-show flag job: every 1 minute
+  cron.schedule('*/1 * * * *', async () => {
+    try { await runNoShowCheckJob(); }
+    catch (e: any) { console.error('[NoShowCheckJob] Uncaught:', e?.message); }
+  });
+
+  console.log('[CronJobs] Reservation cron jobs started (reminder: */15, deadline: */1, no-show: */1)');
 }
