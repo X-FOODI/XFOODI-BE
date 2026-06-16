@@ -3,6 +3,7 @@ import axios from 'axios';
 import fs from 'fs';
 import path from 'path';
 import { prisma, prismaStorage, centralPrisma, getTenantPrisma, getTenantConnectionUrl } from '../lib/prisma';
+import type { PrismaClient } from '@prisma/client';
 import { KnowledgeBaseService } from './knowledgeBase.service';
 import redisClient from '../lib/redis';
 
@@ -20,6 +21,7 @@ export class UploadQueueService {
     chunkingStrategy?: string;
     chunkSize?: number;
     chunkOverlap?: number;
+    isCentralDb?: boolean;
   }> = [];
   private static isProcessingInMemory = false;
 
@@ -50,8 +52,8 @@ export class UploadQueueService {
       });
 
       this.worker = new Worker('document-uploads', async (job) => {
-        const { documentId, restaurantId, filename, fileUrl, fileType, chunkingStrategy, chunkSize, chunkOverlap } = job.data;
-        await this.processJob(documentId, restaurantId, filename, fileUrl, fileType, chunkingStrategy, chunkSize, chunkOverlap);
+        const { documentId, restaurantId, filename, fileUrl, fileType, chunkingStrategy, chunkSize, chunkOverlap, isCentralDb } = job.data;
+        await this.processJob(documentId, restaurantId, filename, fileUrl, fileType, chunkingStrategy, chunkSize, chunkOverlap, isCentralDb);
       }, {
         connection: {
           url: redisUrl,
@@ -89,6 +91,7 @@ export class UploadQueueService {
     chunkingStrategy?: string;
     chunkSize?: number;
     chunkOverlap?: number;
+    isCentralDb?: boolean;
   }) {
     if (this.isBullMQActive && this.queue) {
       try {
@@ -153,6 +156,9 @@ export class UploadQueueService {
             chunkingStrategy,
             chunkSize,
             chunkOverlap,
+            // pollPendingDocumentsFromDb queries via centralPrisma (outside request context),
+            // so all recovered documents live in the central/public schema.
+            isCentralDb: true,
           });
         }
       }
@@ -178,7 +184,8 @@ export class UploadQueueService {
             task.fileType,
             task.chunkingStrategy,
             task.chunkSize,
-            task.chunkOverlap
+            task.chunkOverlap,
+            task.isCentralDb
           );
         } catch (err) {
           console.error(`[UploadQueue] Failed to process in-memory task for ${task.filename}:`, err);
@@ -197,28 +204,34 @@ export class UploadQueueService {
     fileType: 'PDF' | 'TXT' | 'MD',
     chunkingStrategy?: string,
     chunkSize?: number,
-    chunkOverlap?: number
+    chunkOverlap?: number,
+    isCentralDb?: boolean
   ) {
     const { ENV } = await import('../config/env');
 
-    // Resolve tenant client dynamically from central database
-    const restaurant = await centralPrisma.restaurant.findUnique({
-      where: { id: restaurantId }
-    });
+    // Determine which Prisma client the document lives in:
+    // - isCentralDb=true  → uploaded from admin domain, stored in public/central schema
+    // - isCentralDb=false → uploaded from tenant subdomain, stored in tenant schema
+    let dbClient: PrismaClient;
+    let logLabel: string;
 
-    if (!restaurant) {
-      throw new Error(`[UploadQueue] Restaurant with ID ${restaurantId} not found in central database.`);
+    if (isCentralDb) {
+      dbClient = centralPrisma as unknown as PrismaClient;
+      logLabel = 'central';
+    } else {
+      const restaurant = await centralPrisma.restaurant.findUnique({ where: { id: restaurantId } });
+      if (!restaurant) {
+        throw new Error(`[UploadQueue] Restaurant with ID ${restaurantId} not found in central database.`);
+      }
+      const tenantDbUrl = getTenantConnectionUrl(ENV.DATABASE_URL, restaurant.slug);
+      dbClient = getTenantPrisma(tenantDbUrl) as unknown as PrismaClient;
+      logLabel = `tenant "${restaurant.slug}"`;
     }
 
-    const tenantDbUrl = getTenantConnectionUrl(ENV.DATABASE_URL, restaurant.slug);
-    const tenantPrisma = getTenantPrisma(tenantDbUrl);
-
-    await prismaStorage.run(tenantPrisma, async () => {
-      // 1. Fetch file content from URL
-      console.log(`[UploadQueue] Fetching file buffer from: ${fileUrl} for tenant "${restaurant.slug}"`);
+    await prismaStorage.run(dbClient as any, async () => {
+      console.log(`[UploadQueue] Fetching file buffer from: ${fileUrl} for ${logLabel}`);
       const buffer = await this.getFileBuffer(fileUrl);
 
-      // 2. Call the KnowledgeBase chunks processing logic
       await KnowledgeBaseService.processDocumentChunks(
         documentId,
         restaurantId,

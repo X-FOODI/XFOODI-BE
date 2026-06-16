@@ -16,7 +16,8 @@ export class KnowledgeBaseService {
     fileType: 'PDF' | 'TXT' | 'DOCX' | 'URL' | 'MD',
     fileUrl: string,
     bucketId?: string,
-    versionId?: string
+    versionId?: string,
+    isCentralDb: boolean = false
   ): Promise<any> {
     // Determine mounted status and chunking configuration of the bucket
     let isMounted = false;
@@ -61,6 +62,7 @@ export class KnowledgeBaseService {
         chunkingStrategy,
         chunkSize,
         chunkOverlap,
+        isCentralDb,
       });
     }
 
