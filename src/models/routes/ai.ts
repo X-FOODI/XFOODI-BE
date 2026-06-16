@@ -4,7 +4,7 @@ import { prisma, prismaStorage, getTenantPrisma, getTenantConnectionUrl } from '
 import { authMiddleware } from './auth';
 import { tenantGuard } from '../../middlewares/tenantGuard';
 import { KnowledgeBaseService } from '../../services/knowledgeBase.service';
-import { RAGService } from '../../services/rag.service';
+import { RAGService, hybridSearchChunks } from '../../services/rag.service';
 import { StorageService } from '../../services/storage.service';
 import { ENV } from '../../config/env';
 import { AIService } from '../../services/ai.service';
@@ -18,7 +18,19 @@ const upload = multer({ limits: { fileSize: 10 * 1024 * 1024 } }); // Limit 10MB
  */
 router.post('/kb/upload', authMiddleware, tenantGuard, upload.any(), async (req: any, res: any) => {
   try {
-    const activeRestaurant = req.restaurant || req.tenant;
+    const userRoles = Array.isArray(req.user?.roles) ? req.user?.roles : req.user?.role ? [req.user.role] : [];
+    const isSystemAdmin = userRoles.includes('Admin') || userRoles.includes('SuperAdmin') || userRoles.includes('System Admin');
+
+    // On the admin domain, tenantGuard doesn't resolve a tenant — system admins
+    // instead pass the target restaurantId explicitly in body/query.
+    let activeRestaurant = req.restaurant || req.tenant;
+    if (!activeRestaurant && isSystemAdmin) {
+      const targetRestaurantId = req.body.restaurantId || req.query.restaurantId;
+      if (targetRestaurantId) {
+        activeRestaurant = await prisma.restaurant.findUnique({ where: { id: targetRestaurantId } });
+      }
+    }
+
     if (!activeRestaurant) {
       return res.status(400).json({ success: false, message: 'Không tìm thấy thông tin nhà hàng cho miền này.' });
     }
@@ -27,19 +39,8 @@ router.post('/kb/upload', authMiddleware, tenantGuard, upload.any(), async (req:
     const tenantPrisma = getTenantPrisma(tenantDbUrl);
 
     return await prismaStorage.run(tenantPrisma, async () => {
-      let restaurantId = req.user?.restaurantId;
+      const restaurantId = activeRestaurant.id;
       let bucketId = req.body.bucketId || req.query.bucketId || undefined;
-
-      // Admin bypass: if system admin, they can pass target restaurantId in body or query
-      const userRoles = Array.isArray(req.user?.roles) ? req.user?.roles : req.user?.role ? [req.user.role] : [];
-      const isSystemAdmin = userRoles.includes('Admin') || userRoles.includes('SuperAdmin') || userRoles.includes('System Admin');
-      if (isSystemAdmin && (req.body.restaurantId || req.query.restaurantId)) {
-        restaurantId = req.body.restaurantId || req.query.restaurantId;
-      }
-
-      if (!restaurantId) {
-        return res.status(400).json({ success: false, message: 'Tài khoản không thuộc về nhà hàng nào hoặc thiếu restaurantId.' });
-      }
 
       // Ensure default bucket exists and is assigned if bucketId is not provided
       if (!bucketId) {
@@ -1489,36 +1490,9 @@ router.post('/kb/buckets/:id/test/retrieve', authMiddleware, tenantGuard, async 
       const queryEmbedding = await AIService.generateEmbedding(query);
       const queryVectorStr = `[${queryEmbedding.join(',')}]`;
 
-      // Hybrid RRF Search
-      const dbChunks = await prisma.$queryRawUnsafe<any[]>(
-        `WITH vector_matches AS (
-          SELECT dc.id, ROW_NUMBER() OVER (ORDER BY dc.embedding <=> $1::public.vector) as rank
-          FROM "DocumentChunks" dc
-          JOIN "RestaurantDocuments" rd ON dc."documentId" = rd.id
-          WHERE rd."bucketId" = $2 AND rd.status = 'INDEXED'
-          LIMIT 100
-        ),
-        text_matches AS (
-          SELECT dc.id, ROW_NUMBER() OVER (ORDER BY ts_rank(to_tsvector('simple', dc.content), plainto_tsquery('simple', $3)) DESC) as rank
-          FROM "DocumentChunks" dc
-          JOIN "RestaurantDocuments" rd ON dc."documentId" = rd.id
-          WHERE rd."bucketId" = $2 AND rd.status = 'INDEXED'
-            AND to_tsvector('simple', dc.content) @@ plainto_tsquery('simple', $3)
-          LIMIT 100
-        )
-        SELECT dc.content, rd.filename, dc."documentId" as "documentId",
-               (COALESCE(1.0 / (60.0 + vm.rank), 0.0) + COALESCE(1.0 / (60.0 + tm.rank), 0.0)) as rrf_score
-        FROM "DocumentChunks" dc
-        JOIN "RestaurantDocuments" rd ON dc."documentId" = rd.id
-        LEFT JOIN vector_matches vm ON dc.id = vm.id
-        LEFT JOIN text_matches tm ON dc.id = tm.id
-        WHERE vm.id IS NOT NULL OR tm.id IS NOT NULL
-        ORDER BY rrf_score DESC
-        LIMIT 10`,
-        queryVectorStr,
-        id,
-        query
-      );
+      // Hybrid RRF Search (vector + text, with text-only fallback if pgvector unavailable —
+      // same logic the live restaurant chatbot uses, see RAGService.queryRestaurant)
+      const dbChunks = await hybridSearchChunks(bucket.restaurantId, queryVectorStr, query, '', id);
 
       let rerankedChunks = dbChunks || [];
       if (rerankedChunks.length > 0) {
@@ -1675,39 +1649,12 @@ router.post('/kb/buckets/:id/test/rag', authMiddleware, tenantGuard, async (req:
       }));
       isReranked = false; // Bypassed for API monitoring
     } else {
-      // Standard document search inside bucket (Document KB)
+      // Standard document search inside bucket (Document KB) — same hybrid-search-with-fallback
+      // logic the live restaurant chatbot uses, see RAGService.queryRestaurant
       const queryEmbedding = await AIService.generateEmbedding(rewrittenQuery);
       const queryVectorStr = `[${queryEmbedding.join(',')}]`;
 
-      const dbChunks = await prisma.$queryRawUnsafe<any[]>(
-        `WITH vector_matches AS (
-          SELECT dc.id, ROW_NUMBER() OVER (ORDER BY dc.embedding <=> $1::public.vector) as rank
-          FROM "DocumentChunks" dc
-          JOIN "RestaurantDocuments" rd ON dc."documentId" = rd.id
-          WHERE rd."bucketId" = $2 AND rd.status = 'INDEXED'
-          LIMIT 100
-        ),
-        text_matches AS (
-          SELECT dc.id, ROW_NUMBER() OVER (ORDER BY ts_rank(to_tsvector('simple', dc.content), plainto_tsquery('simple', $3)) DESC) as rank
-          FROM "DocumentChunks" dc
-          JOIN "RestaurantDocuments" rd ON dc."documentId" = rd.id
-          WHERE rd."bucketId" = $2 AND rd.status = 'INDEXED'
-            AND to_tsvector('simple', dc.content) @@ plainto_tsquery('simple', $3)
-          LIMIT 100
-        )
-        SELECT dc.content, rd.filename, dc."documentId" as "documentId",
-               (COALESCE(1.0 / (60.0 + vm.rank), 0.0) + COALESCE(1.0 / (60.0 + tm.rank), 0.0)) as rrf_score
-        FROM "DocumentChunks" dc
-        JOIN "RestaurantDocuments" rd ON dc."documentId" = rd.id
-        LEFT JOIN vector_matches vm ON dc.id = vm.id
-        LEFT JOIN text_matches tm ON dc.id = tm.id
-        WHERE vm.id IS NOT NULL OR tm.id IS NOT NULL
-        ORDER BY rrf_score DESC
-        LIMIT 10`,
-        queryVectorStr,
-        id,
-        rewrittenQuery
-      );
+      const dbChunks = await hybridSearchChunks(bucket.restaurantId, queryVectorStr, rewrittenQuery, '', id);
 
       let rerankedChunks = dbChunks || [];
       if (rerankedChunks.length > 0) {
