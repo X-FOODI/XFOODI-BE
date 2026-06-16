@@ -20,15 +20,15 @@ RUN pip install --no-cache-dir -e /app/adaptive-chunking
 RUN python -c "from sentence_transformers import SentenceTransformer; Model = SentenceTransformer('all-MiniLM-L6-v2')"
 
 # 2. CÀI ĐẶT BACKEND NODE.JS
-# Sao chép package.json, lockfile và thư mục prisma từ XFoodi-BE vào /app
-COPY ./XFoodi-BE/package.json ./XFoodi-BE/pnpm-lock.yaml* ./XFoodi-BE/yarn.lock* ./XFoodi-BE/package-lock.json* ./
-COPY ./XFoodi-BE/prisma ./prisma
+# Sao chép package.json, lockfile và thư mục prisma từ thư mục gốc vào /app
+COPY ./package.json ./pnpm-lock.yaml* ./yarn.lock* ./package-lock.json* ./
+COPY ./prisma ./prisma
 
 # Cài đặt pnpm và dependencies của Node.js (tự động chạy prisma generate qua postinstall)
 RUN npm install -g pnpm && pnpm install --frozen-lockfile
 
-# Sao chép toàn bộ mã nguồn backend từ XFoodi-BE vào /app
-COPY ./XFoodi-BE/ .
+# Sao chép toàn bộ mã nguồn backend từ thư mục gốc vào /app
+COPY . .
 
 # Build dự án Node.js (biên dịch TypeScript sang JS)
 RUN pnpm run build
