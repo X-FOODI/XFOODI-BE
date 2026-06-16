@@ -2,9 +2,7 @@ generator client {
   provider = "prisma-client-js"
 }
 
-generator dbml {
-  provider = "prisma-dbml-generator"
-}
+
 
 datasource db {
   provider  = "postgresql"
@@ -178,9 +176,9 @@ model Customer {
   modifiedBy         String?
   createdAt          DateTime            @default(now())
   metadata           Json?
-  updatedAt          DateTime            @updatedAt
-  userId             String              @unique
-  user               User                @relation(fields: [userId], references: [id])
+  updatedAt          DateTime            @default(now()) @updatedAt
+  userId             String?             @unique
+  user               User?               @relation(fields: [userId], references: [id])
   feedbacks          Feedback[]
   orders             Order[]
   pointsTransactions PointsTransaction[]
@@ -288,11 +286,11 @@ model Category {
   displayOrder Int                       @default(0)
   createdAt    DateTime                  @default(now())
   metadata     Json?
-  restaurantId String
-  updatedAt    DateTime                  @updatedAt
+  restaurantId String?
+  updatedAt    DateTime                  @default(now()) @updatedAt
   parent       Category?                 @relation("CategoryHierarchy", fields: [parentId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   children     Category[]                @relation("CategoryHierarchy")
-  restaurant   Restaurant                @relation(fields: [restaurantId], references: [id])
+  restaurant   Restaurant?               @relation(fields: [restaurantId], references: [id])
   dishes       Dish[]
   promotions   PromotionApplicableItem[]
 
@@ -317,13 +315,13 @@ model Dish {
   modifiedBy         String?
   createdAt          DateTime                  @default(now())
   metadata           Json?
-  restaurantId       String
-  updatedAt          DateTime                  @updatedAt
+  restaurantId       String?
+  updatedAt          DateTime                  @default(now()) @updatedAt
   comboDetails       ComboDetail[]
   images             DishImage[]
   recipes            DishRecipe[]
   category           Category                  @relation(fields: [categoryId], references: [id])
-  restaurant         Restaurant                @relation(fields: [restaurantId], references: [id])
+  restaurant         Restaurant?                @relation(fields: [restaurantId], references: [id])
   orderDetails       OrderDetail[]
   promotions         PromotionApplicableItem[]
 
@@ -752,14 +750,14 @@ model Order {
   orderStatusId      String
   createdAt          DateTime            @default(now())
   metadata           Json?
-  restaurantId       String
-  updatedAt          DateTime            @updatedAt
+  restaurantId       String?
+  updatedAt          DateTime            @default(now()) @updatedAt
   feedbacks          Feedback[]
   orderDetails       OrderDetail[]
   customer           Customer?           @relation(fields: [customerId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   employee           Employee?           @relation(fields: [handledBy], references: [id], onDelete: NoAction, onUpdate: NoAction)
   reservation        Reservation?        @relation(fields: [reservationId], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  restaurant         Restaurant          @relation(fields: [restaurantId], references: [id])
+  restaurant         Restaurant?          @relation(fields: [restaurantId], references: [id])
   payments           Payment[]
   pointsTransactions PointsTransaction[]
   promotionHistories PromotionHistory[]
@@ -957,7 +955,7 @@ model AIChatSession {
   createdAt    DateTime        @default(now())
   metadata     Json?
   restaurantId String?
-  updatedAt    DateTime        @updatedAt
+  updatedAt    DateTime        @default(now()) @updatedAt
   messages     AIChatMessage[]
   restaurant   Restaurant?     @relation(fields: [restaurantId], references: [id])
 
@@ -974,7 +972,7 @@ model AIChatMessage {
   modifiedBy      String?
   createdAt       DateTime      @default(now())
   metadata        Json?
-  updatedAt       DateTime      @updatedAt
+  updatedAt       DateTime      @default(now()) @updatedAt
   session         AIChatSession @relation(fields: [aiChatSessionId], references: [id], onDelete: Cascade)
 
   @@map("AIChatMessages")
@@ -1192,6 +1190,7 @@ model RestaurantDocument {
   filename     String
   fileUrl      String
   fileType     String   // "PDF" | "DOCX" | "TXT" | "URL"
+  versionId    String?  // S3 object version ID
   status       String   @default("PENDING") // "PENDING" | "PROCESSING" | "INDEXED" | "FAILED"
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
@@ -1231,7 +1230,7 @@ model RestaurantBucket {
 
   // Knowledge Base config
   isMounted        Boolean  @default(false)
-  chunkingStrategy String   @default("FIXED") // "FIXED" | "SEMANTIC" | "NONE"
+  chunkingStrategy String   @default("FIXED") // "FIXED" | "SEMANTIC" | "NONE" | "ADAPTIVE"
   chunkSize        Int      @default(800)
   chunkOverlap     Int      @default(100)
 
@@ -1241,6 +1240,20 @@ model RestaurantBucket {
   @@unique([restaurantId, name])
   @@map("RestaurantBuckets")
 }
+
+model RestaurantKBSnapshot {
+  id           String   @id @default(uuid())
+  restaurantId String
+  bucketId     String?
+  versionName  String
+  description  String?
+  createdAt    DateTime @default(now())
+  documents    Json     // Array of { filename, fileUrl, fileType, versionId }
+
+  @@index([restaurantId])
+  @@map("RestaurantKBSnapshots")
+}
+
 
 // ─── Restaurant Wallet (Revenue) ───────────────────────────────────────────────
 

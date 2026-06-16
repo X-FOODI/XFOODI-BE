@@ -40,6 +40,7 @@ router.get('/:domain', async (req, res) => {
     const restaurant = await prisma.restaurant.findFirst({
       where: {
         OR: [
+          { id: domain },
           { slug: slug },
           { slug: domain },
         ],

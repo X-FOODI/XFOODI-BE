@@ -11,22 +11,28 @@ export interface ChatMessage {
  * Hybrid RRF search (vector + full-text).
  * Falls back to text-only search when pgvector is not installed (error 42704).
  */
-async function hybridSearchChunks(
+export async function hybridSearchChunks(
   restaurantId: string,
   queryVectorStr: string,
   rewrittenQuery: string,
-  extraWhere = ''  // e.g. "AND (rd.\"bucketId\" IS NULL OR rb.\"isChatEnabled\" = true)"
+  extraWhere = '',  // e.g. "AND (rd.\"bucketId\" IS NULL OR rb.\"isChatEnabled\" = true)"
+  bucketId?: string // exact-match a single bucket (used by the KB test endpoints)
 ): Promise<any[]> {
+  const bucketFilter = bucketId ? `AND rd."bucketId" = $4` : '';
+  const hybridParams = bucketId
+    ? [queryVectorStr, restaurantId, rewrittenQuery, bucketId]
+    : [queryVectorStr, restaurantId, rewrittenQuery];
+
   // ── Try 1: Full hybrid RRF (vector + text) ──────────────────
   try {
     return await prisma.$queryRawUnsafe<any[]>(
       `WITH vector_matches AS (
-          SELECT dc.id, ROW_NUMBER() OVER (ORDER BY dc.embedding <=> $1::vector) as rank
+          SELECT dc.id, ROW_NUMBER() OVER (ORDER BY dc.embedding <=> $1::public.vector) as rank
           FROM "DocumentChunks" dc
           JOIN "RestaurantDocuments" rd ON dc."documentId" = rd.id
           LEFT JOIN "RestaurantBuckets" rb ON rd."bucketId" = rb.id
           WHERE rd."restaurantId" = $2 AND rd.status = 'INDEXED'
-            ${extraWhere}
+            ${extraWhere} ${bucketFilter}
           LIMIT 100
         ),
         text_matches AS (
@@ -35,11 +41,11 @@ async function hybridSearchChunks(
           JOIN "RestaurantDocuments" rd ON dc."documentId" = rd.id
           LEFT JOIN "RestaurantBuckets" rb ON rd."bucketId" = rb.id
           WHERE rd."restaurantId" = $2 AND rd.status = 'INDEXED'
-            ${extraWhere}
+            ${extraWhere} ${bucketFilter}
             AND to_tsvector('simple', dc.content) @@ plainto_tsquery('simple', $3)
           LIMIT 100
         )
-        SELECT dc.content, rd.filename,
+        SELECT dc.content, rd.filename, dc."documentId" as "documentId",
                (COALESCE(1.0 / (60.0 + vm.rank), 0.0) + COALESCE(1.0 / (60.0 + tm.rank), 0.0)) as rrf_score
         FROM "DocumentChunks" dc
         JOIN "RestaurantDocuments" rd ON dc."documentId" = rd.id
@@ -48,9 +54,7 @@ async function hybridSearchChunks(
         WHERE vm.id IS NOT NULL OR tm.id IS NOT NULL
         ORDER BY rrf_score DESC
         LIMIT 10`,
-      queryVectorStr,
-      restaurantId,
-      rewrittenQuery
+      ...hybridParams
     );
   } catch (vecErr: any) {
     // ── Fallback: text-only search when pgvector not installed (code 42704) ──
@@ -62,19 +66,23 @@ async function hybridSearchChunks(
 
     console.warn('[RAGService] pgvector not available, falling back to full-text search only.');
 
+    const textOnlyBucketFilter = bucketId ? `AND rd."bucketId" = $3` : '';
+    const textOnlyParams = bucketId
+      ? [rewrittenQuery, restaurantId, bucketId]
+      : [rewrittenQuery, restaurantId];
+
     return await prisma.$queryRawUnsafe<any[]>(
-      `SELECT dc.content, rd.filename,
+      `SELECT dc.content, rd.filename, dc."documentId" as "documentId",
               ts_rank(to_tsvector('simple', dc.content), plainto_tsquery('simple', $1)) as rrf_score
        FROM "DocumentChunks" dc
        JOIN "RestaurantDocuments" rd ON dc."documentId" = rd.id
        LEFT JOIN "RestaurantBuckets" rb ON rd."bucketId" = rb.id
        WHERE rd."restaurantId" = $2 AND rd.status = 'INDEXED'
-         ${extraWhere}
+         ${extraWhere} ${textOnlyBucketFilter}
          AND to_tsvector('simple', dc.content) @@ plainto_tsquery('simple', $1)
        ORDER BY rrf_score DESC
        LIMIT 10`,
-      rewrittenQuery,
-      restaurantId
+      ...textOnlyParams
     );
   }
 }
@@ -88,7 +96,8 @@ export class RAGService {
     userQuery: string,
     history: ChatMessage[] = [],
     userPreferences?: string,
-    sessionId?: string
+    sessionId?: string,
+    cartItems?: any[]
   ): AsyncGenerator<{ text?: string; done: boolean; securityTriggered?: boolean; error?: string }> {
     try {
       // 1. Manage session & Load history
@@ -269,7 +278,77 @@ Hãy luôn lịch sự, thân thiện và nhiệt tình với khách hàng.`;
 
       const customPrompt = aiConfig.systemPrompt || defaultSystemPrompt;
 
+      // Dynamic guidelines matching UI selections
+      let dynamicGuidelines = '';
+      if (aiConfig.botName) {
+        dynamicGuidelines += `\n- Tên của bạn là "${aiConfig.botName}". Hãy luôn xưng hô và tự giới thiệu bằng tên này khi giao tiếp.`;
+      }
+
+      const roleMap: Record<string, string> = {
+        advisor: 'Nhân viên tư vấn nhiệt tình, tập trung giới thiệu thực đơn, tư vấn món ăn ngon và giải đáp câu hỏi về đồ ăn thức uống.',
+        receptionist: 'Lễ tân đặt bàn chuyên nghiệp, tập trung hỗ trợ khách đặt bàn, chọn chỗ ngồi và kiểm tra thời gian đón tiếp khách.',
+        care: 'Chăm sóc khách hàng chu đáo, lắng nghe các thắc mắc, phản hồi khiếu nại và ghi nhận ý kiến từ phía khách.'
+      };
+      const toneMap: Record<string, string> = {
+        friendly: 'Thân thiện, ấm áp, gần gũi, dùng ngôn từ tự nhiên, lịch sự và thân mật.',
+        professional: 'Chuyên nghiệp, chuẩn mực, lịch sự, rõ ràng và tập trung vào sự chính xác.',
+        luxury: 'Sang trọng, tinh tế, trang trọng, cực kỳ tôn trọng và sử dụng các kính ngữ trang trọng để tôn vinh khách hàng.',
+        cheerful: 'Vui vẻ, hào hứng, tràn đầy năng lượng tích cực, cởi mở và thường xuyên sử dụng emoji vui tươi.'
+      };
+
+      const activeRole = aiConfig.aiRole || 'advisor';
+      const activeTone = aiConfig.tone || 'friendly';
+      dynamicGuidelines += `\n- VAI TRÒ CỦA BẠN: Bạn đóng vai trò là một ${roleMap[activeRole] || roleMap.advisor}`;
+      dynamicGuidelines += `\n- PHONG CÁCH GIAO TIẾP: Sử dụng giọng điệu ${toneMap[activeTone] || toneMap.friendly}`;
+
+      // Enforce response boundaries based on allowed options
+      const limits = aiConfig.replyLimits || {};
+      const forbiddenTopics: string[] = [];
+      if (limits.menu === false) forbiddenTopics.push('thực đơn (menu)');
+      if (limits.price === false) forbiddenTopics.push('giá tiền các món ăn');
+      if (limits.promo === false) forbiddenTopics.push('khuyến mãi hoặc ưu đãi');
+      if (limits.hours === false) forbiddenTopics.push('giờ mở cửa của nhà hàng');
+      if (limits.address === false) forbiddenTopics.push('địa chỉ, bản đồ hay vị trí nhà hàng');
+      if (limits.policy === false) forbiddenTopics.push('chính sách đặt bàn hay quy định cọc tiền');
+      if (limits.dishInfo === false) forbiddenTopics.push('thành phần chi tiết hoặc cách chế biến món ăn');
+
+      if (forbiddenTopics.length > 0) {
+        dynamicGuidelines += `\n- GIỚI HẠN PHẠM VI: Chủ nhà hàng đã tắt quyền trả lời về: ${forbiddenTopics.join(', ')}. Tuyệt đối KHÔNG trả lời hay tiết lộ các thông tin này dưới bất kỳ hình thức nào. Nếu khách hỏi, hãy xin lỗi và lịch sự từ chối trả lời do quy định của nhà hàng.`;
+      }
+
+      // Fallback Strategy
+      if (aiConfig.fallbackStrategy === 'sorry') {
+        dynamicGuidelines += `\n- NGUYÊN TẮC THIẾU THÔNG TIN: Nếu thông tin khách hỏi không xuất hiện trong tài liệu hoặc thực đơn ở trên, hãy trả lời chính xác bằng câu mặc định: "Xin lỗi, em chưa có thông tin chính xác. Anh/chị vui lòng liên hệ nhân viên để được hỗ trợ." Không được tự sáng tạo hoặc suy đoán ngoài ngữ cảnh.`;
+      } else {
+        dynamicGuidelines += `\n- NGUYÊN TẮC THIẾU THÔNG TIN: Nếu không có dữ liệu trực tiếp trong ngữ cảnh, hãy tự suy luận một cách logic, thông minh và an toàn nhất dựa trên các thông tin tương tự có sẵn để giải đáp thắc mắc cho khách hàng.`;
+      }
+
+      // Human handoff triggers
+      const handoff = aiConfig.handoffTriggers || {};
+      const handoffCases: string[] = [];
+      if (handoff.clientRequest) handoffCases.push('khách yêu cầu gặp nhân viên / người thật / quản lý');
+      if (handoff.unknownQuery) handoffCases.push('bạn không biết câu trả lời hoặc không có thông tin');
+      if (handoff.complaint) handoffCases.push('khách hàng có thái độ khiếu nại, bức xúc hoặc không hài lòng');
+      if (handoff.refund) handoffCases.push('yêu cầu hoàn tiền, hủy đơn hoặc bồi thường');
+
+      if (handoffCases.length > 0) {
+        dynamicGuidelines += `\n- CHUYỂN GIAO CHO NHÂN VIÊN: Khi phát hiện các tình huống (${handoffCases.join(', ')}), hãy nhắn khách rằng bạn đang kết nối họ tới nhân viên phục vụ và BẮT BUỘC phải nhúng thẻ hành động [ACTION: CALL_WAITER] vào câu trả lời để hệ thống kích hoạt chuông gọi phục vụ thực tế.`;
+      }
+
+      // Booking collection rules
+      const bookingInfo = aiConfig.collectBookingInfo || {};
+      const requiredFields: string[] = [];
+      if (bookingInfo.guests) requiredFields.push('số người tham gia');
+      if (bookingInfo.datetime) requiredFields.push('ngày và giờ đặt bàn mong muốn');
+      if (bookingInfo.phone) requiredFields.push('số điện thoại liên hệ');
+      if (bookingInfo.note) requiredFields.push('ghi chú/yêu cầu đặc biệt (ví dụ: ăn chay, bàn ban công...)');
+
+      if (requiredFields.length > 0) {
+        dynamicGuidelines += `\n- QUY TRÌNH THU THẬP ĐẶT BÀN: Khi khách hàng ngỏ ý muốn đặt bàn (booking), hãy hỏi khách lần lượt các thông tin còn thiếu trong danh sách sau: ${requiredFields.join(', ')}. Hãy hỏi một cách lịch sự, tự nhiên. Khi khách cung cấp thông tin hoặc bạn thấy khách sẵn sàng điền form đặt bàn, hãy nhúng thẻ [UI: BOOKING_FORM ...] ở cuối phản hồi của bạn.`;
+      }
+
       const systemInstruction = `${customPrompt}
+${dynamicGuidelines}
 
 ${userPreferences ? `Thông tin khách hàng: ${userPreferences}` : ''}
 
@@ -334,11 +413,29 @@ Ví dụ:
       const sanitizedAnswer = await AIService.validatePII(fullAnswer);
 
       if (chatSession) {
-        await prisma.aIChatMessage.createMany({
-          data: [
-            { aiChatSessionId: chatSession.id, role: 'user', content: userQuery },
-            { aiChatSessionId: chatSession.id, role: 'model', content: sanitizedAnswer }
-          ]
+        await prisma.aIChatMessage.create({
+          data: { aiChatSessionId: chatSession.id, role: 'user', content: userQuery }
+        });
+        const modelMessage = await prisma.aIChatMessage.create({
+          data: { aiChatSessionId: chatSession.id, role: 'model', content: sanitizedAnswer }
+        });
+
+        // Run RAGAS evaluation in the background using setImmediate
+        setImmediate(async () => {
+          try {
+            const scores = await AIService.ragasEvaluate(userQuery, sanitizedAnswer, topChunks);
+            await prisma.aIChatMessage.update({
+              where: { id: modelMessage.id },
+              data: {
+                metadata: {
+                  ragas: scores
+                }
+              }
+            });
+            console.log(`[RAGService] Evaluated message ${modelMessage.id}:`, scores);
+          } catch (evalErr) {
+            console.error('[RAGService] Background Ragas evaluation error:', evalErr);
+          }
         });
       }
 
@@ -357,10 +454,11 @@ Ví dụ:
     userQuery: string,
     history: ChatMessage[] = [],
     userPreferences?: string,
-    sessionId?: string
+    sessionId?: string,
+    cartItems?: any[]
   ): Promise<{ success: boolean; answer: string; sessionId?: string; securityTriggered?: boolean }> {
     try {
-      const stream = this.queryRestaurantStream(restaurantId, userQuery, history, userPreferences, sessionId);
+      const stream = this.queryRestaurantStream(restaurantId, userQuery, history, userPreferences, sessionId, cartItems);
       let answer = '';
       let securityTriggered = false;
 

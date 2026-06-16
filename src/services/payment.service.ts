@@ -222,7 +222,7 @@ export class PaymentService {
       // Credit restaurant owner wallet with this order's revenue
       try {
         const order = await prisma.order.findUnique({ where: { id: dto.orderId } });
-        if (order) {
+        if (order?.restaurantId) {
           await walletService.creditOrderRevenue({
             restaurantId: order.restaurantId,
             orderId: order.id,
@@ -489,16 +489,18 @@ export class PaymentService {
         await this.finalizeOrderPayment(order.id, String(params.payload.id));
 
         // Credit restaurant owner wallet with this order's revenue
-        try {
-          await walletService.creditOrderRevenue({
-            restaurantId: order.restaurantId,
-            orderId: order.id,
-            paymentId: payment.id,
-            amount: Number(payment.amount),
-            paymentMethodCode: 'BANK_TRANSFER',
-          });
-        } catch (walletErr: any) {
-          console.warn('[SePay Webhook] Failed to credit wallet:', walletErr.message);
+        if (order.restaurantId) {
+          try {
+            await walletService.creditOrderRevenue({
+              restaurantId: order.restaurantId,
+              orderId: order.id,
+              paymentId: payment.id,
+              amount: Number(payment.amount),
+              paymentMethodCode: 'BANK_TRANSFER',
+            });
+          } catch (walletErr: any) {
+            console.warn('[SePay Webhook] Failed to credit wallet:', walletErr.message);
+          }
         }
 
         return {
