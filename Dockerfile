@@ -25,7 +25,7 @@ COPY ./package.json ./pnpm-lock.yaml* ./yarn.lock* ./package-lock.json* ./
 COPY ./prisma ./prisma
 
 # Cài đặt pnpm và dependencies của Node.js (tự động chạy prisma generate qua postinstall)
-RUN npm install -g pnpm && pnpm install --frozen-lockfile
+RUN npm install -g pnpm@9.15.4 --force && pnpm install --frozen-lockfile
 
 # Sao chép toàn bộ mã nguồn backend từ thư mục gốc vào /app
 COPY . .
