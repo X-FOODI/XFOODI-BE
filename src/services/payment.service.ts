@@ -202,7 +202,7 @@ export class PaymentService {
       // Credit restaurant owner wallet with this order's revenue
       try {
         const order = await prisma.order.findUnique({ where: { id: dto.orderId } });
-        if (order && order.restaurantId) {
+        if (order?.restaurantId) {
           await walletService.creditOrderRevenue({
             restaurantId: order.restaurantId,
             orderId: order.id,
