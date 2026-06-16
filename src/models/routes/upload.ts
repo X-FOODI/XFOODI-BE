@@ -72,10 +72,14 @@ router.get('/qr', async (req: any, res: any) => {
     let qrText = text as string;
     if (qrText.startsWith('/')) {
       const referer = req.headers.referer || req.headers.referrer;
-      let origin = 'http://localhost:3000';
+      let origin = ENV.FRONTEND_URL || 'http://localhost:3000';
       if (referer) {
         try {
-          origin = new URL(referer).origin;
+          const parsed = new URL(referer).origin;
+          // Prefer frontend URL from environment if referer is not set or matches api domain
+          if (!parsed.includes('localhost') || origin.includes('localhost')) {
+            origin = parsed;
+          }
         } catch (e) {
           // ignore
         }

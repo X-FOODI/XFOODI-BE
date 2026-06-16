@@ -28,6 +28,7 @@
   "dependencies": {
     "@copilotkit/runtime": "^1.59.5",
     "@google/genai": "^2.8.0",
+    "@payos/node": "^2.0.5",
     "@prisma/client": "^6.19.3",
     "@sendgrid/mail": "^8.1.6",
     "@supabase/supabase-js": "^2.108.1",

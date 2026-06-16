@@ -4,6 +4,7 @@ import { PaymentStatus, PaymentPurpose } from '../enums/payment.enum';
 import crypto from 'crypto';
 import { getIO } from '../socket';
 import { walletService } from './wallet.service';
+import { reservationService } from './reservation.service';
 
 function getPrisma(): PrismaClient {
   return prismaStorage.getStore() as PrismaClient;
@@ -169,9 +170,28 @@ export class PaymentService {
     let amount = 0;
 
     if (dto.orderId) {
-      const order = await prisma.order.findUnique({ where: { id: dto.orderId } });
+      const order = await prisma.order.findUnique({
+        where: { id: dto.orderId },
+        include: {
+          reservation: {
+            include: {
+              payments: {
+                where: { status: PaymentStatus.COMPLETED, purpose: PaymentPurpose.DEPOSIT },
+                select: { amount: true },
+              },
+            },
+          },
+        },
+      });
       if (!order) throw new Error('Order not found');
-      amount = Number(order.totalAmount);
+
+      // Tính tổng tiền cọc đã thanh toán cho reservation của order này
+      const depositPaid = order.reservation
+        ? order.reservation.payments.reduce((sum, p) => sum + Number(p.amount), 0)
+        : 0;
+
+      // Trừ tiền cọc — khách chỉ cần trả số tiền còn lại
+      amount = Math.max(0, Number(order.totalAmount) - depositPaid);
     } else if (dto.reservationId) {
       const reservation = await prisma.reservation.findUnique({ where: { id: dto.reservationId } });
       if (!reservation) throw new Error('Reservation not found');
@@ -218,13 +238,10 @@ export class PaymentService {
 
     // Mark reservation deposit as paid
     if (dto.reservationId) {
-      const confirmedStatus = await prisma.statusValue.findFirst({ where: { code: 'CONFIRMED' } });
-      if (confirmedStatus) {
-        await prisma.reservation.update({
-          where: { id: dto.reservationId },
-          data: { reservationStatusId: confirmedStatus.id },
-        });
-      }
+      await prisma.reservation.update({
+        where: { id: dto.reservationId },
+        data: { paymentDeadline: null },
+      });
     }
 
     return payment;
@@ -432,14 +449,11 @@ export class PaymentService {
           },
         });
 
-        // Update reservation status to CONFIRMED
-        const confirmedStatus = await prisma.statusValue.findFirst({ where: { code: 'CONFIRMED' } });
-        if (confirmedStatus) {
-          await prisma.reservation.update({
-            where: { id: reservation.id },
-            data: { reservationStatusId: confirmedStatus.id },
-          });
-        }
+        // Clear payment deadline, leave status as PENDING awaiting owner confirmation
+        await prisma.reservation.update({
+          where: { id: reservation.id },
+          data: { paymentDeadline: null },
+        });
 
         return {
           matched: true,
