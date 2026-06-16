@@ -1492,7 +1492,7 @@ router.post('/kb/buckets/:id/test/retrieve', authMiddleware, tenantGuard, async 
       // Hybrid RRF Search
       const dbChunks = await prisma.$queryRawUnsafe<any[]>(
         `WITH vector_matches AS (
-          SELECT dc.id, ROW_NUMBER() OVER (ORDER BY dc.embedding <=> $1::vector) as rank
+          SELECT dc.id, ROW_NUMBER() OVER (ORDER BY dc.embedding <=> $1::public.vector) as rank
           FROM "DocumentChunks" dc
           JOIN "RestaurantDocuments" rd ON dc."documentId" = rd.id
           WHERE rd."bucketId" = $2 AND rd.status = 'INDEXED'
@@ -1681,7 +1681,7 @@ router.post('/kb/buckets/:id/test/rag', authMiddleware, tenantGuard, async (req:
 
       const dbChunks = await prisma.$queryRawUnsafe<any[]>(
         `WITH vector_matches AS (
-          SELECT dc.id, ROW_NUMBER() OVER (ORDER BY dc.embedding <=> $1::vector) as rank
+          SELECT dc.id, ROW_NUMBER() OVER (ORDER BY dc.embedding <=> $1::public.vector) as rank
           FROM "DocumentChunks" dc
           JOIN "RestaurantDocuments" rd ON dc."documentId" = rd.id
           WHERE rd."bucketId" = $2 AND rd.status = 'INDEXED'

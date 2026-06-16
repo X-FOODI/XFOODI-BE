@@ -70,7 +70,7 @@ async function copyDocs() {
         
         await tenantPrisma.$executeRawUnsafe(
           `INSERT INTO "DocumentChunks" (id, "documentId", content, embedding, metadata, "createdAt")
-           VALUES ($1, $2, $3, $4::vector, $5::jsonb, NOW())`,
+           VALUES ($1, $2, $3, $4::public.vector, $5::jsonb, NOW())`,
           chunk.id,
           chunk.documentId,
           chunk.content,
