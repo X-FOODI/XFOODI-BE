@@ -2,6 +2,8 @@ import { prisma } from '../lib/prisma';
 import { AIService } from './ai.service';
 import { PDFParse } from 'pdf-parse';
 import { randomUUID } from 'crypto';
+import { spawn } from 'child_process';
+import path from 'path';
 
 export class KnowledgeBaseService {
   /**
@@ -154,8 +156,6 @@ export class KnowledgeBaseService {
 
   private static async chunkTextAdaptive(text: string): Promise<string[]> {
     return new Promise((resolve, reject) => {
-      const { spawn } = require('child_process');
-      const path = require('path');
       const scriptPath = path.resolve(process.cwd(), 'scripts/adaptive_chunk.py');
       
       const pythonCommand = process.env.PYTHON_PATH || 'python';
