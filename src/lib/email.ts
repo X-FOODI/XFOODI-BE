@@ -230,6 +230,57 @@ function formatVND(amount: number): string {
   return amount.toLocaleString('vi-VN') + ' ₫';
 }
 
+// ─── Reservation pending email ───────────────────────────────────────────
+
+export const sendReservationPendingEmail = async (
+  to: string,
+  details: Omit<ReservationEmailDetails, 'confirmationCode'>,
+  reservationId?: string
+): Promise<void> => {
+  const formattedTime = formatVietnamTime(details.time);
+  const formattedDeposit = formatVND(details.depositAmount);
+
+  await sendEmailWithRetry(() =>
+    sendEmail({
+      to,
+      from: FROM,
+      replyTo: ENV.SENDGRID.EMAIL_REPLY_TO,
+      subject: `[XFoodi] Yêu cầu đặt bàn tại ${details.restaurantName} đang chờ xác nhận`,
+      text: `Yêu cầu đặt bàn tại ${details.restaurantName} của bạn đang chờ xác nhận. Thời gian: ${formattedTime}. Số khách: ${details.numberOfGuests}. Tiền cọc: ${formattedDeposit}.`,
+      html: `
+        <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto; border: 1px solid #e5e7eb; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 6px rgba(0,0,0,0.05);">
+          <div style="background-color: #f59e0b; padding: 24px; text-align: center;">
+            <h2 style="color: white; margin: 0; font-size: 24px;">Yêu Cầu Đặt Bàn Đang Chờ Xác Nhận</h2>
+          </div>
+          <div style="padding: 24px; color: #1f2937; line-height: 1.6;">
+            <p>Xin chào quý khách,</p>
+            <p>Yêu cầu đặt bàn của quý khách tại nhà hàng <strong>${details.restaurantName}</strong> đã được tiếp nhận và <strong>đang chờ chủ nhà hàng xác nhận</strong>. Dưới đây là thông tin chi tiết:</p>
+
+            <div style="background-color: #f9fafb; border: 1px solid #f3f4f6; border-radius: 6px; padding: 18px; margin: 20px 0;">
+              <p style="margin: 0 0 8px 0;"><strong>Nhà hàng:</strong> ${details.restaurantName}</p>
+              <p style="margin: 0 0 8px 0;"><strong>Thời gian:</strong> ${formattedTime}</p>
+              <p style="margin: 0 0 8px 0;"><strong>Số lượng khách:</strong> ${details.numberOfGuests} người</p>
+              <p style="margin: 0 0 8px 0;"><strong>Tiền cọc:</strong> ${formattedDeposit}</p>
+              ${details.specialRequests
+                ? `<p style="margin: 0 0 8px 0;"><strong>Yêu cầu đặc biệt:</strong> ${details.specialRequests}</p>`
+                : ''}
+            </div>
+
+            <p style="background-color: #fffbeb; border-left: 4px solid #f59e0b; padding: 12px 16px; border-radius: 4px; font-size: 14px; color: #78350f;">
+              <strong>Lưu ý:</strong> Mã check-in và mã QR nhận bàn sẽ được tự động gửi qua email cho quý khách ngay sau khi chủ nhà hàng phê duyệt yêu cầu đặt bàn này.
+            </p>
+
+            <p style="margin-top: 32px; font-size: 13px; color: #6b7280; text-align: center; border-top: 1px solid #f3f4f6; padding-top: 16px;">
+              XFoodi Team · xfoodiprojects@gmail.com
+            </p>
+          </div>
+        </div>
+      `,
+    }),
+    { email: to, reservationId }
+  );
+};
+
 // ─── Reservation confirmation email ───────────────────────────────────────
 
 export const sendReservationConfirmationEmail = async (
@@ -294,6 +345,7 @@ export const sendReservationCancellationEmail = async (
     cancelledAt: string;
     refundAmount?: number;
     refundEstimateDays?: number;
+    reason?: string;
   },
   reservationId?: string
 ): Promise<void> => {
@@ -307,7 +359,7 @@ export const sendReservationCancellationEmail = async (
       from: FROM,
       replyTo: ENV.SENDGRID.EMAIL_REPLY_TO,
       subject: `[XFoodi] Thông báo hủy đặt bàn tại ${details.restaurantName}`,
-      text: `Đặt bàn ${details.confirmationCode} tại ${details.restaurantName} đã được hủy vào ${formattedCancelledAt}.${hasRefund ? ` Hoàn cọc: ${formatVND(details.refundAmount!)} trong ${details.refundEstimateDays ?? 7} ngày làm việc.` : ''}`,
+      text: `Đặt bàn ${details.confirmationCode} tại ${details.restaurantName} đã được hủy vào ${formattedCancelledAt}.${details.reason ? ` Lý do: ${details.reason}.` : ''}${hasRefund ? ` Hoàn cọc: ${formatVND(details.refundAmount!)} trong ${details.refundEstimateDays ?? 7} ngày làm việc.` : ''}`,
       html: `
         <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto; border: 1px solid #e5e7eb; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 6px rgba(0,0,0,0.05);">
           <div style="background-color: #ef4444; padding: 24px; text-align: center;">
@@ -322,7 +374,8 @@ export const sendReservationCancellationEmail = async (
               <p style="margin: 0 0 8px 0;"><strong>Nhà hàng:</strong> ${details.restaurantName}</p>
               <p style="margin: 0 0 8px 0;"><strong>Thời gian đặt:</strong> ${formattedTime}</p>
               <p style="margin: 0 0 8px 0;"><strong>Số lượng khách:</strong> ${details.numberOfGuests} người</p>
-              <p style="margin: 0;"><strong>Thời gian hủy:</strong> ${formattedCancelledAt}</p>
+              <p style="margin: 0 0 8px 0;"><strong>Thời gian hủy:</strong> ${formattedCancelledAt}</p>
+              ${details.reason ? `<p style="margin: 0; color: #991b1b;"><strong>Lý do hủy:</strong> ${details.reason}</p>` : ''}
             </div>
 
             ${hasRefund

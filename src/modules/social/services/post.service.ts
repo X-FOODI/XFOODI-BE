@@ -1,5 +1,5 @@
 import { postRepository } from '../repositories/post.repository';
-import { mapPost, mapPostList } from '../dto/post.dto';
+import { mapPost, mapPostList, PostWithRelations } from '../dto/post.dto';
 import { sanitizeContent, contentMatchesHashtag } from '../utils/content.util';
 import { validateImageUrls } from '../utils/image.util';
 import { coerceQueryString, decodeCursor, parseLimit } from '../utils/pagination.util';
@@ -47,7 +47,7 @@ export async function listPosts(query: ListPostsQuery, viewerId?: string) {
   const cursor = decodeCursor(query.cursor);
   const hashtag = coerceQueryString(query.hashtag)?.replace(/^#/, '').toLowerCase();
 
-  let rows;
+  let rows: PostWithRelations[];
   try {
     rows = await postRepository.findMany({
       limit,
@@ -109,7 +109,7 @@ export async function listSavedPosts(query: ListPostsQuery, userId: string) {
   const limit = parseLimit(query.limit);
   const cursor = decodeCursor(query.cursor);
 
-  let rows;
+  let rows: PostWithRelations[];
   try {
     rows = await postRepository.findSavedByUser(userId, limit, cursor);
   } catch (err) {

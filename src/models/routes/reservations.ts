@@ -107,19 +107,18 @@ router.post('/', async (req: any, res: Response) => {
     });
     const restaurantName = restaurantRec?.name || 'XFoodi Restaurant';
 
-    // Send confirmation email
+    // Send pending confirmation email
     if (userEmail) {
-      const { sendReservationConfirmationEmail } = await import('../../lib/email');
-      sendReservationConfirmationEmail(userEmail, {
-        restaurantName,
-        confirmationCode: reservation.confirmationCode || '',
-        numberOfGuests: reservation.numberOfGuests,
-        time: reservation.time.toISOString(),
-        depositAmount: typeof reservation.depositAmount === 'number'
-          ? reservation.depositAmount
-          : Number(reservation.depositAmount ?? 0),
-        specialRequests: reservation.specialRequests || undefined,
-      }, reservation.id).catch((e) => console.error('Failed to send reservation confirmation email:', e));
+       const { sendReservationPendingEmail } = await import('../../lib/email');
+       sendReservationPendingEmail(userEmail, {
+         restaurantName,
+         numberOfGuests: reservation.numberOfGuests,
+         time: reservation.time.toISOString(),
+         depositAmount: typeof reservation.depositAmount === 'number'
+           ? reservation.depositAmount
+           : Number(reservation.depositAmount ?? 0),
+         specialRequests: reservation.specialRequests || undefined,
+       }, reservation.id).catch((e) => console.error('Failed to send reservation pending email:', e));
     }
 
     return res.status(201).json({ success: true, data: reservation });
@@ -276,11 +275,25 @@ router.post('/checkin/:code', authMiddleware, requireRole('Owner', 'Admin', 'Sta
   }
 });
 
+
+
 // ── Cancel ───────────────────────────────────────────────────────────────────
-router.post('/:id/cancel', authMiddleware, requireRole('Owner', 'Admin', 'Staff', 'Customer'), async (req, res) => {
+router.post('/:id/cancel', authMiddleware, requireRole('Owner', 'Admin', 'Staff', 'Customer'), async (req: any, res) => {
   try {
-    const actorId = (req as any).user?.sub || (req as any).user?.id;
-    const updated = await reservationService.cancel(req.params.id, actorId);
+    const actorId = req.user?.sub || req.user?.id;
+    const isStaff = ['Owner', 'Admin', 'Staff'].includes(req.user?.role);
+    const { approveReview, reason } = req.body;
+    const updated = await reservationService.cancel(req.params.id, actorId, isStaff, approveReview, reason);
+    return res.json({ success: true, data: updated });
+  } catch (err: any) {
+    return res.status(400).json({ success: false, message: err.message });
+  }
+});
+
+// ── Resolve No Show ──────────────────────────────────────────────────────────
+router.post('/:id/resolve-noshow', authMiddleware, requireRole('Owner', 'Admin', 'Staff'), async (req, res) => {
+  try {
+    const updated = await reservationService.resolveNoShow(req.params.id);
     return res.json({ success: true, data: updated });
   } catch (err: any) {
     return res.status(400).json({ success: false, message: err.message });

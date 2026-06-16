@@ -4,6 +4,19 @@ import { randomBytes } from 'crypto';
 import { sendReservationReminderEmail } from '../lib/email';
 import { generateReservationQR } from './qr.service';
 
+// PayOS payout helper (reuses env vars already set for wallet service)
+function getPayOS(): any | null {
+  const clientId = process.env.PAYOS_CLIENT_ID?.trim();
+  const apiKey = process.env.PAYOS_API_KEY?.trim();
+  const checksumKey = process.env.PAYOS_CHECKSUM_KEY?.trim();
+  if (!clientId || !apiKey || !checksumKey) return null;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { PayOS } = require('@payos/node');
+    return new PayOS({ clientId, apiKey, checksumKey });
+  } catch { return null; }
+}
+
 function getPrisma(): PrismaClient {
   return prismaStorage.getStore() as PrismaClient;
 }
@@ -30,6 +43,13 @@ export interface CreateReservationDto {
   specialRequests?: string;
   depositAmount?: number;
   tableIds?: string[];  // optional pre-select tables
+  bankRefund?: {         // bank account to auto-payout refund if cancelled
+    bankBin: string;
+    bankCode: string;
+    bankName?: string;
+    accountNumber: string;
+    accountName: string;
+  };
 }
 
 export interface UpdateReservationDto {
@@ -74,6 +94,172 @@ export class ReservationService {
   async createReservation(dto: CreateReservationDto) {
     const prisma = getPrisma();
 
+    // 1. Validate number of guests
+    if (!dto.numberOfGuests || dto.numberOfGuests <= 0) {
+      throw Object.assign(new Error('Số lượng khách phải lớn hơn 0'), { statusCode: 400 });
+    }
+    if (dto.numberOfGuests > 100) {
+      throw Object.assign(new Error('Nhà hàng chỉ nhận đặt bàn trực tuyến cho tối đa 100 khách. Vui lòng liên hệ trực tiếp.'), { statusCode: 400 });
+    }
+
+    // 2. Validate time limits
+    const targetTime = new Date(dto.time);
+    const now = new Date();
+    if (isNaN(targetTime.getTime())) {
+      throw Object.assign(new Error('Định dạng thời gian không hợp lệ'), { statusCode: 400 });
+    }
+    if (targetTime.getTime() < now.getTime()) {
+      throw Object.assign(new Error('Thời gian đặt bàn không được ở quá khứ'), { statusCode: 400 });
+    }
+    if (targetTime.getTime() - now.getTime() < 30 * 60 * 1000) {
+      throw Object.assign(new Error('Vui lòng đặt bàn trước giờ nhận ít nhất 30 phút'), { statusCode: 400 });
+    }
+    const maxFuture = new Date();
+    maxFuture.setDate(maxFuture.getDate() + 30);
+    if (targetTime.getTime() > maxFuture.getTime()) {
+      throw Object.assign(new Error('Hệ thống chỉ cho phép đặt bàn trước tối đa 30 ngày'), { statusCode: 400 });
+    }
+
+    // 3. Validate business hours (8:00 - 22:00, Last order: 21:30)
+    const localHour = targetTime.getUTCHours() + 7;
+    const hour = localHour >= 24 ? localHour - 24 : localHour;
+    const minutes = targetTime.getUTCMinutes();
+    const timeInMinutes = hour * 60 + minutes;
+    
+    const openingTime = 8 * 60; // 08:00
+    const closingTime = 22 * 60; // 22:00
+    const lastOrderTime = 21 * 60 + 30; // 21:30
+
+    if (timeInMinutes < openingTime || timeInMinutes > closingTime) {
+      throw Object.assign(new Error('Thời gian đặt ngoài giờ mở cửa của nhà hàng (08:00 - 22:00)'), { statusCode: 400 });
+    }
+    if (timeInMinutes > lastOrderTime) {
+      throw Object.assign(new Error('Lượt đặt quá muộn. Thời gian đặt bàn muộn nhất là 21:30'), { statusCode: 400 });
+    }
+
+    // 4. Fetch active status IDs for double-booking check
+    const activeStatusIds = await prisma.statusValue.findMany({
+      where: { code: { in: ['PENDING', 'CONFIRMED'] } },
+      select: { id: true }
+    }).then(list => list.map(s => s.id));
+
+    // 5. Prevent double booking (same customer booking at same time)
+    const bufferBeforeSelf = new Date(targetTime.getTime() - 30 * 60 * 1000);
+    const bufferAfterSelf = new Date(targetTime.getTime() + 30 * 60 * 1000);
+    const doubleBooked = await prisma.reservation.findFirst({
+      where: {
+        customerId: dto.customerId,
+        time: { gte: bufferBeforeSelf, lte: bufferAfterSelf },
+        reservationStatusId: { in: activeStatusIds }
+      }
+    });
+    if (doubleBooked) {
+      throw Object.assign(new Error('Bạn đã có một lịch đặt bàn khác trùng khung giờ này'), { statusCode: 400 });
+    }
+
+    // 6. Validate selected tables status, capacity and hard conflict overlaps
+    if (dto.tableIds && dto.tableIds.length > 0) {
+      const dbTables = await prisma.table.findMany({
+        where: {
+          id: { in: dto.tableIds },
+          restaurantId: dto.restaurantId,
+          isActive: true
+        },
+        select: { id: true, code: true, seatingCapacity: true }
+      });
+      if (dbTables.length !== dto.tableIds.length) {
+        throw Object.assign(new Error('Một hoặc nhiều bàn được chọn không tồn tại hoặc đã ngừng hoạt động'), { statusCode: 400 });
+      }
+
+      const totalCapacity = dbTables.reduce((sum, t) => sum + t.seatingCapacity, 0);
+      if (totalCapacity < dto.numberOfGuests) {
+        throw Object.assign(new Error(`Tổng sức chứa các bàn được chọn (${totalCapacity} người) không đủ cho số khách đặt (${dto.numberOfGuests} người)`), { statusCode: 400 });
+      }
+
+      // Hard conflict check (overlap under 30 minutes)
+      const bufferBefore = new Date(targetTime.getTime() - 30 * 60 * 1000);
+      const bufferAfter = new Date(targetTime.getTime() + 30 * 60 * 1000);
+      const conflict = await prisma.reservationTable.findFirst({
+        where: {
+          tableId: { in: dto.tableIds },
+          reservation: {
+            restaurantId: dto.restaurantId,
+            time: { gte: bufferBefore, lte: bufferAfter },
+            statusValue: { code: { notIn: ['CANCELLED'] } }
+          }
+        },
+        include: { table: { select: { code: true } } }
+      });
+      if (conflict) {
+        throw Object.assign(new Error(`Bàn ${conflict.table.code} đã có lượt đặt trước trùng khung giờ này`), { statusCode: 400 });
+      }
+
+      // Check soft conflicts (within 90 minutes) and backup table requirements
+      const checkBufferBefore = new Date(targetTime.getTime() - 90 * 60 * 1000);
+      const checkBufferAfter = new Date(targetTime.getTime() + 90 * 60 * 1000);
+
+      // Find all reservations in the 90m window
+      const windowReservations = await prisma.reservationTable.findMany({
+        where: {
+          reservation: {
+            restaurantId: dto.restaurantId,
+            time: { gte: checkBufferBefore, lte: checkBufferAfter },
+            statusValue: { code: { notIn: ['CANCELLED'] } },
+          }
+        },
+        select: {
+          tableId: true,
+          reservation: { select: { time: true } }
+        }
+      });
+
+      // Find all active tables in the restaurant
+      const allActiveTables = await prisma.table.findMany({
+        where: { restaurantId: dto.restaurantId, isActive: true }
+      });
+
+      for (const tableId of dto.tableIds) {
+        const table = allActiveTables.find(t => t.id === tableId);
+        if (!table) continue;
+
+        const tableConflicts = windowReservations.filter(wr => wr.tableId === tableId);
+        if (tableConflicts.length > 0) {
+          // Soft conflict: check if there is at least 1 backup table (capacity >= numberOfGuests) that has 0 conflicts
+          const hasBackup = allActiveTables.some(other => {
+            if (other.id === tableId) return false;
+            if (other.seatingCapacity < dto.numberOfGuests) return false;
+            const otherConflicts = windowReservations.filter(wr => wr.tableId === other.id);
+            return otherConflicts.length === 0;
+          });
+
+          if (!hasBackup) {
+            throw Object.assign(new Error(`Bàn ${table.code} hiện bận ở khung giờ lân cận và nhà hàng không còn bàn dự phòng nào khác cùng sức chứa. Vui lòng chọn bàn khác hoặc để nhà hàng tự sắp xếp.`), { statusCode: 400 });
+          }
+        }
+      }
+    }
+
+    // Calculate mustLeaveBy if there is a booking after this one on the selected tables (within 4 hours)
+    let mustLeaveBy: Date | null = null;
+    if (dto.tableIds && dto.tableIds.length > 0) {
+      const nextBooking = await prisma.reservationTable.findFirst({
+        where: {
+          tableId: { in: dto.tableIds },
+          reservation: {
+            restaurantId: dto.restaurantId,
+            time: { gt: targetTime, lte: new Date(targetTime.getTime() + 4 * 60 * 60 * 1000) },
+            statusValue: { code: { notIn: ['CANCELLED'] } }
+          }
+        },
+        include: { reservation: { select: { time: true } } },
+        orderBy: { reservation: { time: 'asc' } }
+      });
+      if (nextBooking) {
+        // cleaning buffer = 30 minutes
+        mustLeaveBy = new Date(new Date(nextBooking.reservation.time).getTime() - 30 * 60 * 1000);
+      }
+    }
+
     const pendingStatus = await this.getStatusByCode('PENDING');
     if (!pendingStatus) throw new Error('Status PENDING not configured');
 
@@ -102,8 +288,8 @@ export class ReservationService {
       throw Object.assign(new Error('Unable to generate unique confirmation code. Please try again.'), { statusCode: 500 });
     }
 
-    // Set paymentDeadline — 30 minutes from now if deposit > 0
-    const paymentDeadline = calculatedDeposit > 0 ? new Date(Date.now() + 30 * 60 * 1000) : null;
+    // Set paymentDeadline — 5 minutes from now if deposit > 0
+    const paymentDeadline = calculatedDeposit > 0 ? new Date(Date.now() + 5 * 60 * 1000) : null;
 
     const reservation = await prisma.reservation.create({
       data: {
@@ -116,6 +302,7 @@ export class ReservationService {
         reservationStatusId: pendingStatus.id,
         confirmationCode,
         paymentDeadline,
+        metadata: mustLeaveBy ? { mustLeaveBy: mustLeaveBy.toISOString() } : {},
         ...(dto.tableIds && dto.tableIds.length > 0
           ? {
               tables: {
@@ -150,22 +337,42 @@ export class ReservationService {
       (reservation as any).metadata = { ...(reservation.metadata as any ?? {}), qrCodeUrl };
     }
 
-    // Send confirmation email — fire-and-forget, does not block response
-    const customerEmail = reservation.customer?.user?.email;
-    if (customerEmail) {
-      import('../lib/email').then(({ sendReservationConfirmationEmail }) => {
-        const restaurantPromise = prisma.restaurant.findUnique({ where: { id: dto.restaurantId }, select: { name: true } });
-        restaurantPromise.then(rest => {
-          sendReservationConfirmationEmail(customerEmail, {
-            restaurantName: rest?.name ?? '',
-            confirmationCode: confirmationCode!,
-            numberOfGuests: dto.numberOfGuests,
-            time: dto.time,
-            depositAmount: calculatedDeposit,
-            tableAssignments: reservation.tables.map((t: any) => t.table?.code).filter(Boolean),
-          }, reservation.id).catch((e: any) => console.error('[CreateReservation] Email failed:', e?.message));
+    // Send confirmation email immediately only if no deposit is required.
+    // If a deposit is required, the email will be sent after payment is completed.
+    if (calculatedDeposit === 0) {
+      this.sendConfirmationEmail(reservation.id).catch((e: any) =>
+        console.error('[CreateReservation] Failed to send email:', e)
+      );
+    }
+
+    // Save bankRefund info into Customer metadata for auto-payout on cancellation
+    if (dto.bankRefund && dto.bankRefund.accountNumber) {
+      try {
+        const existingCustomer = await prisma.customer.findUnique({
+          where: { id: dto.customerId },
+          select: { metadata: true }
         });
-      });
+        const existingMeta: any = existingCustomer?.metadata ?? {};
+        await prisma.customer.update({
+          where: { id: dto.customerId },
+          data: {
+            metadata: {
+              ...existingMeta,
+              bankRefund: {
+                bankBin: dto.bankRefund.bankBin,
+                bankCode: dto.bankRefund.bankCode,
+                bankName: dto.bankRefund.bankName ?? '',
+                accountNumber: dto.bankRefund.accountNumber,
+                accountName: dto.bankRefund.accountName,
+                savedAt: new Date().toISOString(),
+              }
+            }
+          }
+        });
+      } catch (metaErr: any) {
+        // Non-blocking: bank info save failure should not fail the reservation
+        console.warn('[CreateReservation] Failed to save bankRefund to Customer.metadata:', metaErr?.message);
+      }
     }
 
     return reservation;
@@ -239,6 +446,7 @@ export class ReservationService {
           include: { paymentMethod: true },
         },
         orders: { select: { id: true, reference: true, totalAmount: true } },
+        refunds: { orderBy: { createdAt: 'desc' } },
       },
     });
   }
@@ -257,6 +465,7 @@ export class ReservationService {
           },
         },
         payments: { include: { paymentMethod: true } },
+        refunds: { orderBy: { createdAt: 'desc' } },
       },
     });
   }
@@ -302,7 +511,7 @@ export class ReservationService {
       updateData.completedAt = now;
     }
 
-    return prisma.reservation.update({
+    const updated = await prisma.reservation.update({
       where: { id },
       data: updateData,
       include: {
@@ -310,6 +519,14 @@ export class ReservationService {
         customer: { include: { user: { select: { id: true, fullName: true, email: true } } } },
       },
     });
+
+    if (targetCode === 'CONFIRMED') {
+      this.sendConfirmationEmail(id).catch((e: any) =>
+        console.error('[UpdateStatus] Failed to send confirmation email:', e)
+      );
+    }
+
+    return updated;
   }
 
   // ── Check-in ─────────────────────────────────────────────────────────────────
@@ -588,14 +805,14 @@ export class ReservationService {
   }
 
   // ── Cancel ───────────────────────────────────────────────────────────────────
-  async cancel(id: string, actorId?: string) {
+  async cancel(id: string, actorId?: string, isStaff: boolean = false, approveReview?: boolean, reason?: string) {
     const prisma = getPrisma();
 
     const reservation = await prisma.reservation.findUnique({
       where: { id },
       include: {
         statusValue: { select: { code: true } },
-        payments: { where: { status: 1, purpose: 1 } }, // COMPLETED DEPOSIT payments
+        payments: { where: { status: 1 }, include: { paymentMethod: { select: { code: true } } } }, // completed payments
         restaurant: { select: { metadata: true } },
       }
     });
@@ -608,8 +825,81 @@ export class ReservationService {
     const completedDeposits = reservation.payments;
     const totalDeposit = completedDeposits.reduce((sum, p) => sum + Number(p.amount), 0);
 
-    // Build status history entry
     const existingMeta: any = (reservation as any).metadata ?? {};
+
+    // Customer cancellation
+    if (!isStaff) {
+      const timeDiffMs = reservation.time.getTime() - now.getTime();
+      if (timeDiffMs < 0) {
+        throw Object.assign(new Error('Không thể hủy đặt bàn ở quá khứ'), { statusCode: 400 });
+      }
+
+      // If a deposit was paid and it is within 12 hours of the reservation time:
+      if (totalDeposit > 0 && timeDiffMs < 12 * 60 * 60 * 1000) {
+        // Submit for manual review instead of cancelling immediately
+        const cancellationInfo = {
+          cancelledReason: 'Yêu cầu hủy sát giờ (< 12 tiếng) cần xét duyệt.',
+          requestedAt: now.toISOString(),
+        };
+
+        const updated = await prisma.reservation.update({
+          where: { id },
+          data: {
+            metadata: {
+              ...existingMeta,
+              isCancellationManualReviewPending: true,
+              cancellationInfo,
+            }
+          },
+          include: {
+            statusValue: true,
+            customer: { include: { user: { select: { id: true, fullName: true, email: true } } } },
+            restaurant: { select: { name: true } },
+          }
+        });
+        return updated;
+      }
+    }
+
+    // Determine refund amount
+    let refundAmount = 0;
+    let refundReason = reason || 'Cancellation';
+
+    if (isStaff && approveReview !== undefined) {
+      if (approveReview === true) {
+        // Staff approved cancellation: 100% refund
+        refundAmount = totalDeposit;
+        refundReason = reason || 'Staff approved cancellation (100% refund)';
+      } else {
+        // Staff rejected/forfeited cancellation: 0% refund
+        refundAmount = 0;
+        refundReason = reason || 'Staff rejected cancellation (No refund, deposit forfeited)';
+      }
+    } else {
+      // Standard cancellation logic (auto-approved if >= 12h, or based on cancellation fee configuration)
+      if (totalDeposit > 0) {
+        const timeDiffMs = reservation.time.getTime() - now.getTime();
+        if (timeDiffMs >= 12 * 60 * 60 * 1000) {
+          // Free cancellation >= 12 hours: 100% refund
+          refundAmount = totalDeposit;
+          refundReason = reason || 'Cancelled >= 12 hours before (100% refund)';
+        } else {
+          // Standard late fee calculation
+          const restaurantMeta = (reservation.restaurant?.metadata as any) ?? {};
+          const feePercent: number = restaurantMeta.cancellationFeePercent ?? 0;
+          const reservationTime = reservation.time;
+          const twoHoursBefore = new Date(reservationTime.getTime() - 2 * 60 * 60 * 1000);
+          const isLateCancellation = now >= twoHoursBefore;
+
+          const effectiveFeePercent = isLateCancellation ? 100 : Math.min(100, Math.max(0, feePercent));
+          const cancellationFee = Math.floor(totalDeposit * effectiveFeePercent / 100);
+          refundAmount = Math.max(0, totalDeposit - cancellationFee);
+          refundReason = reason || (isLateCancellation ? 'Late cancellation (< 2 hours)' : `Cancellation fee ${effectiveFeePercent}%`);
+        }
+      }
+    }
+
+    // Build status history
     const statusHistory: any[] = existingMeta.statusHistory ?? [];
     statusHistory.push({
       from: reservation.statusValue?.code ?? '',
@@ -618,52 +908,128 @@ export class ReservationService {
       by: actorId ?? 'SYSTEM',
     });
 
-    // Handle refund if deposit was paid
     let refundRecord: any = null;
     if (totalDeposit > 0 && completedDeposits.length > 0) {
-      // Determine cancellation fee
-      const restaurantMeta = (reservation.restaurant?.metadata as any) ?? {};
-      const feePercent: number = restaurantMeta.cancellationFeePercent ?? 0;
-
-      // Late cancellation rule: within 2 hours of reservation time → 100% fee
-      const reservationTime = reservation.time;
-      const twoHoursBefore = new Date(reservationTime.getTime() - 2 * 60 * 60 * 1000);
-      const isLateCancellation = now >= twoHoursBefore;
-
-      const effectiveFeePercent = isLateCancellation ? 100 : Math.min(100, Math.max(0, feePercent));
-      const cancellationFee = Math.floor(totalDeposit * effectiveFeePercent / 100);
-      const refundAmount = Math.max(0, totalDeposit - cancellationFee);
-
-      // Create Refund record atomically before changing status
       try {
         refundRecord = await prisma.refund.create({
           data: {
             reservationId: id,
             amount: refundAmount,
             status: 'PENDING',
-            metadata: isLateCancellation
-              ? {
-                  cancellation_timestamp: now.toISOString(),
-                  fee_percentage: 100,
-                  fee_reason: 'Late cancellation',
-                }
-              : feePercent > 0
-              ? { fee_percentage: effectiveFeePercent }
-              : {},
+            metadata: {
+              cancellation_timestamp: now.toISOString(),
+              refund_reason: refundReason,
+              total_deposit: totalDeposit,
+            }
           }
         });
       } catch (refundErr: any) {
         console.error('[Cancel] Failed to create Refund record for reservation', id, ':', refundErr?.message);
         throw Object.assign(new Error('Internal error during refund creation'), { statusCode: 500 });
       }
+
+      // Auto PayOS payout if: refundAmount > 0, deposit was via BANK_TRANSFER, customer has bankRefund info
+      if (refundRecord && refundAmount > 0) {
+        try {
+          // Fetch customer bankRefund metadata
+          const customer = await prisma.customer.findUnique({
+            where: { id: reservation.customerId },
+            select: { metadata: true }
+          });
+          const bankRefund = (customer?.metadata as any)?.bankRefund;
+
+          // Check if the deposit was paid via bank transfer (not cash)
+          const isBankTransfer = completedDeposits.some((p: any) => {
+            const code = p.paymentMethod?.code ?? '';
+            return code === 'BANK_TRANSFER' || code === 'SEPAY';
+          });
+
+          if (isBankTransfer && bankRefund?.accountNumber && bankRefund?.bankBin) {
+            const payos = getPayOS();
+            if (payos) {
+              const referenceId = `REFUND_${Date.now().toString().slice(-10)}_${refundRecord.id.slice(0, 6)}`;
+              try {
+                const result = await (payos as any).payouts.create(
+                  {
+                    referenceId,
+                    amount: Math.floor(refundAmount),
+                    description: `XFOODI HOAN COC ${reservation.confirmationCode ?? id.slice(0, 6)}`.slice(0, 50),
+                    toBin: bankRefund.bankBin,
+                    toAccountNumber: bankRefund.accountNumber,
+                  },
+                  referenceId
+                );
+                // Update refund record to COMPLETED
+                await prisma.refund.update({
+                  where: { id: refundRecord.id },
+                  data: {
+                    status: 'COMPLETED',
+                    metadata: {
+                      cancellation_timestamp: now.toISOString(),
+                      refund_reason: refundReason,
+                      total_deposit: totalDeposit,
+                      payout_method: 'PAYOS_AUTO',
+                      payout_result: { externalTxId: result?.id ?? referenceId, status: 'SUCCESS' },
+                      refund_bank: {
+                        bankBin: bankRefund.bankBin,
+                        bankCode: bankRefund.bankCode ?? '',
+                        bankName: bankRefund.bankName ?? '',
+                        accountNumber: bankRefund.accountNumber,
+                        accountName: bankRefund.accountName,
+                      }
+                    }
+                  }
+                });
+                console.log(`[Cancel] Auto-payout SUCCESS for reservation ${id}: ${refundAmount}đ → ${bankRefund.accountNumber}`);
+              } catch (payoutErr: any) {
+                // Payout failed → mark FAILED but do not block cancellation
+                await prisma.refund.update({
+                  where: { id: refundRecord.id },
+                  data: {
+                    status: 'FAILED',
+                    metadata: {
+                      cancellation_timestamp: now.toISOString(),
+                      refund_reason: refundReason,
+                      total_deposit: totalDeposit,
+                      payout_method: 'PAYOS_AUTO',
+                      payout_error: payoutErr?.message ?? 'Unknown payout error',
+                      refund_bank: {
+                        bankBin: bankRefund.bankBin,
+                        accountNumber: bankRefund.accountNumber,
+                        accountName: bankRefund.accountName,
+                      }
+                    }
+                  }
+                });
+                console.error(`[Cancel] Auto-payout FAILED for reservation ${id}:`, payoutErr?.message);
+              }
+            }
+          }
+        } catch (autoPayoutSetupErr: any) {
+          // Non-blocking: do not fail cancellation if auto-payout setup fails
+          console.warn('[Cancel] Auto-payout setup error (non-blocking):', autoPayoutSetupErr?.message);
+        }
+      }
     }
 
-    // Update reservation status to CANCELLED
+    // Update reservation status to CANCELLED and clear review/no-show flags
     const updated = await prisma.reservation.update({
       where: { id },
       data: {
         reservationStatusId: cancelledStatus.id,
-        metadata: { ...existingMeta, statusHistory },
+        metadata: {
+          ...existingMeta,
+          statusHistory,
+          isCancellationManualReviewPending: false,
+          noShowAutoPending: false,
+          cancellationInfo: {
+            ...(existingMeta.cancellationInfo ?? {}),
+            resolvedAt: now.toISOString(),
+            approved: approveReview ?? true,
+            refundAmount,
+            cancelledReason: reason || existingMeta.cancellationInfo?.cancelledReason || 'Cancellation',
+          }
+        },
       },
       include: {
         statusValue: true,
@@ -685,6 +1051,7 @@ export class ReservationService {
           cancelledAt: now.toISOString(),
           refundAmount: refundRecord ? Number(refundRecord.amount) : undefined,
           refundEstimateDays: 7,
+          reason: refundReason,
         };
         sendReservationCancellationEmail(customerEmail, emailDetails, id)
           .catch((e: any) => console.error('[Cancel] Cancellation email failed:', e?.message));
@@ -825,8 +1192,8 @@ export class ReservationService {
     const bufferBefore = new Date(targetTime.getTime() - 90 * 60 * 1000); // -90 min
     const bufferAfter = new Date(targetTime.getTime() + 90 * 60 * 1000);  // +90 min
 
-    // Find tables already reserved in that window
-    const busyTableIds = (await prisma.reservationTable.findMany({
+    // Find tables already reserved in that window with their reservation times
+    const reservationTables = await prisma.reservationTable.findMany({
       where: {
         reservation: {
           restaurantId,
@@ -834,25 +1201,125 @@ export class ReservationService {
           statusValue: { code: { notIn: ['CANCELLED'] } },
         },
       },
-      select: { tableId: true },
-    })).map((rt) => rt.tableId);
+      select: {
+        tableId: true,
+        reservation: {
+          select: {
+            time: true,
+          },
+        },
+      },
+    });
 
-    // Available tables with enough seats
-    const available = await prisma.table.findMany({
+    const conflicts = reservationTables.map((rt) => ({
+      tableId: rt.tableId,
+      time: new Date(rt.reservation.time),
+    }));
+
+    // Fetch all active tables
+    const allTables = await prisma.table.findMany({
       where: {
         restaurantId,
         isActive: true,
-        seatingCapacity: { gte: numberOfGuests },
-        id: { notIn: busyTableIds },
       },
       include: {
         floor: { select: { id: true, name: true } },
         tableStatus: { select: { id: true, code: true, name: true } },
       },
-      orderBy: { seatingCapacity: 'asc' },
+      orderBy: { code: 'asc' },
     });
 
-    return available;
+    return allTables.map((t) => {
+      const tableConflicts = conflicts.filter((c) => c.tableId === t.id);
+      
+      let isAvailable = t.seatingCapacity >= numberOfGuests;
+      let conflictTime: string | null = null;
+
+      if (tableConflicts.length > 0) {
+        // Hard conflict if time difference is less than 30 minutes
+        const hasHardConflict = tableConflicts.some(
+          (c) => Math.abs(c.time.getTime() - targetTime.getTime()) < 30 * 60 * 1000
+        );
+
+        if (hasHardConflict) {
+          isAvailable = false;
+        } else {
+          // Soft conflict: table is available but has a booking nearby
+          // Enforce Case 2 backup table check:
+          const hasBackup = allTables.some((other) => {
+            if (other.id === t.id) return false;
+            if (other.seatingCapacity < numberOfGuests) return false;
+            const otherConflicts = conflicts.filter((c) => c.tableId === other.id);
+            return otherConflicts.length === 0;
+          });
+
+          if (!hasBackup) {
+            isAvailable = false;
+          } else {
+            conflictTime = tableConflicts[0].time.toISOString();
+          }
+        }
+      }
+
+      return {
+        ...t,
+        isAvailable,
+        conflictTime,
+      };
+    });
+  }
+
+  // ── Send confirmation email helper ──────────────────────────────────────────
+  async sendConfirmationEmail(reservationId: string) {
+    const prisma = getPrisma();
+    const reservation = await prisma.reservation.findUnique({
+      where: { id: reservationId },
+      include: {
+        tables: { include: { table: { select: { code: true } } } },
+        customer: { include: { user: { select: { email: true } } } },
+        restaurant: { select: { name: true } },
+      }
+    });
+    if (!reservation || !reservation.customer?.user?.email) return;
+
+    const tableCodes = reservation.tables.map((t: any) => t.table?.code).filter(Boolean);
+    
+    const { sendReservationConfirmationEmail } = await import('../lib/email');
+    await sendReservationConfirmationEmail(reservation.customer.user.email, {
+      restaurantName: reservation.restaurant?.name ?? '',
+      confirmationCode: reservation.confirmationCode ?? '',
+      numberOfGuests: reservation.numberOfGuests,
+      time: reservation.time.toISOString(),
+      depositAmount: Number(reservation.depositAmount),
+      tableAssignments: tableCodes,
+    }, reservation.id).catch((e: any) => console.error('[ReservationService] Confirmation email failed:', e));
+  }
+
+  // ── Resolve No Show ──────────────────────────────────────────────────────────
+  async resolveNoShow(id: string) {
+    const prisma = getPrisma();
+    const reservation = await prisma.reservation.findUnique({
+      where: { id }
+    });
+    if (!reservation) throw Object.assign(new Error('Reservation not found'), { statusCode: 404 });
+
+    const existingMeta: any = (reservation as any).metadata ?? {};
+    const updated = await prisma.reservation.update({
+      where: { id },
+      data: {
+        metadata: {
+          ...existingMeta,
+          noShowAutoPending: false,
+          noShowResolved: true,
+        }
+      },
+      include: {
+        statusValue: { select: { id: true, code: true, name: true, colorCode: true } },
+        tables: { include: { table: { select: { id: true, code: true } } } },
+        customer: { include: { user: { select: { id: true, fullName: true, email: true } } } },
+      }
+    });
+    return updated;
   }
 }
 

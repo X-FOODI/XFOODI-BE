@@ -1,28 +1,21 @@
-import { PrismaClient } from '@prisma/client';
-
-const prisma = new PrismaClient();
+import axios from 'axios';
 
 async function main() {
-  try {
-    const restaurantId = '1bc7d0bb-f15b-408d-844b-018f832e16e3'; // Gao Beer
-    const employees = await prisma.employee.findMany({
-      where: { restaurantId },
-      include: {
-        user: {
-          include: {
-            roles: {
-              where: { restaurantId },
-              include: { role: true }
-            }
-          }
-        }
-      }
-    });
-    console.log('SUCCESS:', employees.length, 'employees found');
-  } catch (err) {
-    console.error('ERROR:', err);
-  } finally {
-    await prisma.$disconnect();
+  const services = [
+    'https://api.ipify.org?format=json',
+    'https://ifconfig.me/all.json',
+    'https://ipinfo.io/json',
+    'https://api64.ipify.org?format=json'
+  ];
+
+  for (const service of services) {
+    try {
+      const response = await axios.get(service);
+      console.log(`\nService: ${service}`);
+      console.log(`Data:`, JSON.stringify(response.data, null, 2));
+    } catch (e: any) {
+      console.error(`Failed for ${service}:`, e.message);
+    }
   }
 }
 
