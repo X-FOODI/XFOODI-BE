@@ -2,7 +2,7 @@ import { Queue, Worker } from 'bullmq';
 import axios from 'axios';
 import fs from 'fs';
 import path from 'path';
-import { prisma } from '../lib/prisma';
+import { prisma, prismaStorage, centralPrisma, getTenantPrisma, getTenantConnectionUrl } from '../lib/prisma';
 import { KnowledgeBaseService } from './knowledgeBase.service';
 import redisClient from '../lib/redis';
 
@@ -199,25 +199,52 @@ export class UploadQueueService {
     chunkSize?: number,
     chunkOverlap?: number
   ) {
-    // 1. Fetch file content from URL
-    console.log(`[UploadQueue] Fetching file buffer from: ${fileUrl}`);
-    const buffer = await this.getFileBuffer(fileUrl);
+    const { ENV } = await import('../config/env');
 
-    // 2. Call the KnowledgeBase chunks processing logic
-    await KnowledgeBaseService.processDocumentChunks(
-      documentId,
-      restaurantId,
-      filename,
-      buffer,
-      fileType,
-      fileUrl,
-      chunkingStrategy,
-      chunkSize,
-      chunkOverlap
-    );
+    // Resolve tenant client dynamically from central database
+    const restaurant = await centralPrisma.restaurant.findUnique({
+      where: { id: restaurantId }
+    });
+
+    if (!restaurant) {
+      throw new Error(`[UploadQueue] Restaurant with ID ${restaurantId} not found in central database.`);
+    }
+
+    const tenantDbUrl = getTenantConnectionUrl(ENV.DATABASE_URL, restaurant.slug);
+    const tenantPrisma = getTenantPrisma(tenantDbUrl);
+
+    await prismaStorage.run(tenantPrisma, async () => {
+      // 1. Fetch file content from URL
+      console.log(`[UploadQueue] Fetching file buffer from: ${fileUrl} for tenant "${restaurant.slug}"`);
+      const buffer = await this.getFileBuffer(fileUrl);
+
+      // 2. Call the KnowledgeBase chunks processing logic
+      await KnowledgeBaseService.processDocumentChunks(
+        documentId,
+        restaurantId,
+        filename,
+        buffer,
+        fileType,
+        fileUrl,
+        chunkingStrategy,
+        chunkSize,
+        chunkOverlap
+      );
+    });
   }
 
   public static async getFileBuffer(fileUrl: string): Promise<Buffer> {
+    if (fileUrl.startsWith('http://127.0.0.1:5000/uploads/kb/') || 
+        fileUrl.startsWith('http://localhost:5000/uploads/kb/') ||
+        fileUrl.startsWith('http://127.0.0.1:5000/api/uploads/kb/') ||
+        fileUrl.startsWith('http://localhost:5000/api/uploads/kb/')) {
+      const cleanFilename = fileUrl.split('/').pop() || '';
+      const localPath = path.resolve(process.cwd(), 'uploads/kb', cleanFilename);
+      if (fs.existsSync(localPath)) {
+        return fs.readFileSync(localPath);
+      }
+    }
+
     if (fileUrl.startsWith('http://') || fileUrl.startsWith('https://')) {
       const response = await axios.get(fileUrl, { responseType: 'arraybuffer' });
       return Buffer.from(response.data);

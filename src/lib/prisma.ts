@@ -65,6 +65,16 @@ export const prisma = new Proxy({} as PrismaClient, {
       'userRole',
       'userSession',
       'restaurantApplication',
+      'socialPost',
+      'socialImage',
+      'socialComment',
+      'socialReaction',
+      'socialShare',
+      'savedPost',
+      'socialFollow',
+      'socialHashtag',
+      'socialPostHashtag',
+      'socialNotification',
     ];
 
     // Determine whether to use the central client or the tenant-specific client
