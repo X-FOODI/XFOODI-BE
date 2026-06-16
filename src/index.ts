@@ -21,6 +21,7 @@ import reservationRoutes from './models/routes/reservations';
 import paymentRoutes from './models/routes/payments';
 import feedbackRoutes from './models/routes/feedbacks';
 import walletRoutes from './models/routes/wallet';
+import layoutsRoutes from './models/routes/layouts';
 import employeeRoutes from './models/routes/employees';
 import customerRoutes from './routes/customer.routes';
 import { API_ROUTES } from './constants/routes';
@@ -255,6 +256,7 @@ app.use('/api/reservations', reservationRoutes);
 app.use('/api/payments', paymentRoutes);
 app.use('/api/feedbacks', feedbackRoutes);
 app.use('/api/wallet', walletRoutes);
+app.use('/api/layouts', layoutsRoutes);
 
 // Health check endpoint
 app.get(API_ROUTES.HEALTH.BASE, (req, res) => {
