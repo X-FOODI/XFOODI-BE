@@ -5,8 +5,13 @@ import re
 import numpy as np
 
 # Add adaptive-chunking source directory to sys.path
-src_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', 'adaptive-chunking', 'src'))
+possible_paths = [
+    os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'adaptive-chunking', 'src')), # inside XFoodi-BE
+    os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', 'adaptive-chunking', 'src')) # outside XFoodi-BE
+]
+src_path = next((p for p in possible_paths if os.path.exists(p)), possible_paths[0])
 sys.path.insert(0, src_path)
+
 
 from adaptive_chunking.splitters import RecursiveSplitter
 from adaptive_chunking.metrics import (
