@@ -110,13 +110,17 @@ router.post('/kb/upload', authMiddleware, tenantGuard, upload.any(), async (req:
         const { fileUrl, versionId } = await StorageService.uploadFile(originalName, file.buffer, fileType);
 
         console.log(`[KB API] Registering file ${originalName} in database and queuing...`);
+        // req.tenant / req.restaurant are set by the tenant-DB middleware for subdomain requests.
+        // When both are absent, the request came from the admin domain → documents in central schema.
+        const isCentralDb = !req.tenant && !req.restaurant;
         const document = await KnowledgeBaseService.processDocument(
           restaurantId,
           originalName,
           fileType,
           fileUrl,
           bucketId,
-          versionId || undefined
+          versionId || undefined,
+          isCentralDb
         );
 
         processedDocuments.push(document);
@@ -644,7 +648,9 @@ router.post('/kb/buckets/:id/process', authMiddleware, tenantGuard, async (req: 
         fileType: doc.fileType as 'PDF' | 'TXT' | 'MD',
         chunkingStrategy: strategy,
         chunkSize: size,
-        chunkOverlap: overlap
+        chunkOverlap: overlap,
+        // Bucket/documents found via ambient prisma = centralPrisma on admin domain
+        isCentralDb: !req.tenant && !req.restaurant,
       });
     }
 
