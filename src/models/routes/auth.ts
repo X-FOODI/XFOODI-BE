@@ -66,22 +66,44 @@ async function getFilteredRolesForUser(userId: string, headers: any) {
 
   const restaurant = await resolveRestaurantFromHeaders(headers);
 
+  const filteredRoles = restaurant
+    ? userRoles.filter(
+        (ur: any) => !ur.restaurantId || ur.restaurantId === restaurant.id
+      )
+    : userRoles;
+
+  const ownerRestaurantId =
+    filteredRoles.find((ur: any) => ur.role.name === 'Owner')?.restaurantId ?? null;
+
+  const staffRestaurantId =
+    filteredRoles.find(
+      (ur: any) =>
+        ur.restaurantId &&
+        ['Staff', 'Employee', 'Manager'].includes(ur.role.name)
+    )?.restaurantId ?? null;
+
+  let employeeRestaurantId: string | null = null;
+  if (!ownerRestaurantId && !staffRestaurantId) {
+    const employee = await prisma.employee.findFirst({
+      where: { userId, isActive: true },
+      select: { restaurantId: true },
+    });
+    employeeRestaurantId = employee?.restaurantId ?? null;
+  }
+
+  const resolvedRestaurantId =
+    ownerRestaurantId ?? staffRestaurantId ?? employeeRestaurantId;
+
   if (!restaurant) {
-    // If no tenant context is provided, return all roles (allow login on landing page)
     return {
       roles: userRoles.map((ur: any) => ur.role.name || ''),
-      ownerRestaurantId: userRoles.find((ur: any) => ur.role.name === 'Owner')?.restaurantId ?? null,
+      ownerRestaurantId: resolvedRestaurantId,
     };
   }
 
-  // Filter roles: keep global roles AND roles specific to this restaurant
-  const filteredRoles = userRoles.filter(
-    (ur: any) => !ur.restaurantId || ur.restaurantId === restaurant.id
-  );
-
   return {
     roles: filteredRoles.map((ur: any) => ur.role.name || ''),
-    ownerRestaurantId: filteredRoles.find((ur: any) => ur.role.name === 'Owner')?.restaurantId ?? null,
+    ownerRestaurantId: resolvedRestaurantId,
   };
 }
 
