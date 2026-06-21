@@ -1,4 +1,4 @@
-import { prisma, centralPrisma } from '../lib/prisma';
+import { prisma, centralPrisma, getSchemaName } from '../lib/prisma';
 import { AIService } from './ai.service';
 import { PDFParse } from 'pdf-parse';
 import { randomUUID } from 'crypto';
@@ -129,6 +129,8 @@ export class KnowledgeBaseService {
       console.log(`[KBService] Created ${chunks.length} chunks for document: ${filename} using strategy ${chunkingStrategy}`);
 
       // 4. Generate embeddings and save chunks in pgvector database
+      const schemaName = await getSchemaName(restaurantId);
+
       for (let i = 0; i < chunks.length; i++) {
         const chunkText = chunks[i];
         const embedding = await AIService.generateEmbedding(chunkText);
@@ -139,7 +141,7 @@ export class KnowledgeBaseService {
 
         // Save to pgvector using parameterized raw SQL and explicit JSONB cast ($5::jsonb)
         await db.$executeRawUnsafe(
-          `INSERT INTO "DocumentChunks" (id, "documentId", content, embedding, metadata, "createdAt") 
+          `INSERT INTO "${schemaName}"."DocumentChunks" (id, "documentId", content, embedding, metadata, "createdAt") 
            VALUES ($1, $2, $3, $4::public.vector, $5::jsonb, NOW())`,
           chunkId,
           documentId,
