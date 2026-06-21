@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import type { Router as ExpressRouter } from 'express';
+import multer from 'multer';
 import { authMiddleware } from './auth';
 import { tenantGuard } from '../../middlewares/tenantGuard';
 import {
@@ -13,17 +14,18 @@ import {
 
 const router: ExpressRouter = Router();
 
-// Apply authMiddleware and tenantGuard to all floor routes
+const floorUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 },
+});
+
 router.use(authMiddleware);
 router.use(tenantGuard);
 
-// Floor CRUD
 router.get('/', handleListFloors);
-router.post('/', handleCreateFloor);
-router.put('/:id', handleUpdateFloor);
+router.post('/', floorUpload.single('Image'), handleCreateFloor);
+router.put('/:id', floorUpload.single('Image'), handleUpdateFloor);
 router.delete('/:id', handleDeleteFloor);
-
-// Floor layout endpoints
 router.get('/:id/layout', handleGetFloorLayout);
 router.put('/:id/layout', handleUpdateFloorLayout);
 
