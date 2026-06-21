@@ -93,3 +93,22 @@ export const prisma = new Proxy({} as PrismaClient, {
     return value;
   },
 });
+
+/**
+ * Resolves the database schema name for a given restaurantId.
+ * Returns 'public' for system, or 'tenant_<slug>' for tenant restaurants.
+ */
+export async function getSchemaName(restaurantId: string): Promise<string> {
+  if (restaurantId === 'system') {
+    return 'public';
+  }
+  const restaurant = await centralPrisma.restaurant.findUnique({
+    where: { id: restaurantId },
+    select: { slug: true }
+  });
+  if (!restaurant) {
+    throw new Error(`Restaurant with ID ${restaurantId} not found in central database.`);
+  }
+  return `tenant_${restaurant.slug}`;
+}
+

@@ -1,4 +1,4 @@
-import { prisma } from '../lib/prisma';
+import { prisma, getSchemaName } from '../lib/prisma';
 import { AIService } from './ai.service';
 import { ENV } from '../config/env';
 
@@ -18,6 +18,7 @@ export async function hybridSearchChunks(
   extraWhere = '',  // e.g. "AND (rd.\"bucketId\" IS NULL OR rb.\"isChatEnabled\" = true)"
   bucketId?: string // exact-match a single bucket (used by the KB test endpoints)
 ): Promise<any[]> {
+  const schemaName = await getSchemaName(restaurantId);
   const bucketFilter = bucketId ? `AND rd."bucketId" = $4` : '';
   const hybridParams = bucketId
     ? [queryVectorStr, restaurantId, rewrittenQuery, bucketId]
@@ -28,18 +29,18 @@ export async function hybridSearchChunks(
     return await prisma.$queryRawUnsafe<any[]>(
       `WITH vector_matches AS (
           SELECT dc.id, ROW_NUMBER() OVER (ORDER BY dc.embedding <=> $1::public.vector) as rank
-          FROM "DocumentChunks" dc
-          JOIN "RestaurantDocuments" rd ON dc."documentId" = rd.id
-          LEFT JOIN "RestaurantBuckets" rb ON rd."bucketId" = rb.id
+          FROM "${schemaName}"."DocumentChunks" dc
+          JOIN "${schemaName}"."RestaurantDocuments" rd ON dc."documentId" = rd.id
+          LEFT JOIN "${schemaName}"."RestaurantBuckets" rb ON rd."bucketId" = rb.id
           WHERE rd."restaurantId" = $2 AND rd.status = 'INDEXED'
             ${extraWhere} ${bucketFilter}
           LIMIT 100
         ),
         text_matches AS (
           SELECT dc.id, ROW_NUMBER() OVER (ORDER BY ts_rank(to_tsvector('simple', dc.content), plainto_tsquery('simple', $3)) DESC) as rank
-          FROM "DocumentChunks" dc
-          JOIN "RestaurantDocuments" rd ON dc."documentId" = rd.id
-          LEFT JOIN "RestaurantBuckets" rb ON rd."bucketId" = rb.id
+          FROM "${schemaName}"."DocumentChunks" dc
+          JOIN "${schemaName}"."RestaurantDocuments" rd ON dc."documentId" = rd.id
+          LEFT JOIN "${schemaName}"."RestaurantBuckets" rb ON rd."bucketId" = rb.id
           WHERE rd."restaurantId" = $2 AND rd.status = 'INDEXED'
             ${extraWhere} ${bucketFilter}
             AND to_tsvector('simple', dc.content) @@ plainto_tsquery('simple', $3)
@@ -47,8 +48,8 @@ export async function hybridSearchChunks(
         )
         SELECT dc.content, rd.filename, dc."documentId" as "documentId",
                (COALESCE(1.0 / (60.0 + vm.rank), 0.0) + COALESCE(1.0 / (60.0 + tm.rank), 0.0)) as rrf_score
-        FROM "DocumentChunks" dc
-        JOIN "RestaurantDocuments" rd ON dc."documentId" = rd.id
+        FROM "${schemaName}"."DocumentChunks" dc
+        JOIN "${schemaName}"."RestaurantDocuments" rd ON dc."documentId" = rd.id
         LEFT JOIN vector_matches vm ON dc.id = vm.id
         LEFT JOIN text_matches tm ON dc.id = tm.id
         WHERE vm.id IS NOT NULL OR tm.id IS NOT NULL
@@ -74,9 +75,9 @@ export async function hybridSearchChunks(
     return await prisma.$queryRawUnsafe<any[]>(
       `SELECT dc.content, rd.filename, dc."documentId" as "documentId",
               ts_rank(to_tsvector('simple', dc.content), plainto_tsquery('simple', $1)) as rrf_score
-       FROM "DocumentChunks" dc
-       JOIN "RestaurantDocuments" rd ON dc."documentId" = rd.id
-       LEFT JOIN "RestaurantBuckets" rb ON rd."bucketId" = rb.id
+       FROM "${schemaName}"."DocumentChunks" dc
+       JOIN "${schemaName}"."RestaurantDocuments" rd ON dc."documentId" = rd.id
+       LEFT JOIN "${schemaName}"."RestaurantBuckets" rb ON rd."bucketId" = rb.id
        WHERE rd."restaurantId" = $2 AND rd.status = 'INDEXED'
          ${extraWhere} ${textOnlyBucketFilter}
          AND to_tsvector('simple', dc.content) @@ plainto_tsquery('simple', $1)
