@@ -2,6 +2,7 @@ import cron from 'node-cron';
 import { centralPrisma, getTenantPrisma, getTenantConnectionUrl, prismaStorage } from '../lib/prisma';
 import { reservationService } from '../services/reservation.service';
 import { sendReservationReminderEmail, sendReservationCancellationEmail } from '../lib/email';
+import { PaymentStatus, PaymentPurpose } from '../enums/payment.enum';
 
 // ── Reminder Job — runs every 15 minutes ──────────────────────────────────────
 // Finds CONFIRMED reservations whose time is 105–135 minutes from now
@@ -173,7 +174,7 @@ async function runNoShowCheckJob(): Promise<void> {
   try {
     const activeRestaurants = await centralPrisma.restaurant.findMany({
       where: { isActive: true },
-      select: { id: true, slug: true, name: true },
+      select: { id: true, slug: true, name: true, metadata: true },
     });
     for (const restaurant of activeRestaurants) {
       try {
@@ -181,12 +182,15 @@ async function runNoShowCheckJob(): Promise<void> {
         const tenantPrisma = getTenantPrisma(tenantDbUrl);
         await prismaStorage.run(tenantPrisma, async () => {
           const now = new Date();
-          const thirtyMinutesAgo = new Date(now.getTime() - 30 * 60 * 1000);
+          const metadata = (restaurant.metadata as any) ?? {};
+          const config = metadata.reservationConfig ?? {};
+          const lateCheckinMinutes = config.late_checkin_minutes ?? 30;
+          const noShowTime = new Date(now.getTime() - lateCheckinMinutes * 60 * 1000);
 
           const lateReservations = await tenantPrisma.reservation.findMany({
             where: {
               restaurantId: restaurant.id,
-              time: { lt: thirtyMinutesAgo },
+              time: { lt: noShowTime },
               statusValue: { code: 'CONFIRMED' },
               checkedInAt: null,
             },
@@ -242,6 +246,92 @@ async function runNoShowCheckJob(): Promise<void> {
   console.log(`[NoShowCheckJob] Done. Flagged: ${flagged}`);
 }
 
+// ── Deposit Confirmation Timeout Job — runs every 1 minute ───────────────────
+// Finds PENDING reservations with completed deposit payments that have exceeded
+// deposit_confirmation_timeout_minutes without owner confirmation, and auto-cancels + refunds them.
+async function runDepositTimeoutJob(): Promise<void> {
+  console.log('[DepositTimeoutJob] Running...');
+  let cancelled = 0;
+  try {
+    const activeRestaurants = await centralPrisma.restaurant.findMany({
+      where: { isActive: true },
+      select: { id: true, slug: true, name: true, metadata: true },
+    });
+    for (const restaurant of activeRestaurants) {
+      try {
+        const tenantDbUrl = getTenantConnectionUrl(process.env.DATABASE_URL ?? '', restaurant.slug);
+        const tenantPrisma = getTenantPrisma(tenantDbUrl);
+        await prismaStorage.run(tenantPrisma, async () => {
+          const now = new Date();
+          const metadata = (restaurant.metadata as any) ?? {};
+          const config = metadata.reservationConfig ?? {};
+          const timeoutMinutes = config.deposit_confirmation_timeout_minutes ?? 120;
+          const timeoutMs = timeoutMinutes * 60 * 1000;
+
+          // Find pending reservations with completed deposit payments
+          const reservations = await tenantPrisma.reservation.findMany({
+            where: {
+              restaurantId: restaurant.id,
+              statusValue: { code: 'PENDING' },
+              depositAmount: { gt: 0 },
+              payments: {
+                some: {
+                  status: PaymentStatus.COMPLETED,
+                  purpose: PaymentPurpose.DEPOSIT,
+                }
+              }
+            },
+            include: {
+              payments: {
+                where: { status: PaymentStatus.COMPLETED, purpose: PaymentPurpose.DEPOSIT },
+                orderBy: { paymentDate: 'desc' }
+              },
+              customer: { include: { user: { select: { email: true } } } },
+            }
+          });
+
+          for (const res of reservations) {
+            const completedPayment = res.payments[0];
+            if (!completedPayment) continue;
+
+            const paymentDate = new Date(completedPayment.paymentDate);
+            if (now.getTime() - paymentDate.getTime() > timeoutMs) {
+              try {
+                // Auto-cancel with 100% refund (isStaff=true, approveReview=true)
+                await reservationService.cancel(
+                  res.id,
+                  'SYSTEM',
+                  true,
+                  true,
+                  `Tự động hủy do hết thời hạn xác nhận đặt cọc (${timeoutMinutes} phút)`
+                );
+
+                cancelled++;
+
+                // Emit socket event to notify staff dashboard
+                try {
+                  const { getIO } = await import('../socket');
+                  getIO().to(`restaurant_${restaurant.id}`).emit('RESERVATION_AUTO_CANCELLED', {
+                    reservationId: res.id,
+                    reason: `Deposit confirmation timeout of ${timeoutMinutes}m exceeded`,
+                  });
+                } catch { /* socket optional */ }
+              } catch (cancelErr: any) {
+                console.error(`[DepositTimeoutJob] Failed to cancel reservation ${res.id}:`, cancelErr?.message);
+              }
+            }
+          }
+        });
+      } catch (err: any) {
+        console.error(`[DepositTimeoutJob] Tenant ${restaurant.slug}:`, err?.message);
+      }
+    }
+  } catch (err: any) {
+    console.error('[DepositTimeoutJob] Fatal:', err?.message);
+  }
+  console.log(`[DepositTimeoutJob] Done. Cancelled: ${cancelled}`);
+}
+
 // ── Export: start all reservation cron jobs ───────────────────────────────────
 export function startReservationCronJobs(): void {
   // Reminder job: every 15 minutes
@@ -256,11 +346,17 @@ export function startReservationCronJobs(): void {
     catch (e: any) { console.error('[DeadlineJob] Uncaught:', e?.message); }
   });
 
+  // Deposit confirmation timeout job: every 1 minute
+  cron.schedule('*/1 * * * *', async () => {
+    try { await runDepositTimeoutJob(); }
+    catch (e: any) { console.error('[DepositTimeoutJob] Uncaught:', e?.message); }
+  });
+
   // No-show flag job: every 1 minute
   cron.schedule('*/1 * * * *', async () => {
     try { await runNoShowCheckJob(); }
     catch (e: any) { console.error('[NoShowCheckJob] Uncaught:', e?.message); }
   });
 
-  console.log('[CronJobs] Reservation cron jobs started (reminder: */15, deadline: */1, no-show: */1)');
+  console.log('[CronJobs] Reservation cron jobs started (reminder: */15, deadline: */1, deposit-timeout: */1, no-show: */1)');
 }

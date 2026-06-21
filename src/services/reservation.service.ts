@@ -94,6 +94,17 @@ export class ReservationService {
   async createReservation(dto: CreateReservationDto) {
     const prisma = getPrisma();
 
+    // Fetch restaurant metadata
+    const restaurant = await prisma.restaurant.findUnique({
+      where: { id: dto.restaurantId },
+      select: { id: true, metadata: true }
+    });
+    if (!restaurant) {
+      throw Object.assign(new Error('Không tìm thấy thông tin nhà hàng'), { statusCode: 404 });
+    }
+    const metadata = (restaurant.metadata as any) ?? {};
+    const config = metadata.reservationConfig ?? {};
+
     // 1. Validate number of guests
     if (!dto.numberOfGuests || dto.numberOfGuests <= 0) {
       throw Object.assign(new Error('Số lượng khách phải lớn hơn 0'), { statusCode: 400 });
@@ -103,6 +114,7 @@ export class ReservationService {
     }
 
     // 2. Validate time limits
+    const isAuto = !dto.tableIds || dto.tableIds.length === 0;
     const targetTime = new Date(dto.time);
     const now = new Date();
     if (isNaN(targetTime.getTime())) {
@@ -111,30 +123,52 @@ export class ReservationService {
     if (targetTime.getTime() < now.getTime()) {
       throw Object.assign(new Error('Thời gian đặt bàn không được ở quá khứ'), { statusCode: 400 });
     }
-    if (targetTime.getTime() - now.getTime() < 30 * 60 * 1000) {
-      throw Object.assign(new Error('Vui lòng đặt bàn trước giờ nhận ít nhất 30 phút'), { statusCode: 400 });
-    }
-    const maxFuture = new Date();
-    maxFuture.setDate(maxFuture.getDate() + 30);
-    if (targetTime.getTime() > maxFuture.getTime()) {
-      throw Object.assign(new Error('Hệ thống chỉ cho phép đặt bàn trước tối đa 30 ngày'), { statusCode: 400 });
+
+    // min_advance_booking_hours (default 1)
+    const minAdvanceHours = config.min_advance_booking_hours ?? 1;
+    const minAdvanceMs = minAdvanceHours * 60 * 60 * 1000;
+    if (targetTime.getTime() - now.getTime() < minAdvanceMs) {
+      throw Object.assign(new Error(`Vui lòng đặt bàn trước giờ nhận ít nhất ${minAdvanceHours} tiếng`), { statusCode: 400 });
     }
 
-    // 3. Validate business hours (8:00 - 22:00, Last order: 21:30)
+    // max_advance_booking_days (default 30)
+    const maxAdvanceDays = config.max_advance_booking_days ?? 30;
+    const maxFuture = new Date();
+    maxFuture.setDate(maxFuture.getDate() + maxAdvanceDays);
+    if (targetTime.getTime() > maxFuture.getTime()) {
+      throw Object.assign(new Error(`Hệ thống chỉ cho phép đặt bàn trước tối đa ${maxAdvanceDays} ngày`), { statusCode: 400 });
+    }
+
+    // closed_dates (default [])
+    const closedDates = config.closed_dates ?? [];
+    const localDate = new Date(targetTime.getTime() + 7 * 60 * 60 * 1000);
+    const dateStr = localDate.toISOString().split('T')[0]; // YYYY-MM-DD in UTC+7
+    if (closedDates.includes(dateStr)) {
+      throw Object.assign(new Error(`Nhà hàng nghỉ/đóng cửa vào ngày đã chọn (${dateStr})`), { statusCode: 400 });
+    }
+
+    // 3. Validate business hours (based on config opening_time / closing_time)
     const localHour = targetTime.getUTCHours() + 7;
     const hour = localHour >= 24 ? localHour - 24 : localHour;
     const minutes = targetTime.getUTCMinutes();
     const timeInMinutes = hour * 60 + minutes;
+
+    const openParts = (config.opening_time ?? "10:00").split(":");
+    const closeParts = (config.closing_time ?? "22:00").split(":");
+    const openingTime = parseInt(openParts[0]) * 60 + parseInt(openParts[1] || "0");
+    const closingTime = parseInt(closeParts[0]) * 60 + parseInt(closeParts[1] || "0");
     
-    const openingTime = 8 * 60; // 08:00
-    const closingTime = 22 * 60; // 22:00
-    const lastOrderTime = 21 * 60 + 30; // 21:30
+    // last_booking_before_close_minutes (default 60)
+    const lastBookingBeforeClose = config.last_booking_before_close_minutes ?? 60;
+    const lastOrderTime = closingTime - lastBookingBeforeClose;
 
     if (timeInMinutes < openingTime || timeInMinutes > closingTime) {
-      throw Object.assign(new Error('Thời gian đặt ngoài giờ mở cửa của nhà hàng (08:00 - 22:00)'), { statusCode: 400 });
+      throw Object.assign(new Error(`Thời gian đặt ngoài giờ mở cửa của nhà hàng (${config.opening_time ?? "10:00"} - ${config.closing_time ?? "22:00"})`), { statusCode: 400 });
     }
     if (timeInMinutes > lastOrderTime) {
-      throw Object.assign(new Error('Lượt đặt quá muộn. Thời gian đặt bàn muộn nhất là 21:30'), { statusCode: 400 });
+      const lastHourStr = Math.floor(lastOrderTime / 60).toString().padStart(2, '0');
+      const lastMinStr = (lastOrderTime % 60).toString().padStart(2, '0');
+      throw Object.assign(new Error(`Lượt đặt quá muộn. Thời gian đặt bàn muộn nhất là ${lastHourStr}:${lastMinStr}`), { statusCode: 400 });
     }
 
     // 4. Fetch active status IDs for double-booking check
@@ -155,6 +189,10 @@ export class ReservationService {
     });
     if (doubleBooked) {
       throw Object.assign(new Error('Bạn đã có một lịch đặt bàn khác trùng khung giờ này'), { statusCode: 400 });
+    }
+
+    if (isAuto) {
+      dto.tableIds = await this.getOptimalTableAssignment(dto.restaurantId, targetTime, dto.numberOfGuests);
     }
 
     // 6. Validate selected tables status, capacity and hard conflict overlaps
@@ -232,7 +270,7 @@ export class ReservationService {
             return otherConflicts.length === 0;
           });
 
-          if (!hasBackup) {
+          if (!hasBackup && !isAuto) {
             throw Object.assign(new Error(`Bàn ${table.code} hiện bận ở khung giờ lân cận và nhà hàng không còn bàn dự phòng nào khác cùng sức chứa. Vui lòng chọn bàn khác hoặc để nhà hàng tự sắp xếp.`), { statusCode: 400 });
           }
         }
@@ -263,18 +301,25 @@ export class ReservationService {
     const pendingStatus = await this.getStatusByCode('PENDING');
     if (!pendingStatus) throw new Error('Status PENDING not configured');
 
-    // Calculate deposit amount dynamically (25,000 VND per seat capacity of selected tables, or per guest if auto-arranged)
+    // Calculate deposit amount dynamically
     let calculatedDeposit = 0;
-    if (dto.tableIds && dto.tableIds.length > 0) {
-      const tables = await prisma.table.findMany({
-        where: { id: { in: dto.tableIds } },
-        select: { seatingCapacity: true }
-      });
-      for (const t of tables) {
-        calculatedDeposit += t.seatingCapacity * 25000;
+    if (config.deposit_enabled === true) {
+      if (config.deposit_amount !== undefined && config.deposit_amount !== null && Number(config.deposit_amount) > 0) {
+        calculatedDeposit = Number(config.deposit_amount);
+      } else {
+        // Fallback to default calculation if amount is not specified
+        if (!isAuto && dto.tableIds && dto.tableIds.length > 0) {
+          const tables = await prisma.table.findMany({
+            where: { id: { in: dto.tableIds } },
+            select: { seatingCapacity: true }
+          });
+          for (const t of tables) {
+            calculatedDeposit += t.seatingCapacity * 25000;
+          }
+        } else {
+          calculatedDeposit = dto.numberOfGuests * 25000;
+        }
       }
-    } else {
-      calculatedDeposit = dto.numberOfGuests * 25000;
     }
 
     // Generate unique confirmation code — max 10 attempts, HTTP 500 if exhausted
@@ -537,6 +582,7 @@ export class ReservationService {
       include: {
         statusValue: { select: { id: true, code: true, name: true, colorCode: true } },
         tables: { include: { table: { select: { id: true, code: true } } } },
+        restaurant: { select: { id: true, metadata: true } },
       },
     });
     if (!reservation) {
@@ -559,10 +605,25 @@ export class ReservationService {
       this.validateTransition(currentStatus, 'CHECKED_IN');
     }
 
+    const now = new Date();
+    const config = (reservation.restaurant?.metadata as any)?.reservationConfig ?? {};
+    const earlyCheckinMinutes = config.early_checkin_minutes ?? 15;
+    const lateCheckinMinutes = config.late_checkin_minutes ?? 30;
+
+    const resTime = new Date(reservation.time);
+    const earlyLimit = new Date(resTime.getTime() - earlyCheckinMinutes * 60 * 1000);
+    const lateLimit = new Date(resTime.getTime() + lateCheckinMinutes * 60 * 1000);
+
+    if (now.getTime() < earlyLimit.getTime()) {
+      const earlyTimeStr = new Date(earlyLimit.getTime() + 7 * 60 * 60 * 1000).toISOString().substr(11, 5);
+      throw Object.assign(new Error(`Không thể check-in trước thời gian cho phép (Sớm tối đa ${earlyCheckinMinutes} phút. Thời gian check-in sớm nhất là từ ${earlyTimeStr})`), { statusCode: 400 });
+    }
+    if (now.getTime() > lateLimit.getTime()) {
+      throw Object.assign(new Error(`Đã quá thời hạn check-in (Trễ tối đa ${lateCheckinMinutes} phút). Vui lòng liên hệ nhân viên để xử lý.`), { statusCode: 400 });
+    }
+
     const checkedInStatus = await this.getStatusByCode('CHECKED_IN');
     if (!checkedInStatus) throw new Error('Status CHECKED_IN not configured');
-
-    const now = new Date();
 
     // Build updated metadata with statusHistory appended
     const existingMeta: any = (reservation as any).metadata ?? {};
@@ -828,17 +889,22 @@ export class ReservationService {
     const existingMeta: any = (reservation as any).metadata ?? {};
 
     // Customer cancellation
+    const restaurantMeta = (reservation.restaurant?.metadata as any) ?? {};
+    const config = restaurantMeta.reservationConfig ?? {};
+    const freeCancellationHours = config.free_cancellation_hours ?? 12;
+    const freeCancellationMs = freeCancellationHours * 60 * 60 * 1000;
+
     if (!isStaff) {
       const timeDiffMs = reservation.time.getTime() - now.getTime();
       if (timeDiffMs < 0) {
         throw Object.assign(new Error('Không thể hủy đặt bàn ở quá khứ'), { statusCode: 400 });
       }
 
-      // If a deposit was paid and it is within 12 hours of the reservation time:
-      if (totalDeposit > 0 && timeDiffMs < 12 * 60 * 60 * 1000) {
+      // If a deposit was paid and it is within free_cancellation_hours of the reservation time:
+      if (totalDeposit > 0 && timeDiffMs < freeCancellationMs) {
         // Submit for manual review instead of cancelling immediately
         const cancellationInfo = {
-          cancelledReason: 'Yêu cầu hủy sát giờ (< 12 tiếng) cần xét duyệt.',
+          cancelledReason: `Yêu cầu hủy sát giờ (< ${freeCancellationHours} tiếng) cần xét duyệt.`,
           requestedAt: now.toISOString(),
         };
 
@@ -876,13 +942,13 @@ export class ReservationService {
         refundReason = reason || 'Staff rejected cancellation (No refund, deposit forfeited)';
       }
     } else {
-      // Standard cancellation logic (auto-approved if >= 12h, or based on cancellation fee configuration)
+      // Standard cancellation logic (auto-approved if >= freeCancellationHours, or based on cancellation fee configuration)
       if (totalDeposit > 0) {
         const timeDiffMs = reservation.time.getTime() - now.getTime();
-        if (timeDiffMs >= 12 * 60 * 60 * 1000) {
-          // Free cancellation >= 12 hours: 100% refund
+        if (timeDiffMs >= freeCancellationMs) {
+          // Free cancellation >= freeCancellationHours: 100% refund
           refundAmount = totalDeposit;
-          refundReason = reason || 'Cancelled >= 12 hours before (100% refund)';
+          refundReason = reason || `Cancelled >= ${freeCancellationHours} hours before (100% refund)`;
         } else {
           // Standard late fee calculation
           const restaurantMeta = (reservation.restaurant?.metadata as any) ?? {};
@@ -1229,33 +1295,82 @@ export class ReservationService {
       orderBy: { code: 'asc' },
     });
 
+    // Check which tables are free from hard conflicts
+    const activeTablesNoHardConflict = allTables.filter((t) => {
+      const tableConflicts = conflicts.filter((c) => c.tableId === t.id);
+      const hasHardConflict = tableConflicts.some(
+        (c) => Math.abs(c.time.getTime() - targetTime.getTime()) < 30 * 60 * 1000
+      );
+      return !hasHardConflict;
+    });
+
+    // 1. Check if a single table can accommodate numberOfGuests
+    const fittingSingleTables = activeTablesNoHardConflict.filter(t => t.seatingCapacity >= numberOfGuests);
+    
+    let suggestedTableIds: string[] = [];
+    let isCombinedSuggestion = false;
+
+    if (fittingSingleTables.length > 0) {
+      // Sort to suggest the smallest fitting table
+      fittingSingleTables.sort((a, b) => {
+        if (a.seatingCapacity !== b.seatingCapacity) {
+          return a.seatingCapacity - b.seatingCapacity;
+        }
+        return a.code.localeCompare(b.code);
+      });
+      suggestedTableIds = [fittingSingleTables[0].id];
+    } else {
+      // 2. Try combining tables
+      const bestCombo = this.findOptimalCombination(activeTablesNoHardConflict, numberOfGuests);
+      if (bestCombo && bestCombo.length > 0) {
+        suggestedTableIds = bestCombo.map(t => t.id);
+        isCombinedSuggestion = true;
+      }
+    }
+
+    const hasFittingSingleTable = fittingSingleTables.length > 0;
+
     return allTables.map((t) => {
       const tableConflicts = conflicts.filter((c) => c.tableId === t.id);
+      const isSuggested = suggestedTableIds.includes(t.id);
       
-      let isAvailable = t.seatingCapacity >= numberOfGuests;
+      let isAvailable = false;
       let conflictTime: string | null = null;
 
-      if (tableConflicts.length > 0) {
-        // Hard conflict if time difference is less than 30 minutes
-        const hasHardConflict = tableConflicts.some(
-          (c) => Math.abs(c.time.getTime() - targetTime.getTime()) < 30 * 60 * 1000
-        );
+      const hasHardConflict = tableConflicts.some(
+        (c) => Math.abs(c.time.getTime() - targetTime.getTime()) < 30 * 60 * 1000
+      );
 
-        if (hasHardConflict) {
-          isAvailable = false;
+      if (!hasHardConflict) {
+        if (hasFittingSingleTable) {
+          // If a single table fits, only tables with sufficient capacity are available
+          isAvailable = t.seatingCapacity >= numberOfGuests;
         } else {
-          // Soft conflict: table is available but has a booking nearby
-          // Enforce Case 2 backup table check:
-          const hasBackup = allTables.some((other) => {
-            if (other.id === t.id) return false;
-            if (other.seatingCapacity < numberOfGuests) return false;
-            const otherConflicts = conflicts.filter((c) => c.tableId === other.id);
-            return otherConflicts.length === 0;
-          });
+          // If combining is required, all tables without hard conflicts are available to select
+          isAvailable = true;
+        }
 
-          if (!hasBackup) {
-            isAvailable = false;
+        // Soft conflict: check if there is a booking nearby (within 90 minutes but not hard conflict)
+        const hasSoftConflict = tableConflicts.length > 0;
+        if (hasSoftConflict) {
+          // Case 2 soft conflict check for backup table (only if single table fits)
+          if (hasFittingSingleTable) {
+            const hasBackup = allTables.some((other) => {
+              if (other.id === t.id) return false;
+              if (other.seatingCapacity >= numberOfGuests) {
+                const otherConflicts = conflicts.filter((c) => c.tableId === other.id);
+                return otherConflicts.length === 0;
+              }
+              return false;
+            });
+
+            if (!hasBackup) {
+              isAvailable = false;
+            } else {
+              conflictTime = tableConflicts[0].time.toISOString();
+            }
           } else {
+            // For combined tables, we just set conflictTime as soft conflict hint
             conflictTime = tableConflicts[0].time.toISOString();
           }
         }
@@ -1265,6 +1380,8 @@ export class ReservationService {
         ...t,
         isAvailable,
         conflictTime,
+        isSuggested,
+        isCombinedSuggestion,
       };
     });
   }
@@ -1320,6 +1437,116 @@ export class ReservationService {
       }
     });
     return updated;
+  }
+
+  // ── Helper: find optimal combination of tables ────────────────────────────────
+  findOptimalCombination(availableTables: any[], targetCapacity: number): any[] | null {
+    let bestCombination: any[] | null = null;
+    
+    // Sort tables by capacity descending to find combinations faster
+    const sortedTables = [...availableTables].sort((a, b) => b.seatingCapacity - a.seatingCapacity);
+    
+    const search = (index: number, currentCombo: any[], currentCapacity: number) => {
+      if (currentCapacity >= targetCapacity) {
+        if (!bestCombination) {
+          bestCombination = [...currentCombo];
+        } else {
+          const bestSize = bestCombination.length;
+          const curSize = currentCombo.length;
+          if (curSize < bestSize) {
+            bestCombination = [...currentCombo];
+          } else if (curSize === bestSize) {
+            const bestCap = bestCombination.reduce((sum, t) => sum + t.seatingCapacity, 0);
+            const curCap = currentCombo.reduce((sum, t) => sum + t.seatingCapacity, 0);
+            if (curCap < bestCap) {
+              bestCombination = [...currentCombo];
+            }
+          }
+        }
+        return;
+      }
+      
+      // Limit combination size to 6 tables to prevent recursion blowup/performance issues
+      if (currentCombo.length >= 6) {
+        return;
+      }
+      
+      if (bestCombination && currentCombo.length >= bestCombination.length) {
+        return;
+      }
+      
+      for (let i = index; i < sortedTables.length; i++) {
+        currentCombo.push(sortedTables[i]);
+        search(i + 1, currentCombo, currentCapacity + sortedTables[i].seatingCapacity);
+        currentCombo.pop();
+      }
+    };
+    
+    search(0, [], 0);
+    return bestCombination;
+  }
+
+  // ── Helper: get optimal table assignment for auto reservations ──────────────
+  async getOptimalTableAssignment(restaurantId: string, targetTime: Date, numberOfGuests: number): Promise<string[]> {
+    const prisma = getPrisma();
+    const bufferBefore = new Date(targetTime.getTime() - 90 * 60 * 1000);
+    const bufferAfter = new Date(targetTime.getTime() + 90 * 60 * 1000);
+
+    // Find tables already reserved in that window with their reservation times
+    const reservationTables = await prisma.reservationTable.findMany({
+      where: {
+        reservation: {
+          restaurantId,
+          time: { gte: bufferBefore, lte: bufferAfter },
+          statusValue: { code: { notIn: ['CANCELLED'] } },
+        },
+      },
+      select: {
+        tableId: true,
+        reservation: { select: { time: true } },
+      },
+    });
+
+    const conflicts = reservationTables.map((rt) => ({
+      tableId: rt.tableId,
+      time: new Date(rt.reservation.time),
+    }));
+
+    // Fetch all active tables
+    const allTables = await prisma.table.findMany({
+      where: { restaurantId, isActive: true },
+      orderBy: { code: 'asc' },
+    });
+
+    // Find tables with no hard conflict
+    const activeTablesNoHardConflict = allTables.filter((t) => {
+      const tableConflicts = conflicts.filter((c) => c.tableId === t.id);
+      const hasHardConflict = tableConflicts.some(
+        (c) => Math.abs(c.time.getTime() - targetTime.getTime()) < 30 * 60 * 1000
+      );
+      return !hasHardConflict;
+    });
+
+    // 1. Try to find a single table
+    const fittingSingleTables = activeTablesNoHardConflict.filter(t => t.seatingCapacity >= numberOfGuests);
+    if (fittingSingleTables.length > 0) {
+      // Sort to suggest the smallest fitting table
+      fittingSingleTables.sort((a, b) => {
+        if (a.seatingCapacity !== b.seatingCapacity) {
+          return a.seatingCapacity - b.seatingCapacity;
+        }
+        return a.code.localeCompare(b.code);
+      });
+      return [fittingSingleTables[0].id];
+    }
+
+    // 2. If no single table, try combining tables
+    const bestCombo = this.findOptimalCombination(activeTablesNoHardConflict, numberOfGuests);
+    if (bestCombo && bestCombo.length > 0) {
+      return bestCombo.map(t => t.id);
+    }
+
+    throw Object.assign(new Error('Không còn bàn trống phù hợp cho số lượng khách trong khung giờ này. Vui lòng chọn thời gian khác hoặc giảm số khách.'), { statusCode: 400 });
   }
 }
 
