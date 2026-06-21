@@ -1643,6 +1643,10 @@ export class ReservationService {
       orderBy: { code: 'asc' },
     });
 
+    // Note: allTables already contains has3DView, viewDescription, defaultViewUrl,
+    // cubeBackImageUrl, cubeBottomImageUrl, cubeFrontImageUrl, cubeLeftImageUrl,
+    // cubeRightImageUrl, cubeTopImageUrl via spread (...t) in the return mapping below.
+
     // Check which tables are free from hard conflicts
     const activeTablesNoHardConflict = allTables.filter((t) => {
       const tableConflicts = conflicts.filter((c) => c.tableId === t.id);
