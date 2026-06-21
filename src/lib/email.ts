@@ -511,3 +511,60 @@ export const sendRefundNotificationEmail = async (
     { email: to, reservationId }
   );
 };
+// ─── Reservation rejection email ──────────────────────────────────────────
+
+export const sendReservationRejectedEmail = async (
+  to: string,
+  details: {
+    restaurantName: string;
+    confirmationCode: string;
+    numberOfGuests: number;
+    time: string; // ISO string
+    rejectionReason?: string;
+  },
+  reservationId?: string
+): Promise<void> => {
+  const formattedTime = formatVietnamTime(details.time);
+
+  await sendEmailWithRetry(() =>
+    sendEmail({
+      to,
+      from: FROM,
+      replyTo: ENV.SENDGRID.EMAIL_REPLY_TO,
+      subject: `[XFoodi] Yêu cầu đặt bàn tại ${details.restaurantName} chưa được chấp nhận`,
+      text: `Rất tiếc! Yêu cầu đặt bàn ${details.confirmationCode} tại ${details.restaurantName} (${formattedTime}) đã bị từ chối.${details.rejectionReason ? ` Lý do: ${details.rejectionReason}` : ''}`,
+      html: `
+        <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto; border: 1px solid #e5e7eb; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 6px rgba(0,0,0,0.05);">
+          <div style="background-color: #ef4444; padding: 24px; text-align: center;">
+            <h2 style="color: white; margin: 0; font-size: 24px;">❌ Yêu Cầu Đặt Bàn Chưa Được Chấp Nhận</h2>
+          </div>
+          <div style="padding: 24px; color: #1f2937; line-height: 1.6;">
+            <p>Xin chào quý khách,</p>
+            <p>Rất tiếc, yêu cầu đặt bàn của quý khách tại nhà hàng <strong>${details.restaurantName}</strong> đã không được chấp nhận. Dưới đây là thông tin chi tiết:</p>
+
+            <div style="background-color: #fef2f2; border: 1px solid #fee2e2; border-radius: 6px; padding: 18px; margin: 20px 0;">
+              <p style="margin: 0 0 8px 0;"><strong>Mã yêu cầu:</strong> <span style="font-family: monospace; color: #ef4444; font-size: 16px;">${details.confirmationCode}</span></p>
+              <p style="margin: 0 0 8px 0;"><strong>Nhà hàng:</strong> ${details.restaurantName}</p>
+              <p style="margin: 0 0 8px 0;"><strong>Thời gian:</strong> ${formattedTime}</p>
+              <p style="margin: 0 0 8px 0;"><strong>Số lượng khách:</strong> ${details.numberOfGuests} người</p>
+              ${details.rejectionReason
+                ? `<div style="margin-top: 12px; padding: 12px 14px; background: #fff1f2; border-left: 4px solid #ef4444; border-radius: 4px;">
+                    <p style="margin: 0; color: #991b1b;"><strong>Lý do từ chối:</strong> ${details.rejectionReason}</p>
+                  </div>`
+                : ''}
+            </div>
+
+            <p style="background-color: #fffbeb; border-left: 4px solid #f59e0b; padding: 12px 16px; border-radius: 4px; font-size: 14px; color: #78350f;">
+              <strong>Gợi ý:</strong> Quý khách có thể thử đặt bàn vào thời điểm khác hoặc liên hệ trực tiếp với nhà hàng để biết thêm thông tin.
+            </p>
+
+            <p style="margin-top: 32px; font-size: 13px; color: #6b7280; text-align: center; border-top: 1px solid #f3f4f6; padding-top: 16px;">
+              XFoodi Team · xfoodiprojects@gmail.com
+            </p>
+          </div>
+        </div>
+      `,
+    }),
+    { email: to, reservationId }
+  );
+};

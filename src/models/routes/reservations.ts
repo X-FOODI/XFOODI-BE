@@ -312,9 +312,10 @@ router.get('/:id', authMiddleware, requireRole('Owner', 'Admin', 'Staff', 'Custo
 // ── Update status ────────────────────────────────────────────────────────────
 router.patch('/:id/status', authMiddleware, requireRole('Owner', 'Admin', 'Staff'), async (req, res) => {
   try {
-    const { status } = req.body;
+    const { status, reason } = req.body;
     if (!status) return res.status(400).json({ success: false, message: 'status required' });
-    const updated = await reservationService.updateStatus(req.params.id, status);
+    const actorId = (req as any).user?.sub || (req as any).user?.id;
+    const updated = await reservationService.updateStatus(req.params.id, status, actorId, reason);
     return res.json({ success: true, data: updated });
   } catch (err: any) {
     return res.status(400).json({ success: false, message: err.message });
