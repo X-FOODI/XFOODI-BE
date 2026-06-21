@@ -34,7 +34,7 @@ async function getTenantScopedEmail(email: string, headers: any): Promise<string
 
 function cleanUserEmail(email: string | null | undefined): string | null {
   if (!email) return null;
-  return email.includes(':') ? email.substring(email.indexOf(':') + 1) : email;
+  return email.includes(':') ? email.substring(email.lastIndexOf(':') + 1) : email;
 }
 
 // ── Input Validation Helpers ──
@@ -66,22 +66,44 @@ async function getFilteredRolesForUser(userId: string, headers: any) {
 
   const restaurant = await resolveRestaurantFromHeaders(headers);
 
+  const filteredRoles = restaurant
+    ? userRoles.filter(
+        (ur: any) => !ur.restaurantId || ur.restaurantId === restaurant.id
+      )
+    : userRoles;
+
+  const ownerRestaurantId =
+    filteredRoles.find((ur: any) => ur.role.name === 'Owner')?.restaurantId ?? null;
+
+  const staffRestaurantId =
+    filteredRoles.find(
+      (ur: any) =>
+        ur.restaurantId &&
+        ['Staff', 'Employee', 'Manager'].includes(ur.role.name)
+    )?.restaurantId ?? null;
+
+  let employeeRestaurantId: string | null = null;
+  if (!ownerRestaurantId && !staffRestaurantId) {
+    const employee = await prisma.employee.findFirst({
+      where: { userId, isActive: true },
+      select: { restaurantId: true },
+    });
+    employeeRestaurantId = employee?.restaurantId ?? null;
+  }
+
+  const resolvedRestaurantId =
+    ownerRestaurantId ?? staffRestaurantId ?? employeeRestaurantId;
+
   if (!restaurant) {
-    // If no tenant context is provided, return all roles (allow login on landing page)
     return {
       roles: userRoles.map((ur: any) => ur.role.name || ''),
-      ownerRestaurantId: userRoles.find((ur: any) => ur.role.name === 'Owner')?.restaurantId ?? null,
+      ownerRestaurantId: resolvedRestaurantId,
     };
   }
 
-  // Filter roles: keep global roles AND roles specific to this restaurant
-  const filteredRoles = userRoles.filter(
-    (ur: any) => !ur.restaurantId || ur.restaurantId === restaurant.id
-  );
-
   return {
     roles: filteredRoles.map((ur: any) => ur.role.name || ''),
-    ownerRestaurantId: filteredRoles.find((ur: any) => ur.role.name === 'Owner')?.restaurantId ?? null,
+    ownerRestaurantId: resolvedRestaurantId,
   };
 }
 
@@ -230,9 +252,17 @@ router.post(API_ROUTES.AUTH.LOGIN, async (req, res) => {
       return res.status(429).json({ success: false, message: 'Too many failed login attempts. Please try again later (after 15 minutes).' });
     }
 
-    // Find the user by email directly in the active database schema
-    const user = await prisma.user.findFirst({
-      where: { email: unscopedEmail },
+    const scopedEmail = await getTenantScopedEmail(email, req.headers);
+    const restaurant = await resolveRestaurantFromHeaders(req.headers);
+    const staffScopedEmail = restaurant ? `${restaurant.slug}:staff:${unscopedEmail}` : null;
+
+    const possibleEmails = [unscopedEmail, scopedEmail];
+    if (staffScopedEmail) {
+      possibleEmails.push(staffScopedEmail);
+    }
+
+    const users = await prisma.user.findMany({
+      where: { email: { in: possibleEmails } },
       include: {
         roles: {
           include: {
@@ -242,7 +272,38 @@ router.post(API_ROUTES.AUTH.LOGIN, async (req, res) => {
       }
     });
 
-    if (!user || !user.passwordHash) {
+    if (users.length === 0) {
+      return res.status(401).json({ success: false, message: 'Invalid email or password' });
+    }
+
+    let user: any = null;
+    for (const u of users) {
+      if (u.passwordHash) {
+        const isMatch = await bcrypt.compare(password, u.passwordHash);
+        if (isMatch) {
+          user = u;
+          break;
+        }
+      }
+    }
+
+    if (!user) {
+      if (process.env.NODE_ENV !== 'development') {
+        const primaryUser = users[0];
+        const userRoles = primaryUser.roles.map((ur: any) => ur.role.name || '');
+        const isAdminUser = userRoles.some((r: string) => ['Admin', 'SuperAdmin', 'System Admin'].includes(r));
+        if (isAdminUser) {
+          const currentFails = await redisClient.incr(`admin_login_fail:${unscopedEmail}`);
+          if (currentFails === 1) {
+            await redisClient.expire(`admin_login_fail:${unscopedEmail}`, 3600);
+          }
+        } else {
+          const currentFails = await redisClient.incr(`login_fail:${unscopedEmail}`);
+          if (currentFails === 1) {
+            await redisClient.expire(`login_fail:${unscopedEmail}`, 900);
+          }
+        }
+      }
       return res.status(401).json({ success: false, message: 'Invalid email or password' });
     }
 
@@ -284,28 +345,6 @@ router.post(API_ROUTES.AUTH.LOGIN, async (req, res) => {
 
     if (!user.emailVerified) {
       return res.status(403).json({ success: false, message: 'Please verify your email address before logging in.' });
-    }
-
-    // Compare provided password with hashed password
-    const isMatch = await bcrypt.compare(password, user.passwordHash);
-
-    if (!isMatch) {
-      if (process.env.NODE_ENV !== 'development') {
-        if (isAdminUser) {
-          // Increment admin fail count (1 hour block)
-          const currentFails = await redisClient.incr(`admin_login_fail:${unscopedEmail}`);
-          if (currentFails === 1) {
-            await redisClient.expire(`admin_login_fail:${unscopedEmail}`, 3600); // 1 hour TTL
-          }
-        } else {
-          // Increment standard fail count (15 minutes block)
-          const currentFails = await redisClient.incr(`login_fail:${unscopedEmail}`);
-          if (currentFails === 1) {
-            await redisClient.expire(`login_fail:${unscopedEmail}`, 900); // 15 minutes TTL
-          }
-        }
-      }
-      return res.status(401).json({ success: false, message: 'Invalid email or password' });
     }
 
     // Reset fail count on success
@@ -363,6 +402,17 @@ router.post(API_ROUTES.AUTH.LOGIN, async (req, res) => {
     // Lưu Refresh Token trong Redis (TTL: 7 ngày)
     await redisClient.setEx(`refresh_token:${user.id}`, 7 * 24 * 60 * 60, refreshToken);
 
+    // For staff members, also fetch their position from employee record
+    let staffPosition: string | null = null;
+    const isStaffRole = roles.some((r: string) => !['Admin', 'SuperAdmin', 'System Admin', 'Owner', 'Customer'].includes(r));
+    if (isStaffRole) {
+      const employeeRecord = await prisma.employee.findFirst({
+        where: { userId: user.id, isActive: true },
+        select: { position: true }
+      });
+      staffPosition = employeeRecord?.position ?? null;
+    }
+
     res.json({
       success: true,
       data: {
@@ -380,6 +430,7 @@ router.post(API_ROUTES.AUTH.LOGIN, async (req, res) => {
           roles,
           restaurantId: ownerRestaurantId,
           restaurantSlug,
+          position: staffPosition,
         }
       }
     });
@@ -1226,8 +1277,22 @@ router.post('/phone-login/otp', async (req: any, res: any) => {
       normalizedPhone = '+84' + normalizedPhone.substring(1);
     }
 
-    // Generate secure 6-digit verification code
-    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    // Rate limit: max 3 OTP sends per phone per 15 minutes (prevents SMS-cost
+    // abuse and OTP brute-force by flooding new codes).
+    const otpRateKey = `phone_otp_rate:${normalizedPhone}`;
+    const otpAttempts = await redisClient.incr(otpRateKey);
+    if (otpAttempts === 1) {
+      await redisClient.expire(otpRateKey, 15 * 60);
+    }
+    if (otpAttempts > 3) {
+      return res.status(429).json({
+        success: false,
+        message: 'Bạn đã yêu cầu mã quá nhiều lần. Vui lòng thử lại sau 15 phút.',
+      });
+    }
+
+    // Generate cryptographically secure 6-digit verification code
+    const otp = crypto.randomInt(100000, 1000000).toString();
 
     // Store in Redis (Key phone_otp:{phoneNumber}, TTL 300 seconds = 5 minutes)
     await redisClient.setEx(`phone_otp:${normalizedPhone}`, 300, otp);

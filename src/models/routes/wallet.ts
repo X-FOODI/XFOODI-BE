@@ -59,22 +59,19 @@ router.get('/withdrawals', requireRole('Owner', 'Admin'), async (req: any, res) 
     }
 
     const { page, limit } = req.query;
-    const { items, total, totalPages } = await walletService.listWithdrawals({
-      status: undefined,
+    const data = await walletService.listWithdrawals({
+      restaurantId,
       page: page ? Number(page) : 1,
       limit: limit ? Number(limit) : 10,
     });
-
-    // Filter to this restaurant only
-    const filtered = items.filter((w) => w.restaurantId === restaurantId);
-    return res.json({ success: true, data: { items: filtered, total: filtered.length, totalPages } });
+    return res.json({ success: true, data });
   } catch (err: any) {
     return res.status(500).json({ success: false, message: err.message });
   }
 });
 
 // ── Admin: List all withdrawal requests ───────────────────────────────────────
-router.get('/admin/withdrawals', requireRole('Owner', 'Admin'), async (req: any, res) => {
+router.get('/admin/withdrawals', requireRole('Admin'), async (req: any, res) => {
   try {
     const { status, page, limit } = req.query;
     const data = await walletService.listWithdrawals({
@@ -89,7 +86,7 @@ router.get('/admin/withdrawals', requireRole('Owner', 'Admin'), async (req: any,
 });
 
 // ── Admin: Approve withdrawal ─────────────────────────────────────────────────
-router.post('/admin/withdrawals/:id/approve', requireRole('Owner', 'Admin'), async (req: any, res) => {
+router.post('/admin/withdrawals/:id/approve', requireRole('Admin'), async (req: any, res) => {
   try {
     const { adminNote } = req.body;
     const result = await walletService.approveWithdrawal(req.params.id, adminNote);
@@ -100,7 +97,7 @@ router.post('/admin/withdrawals/:id/approve', requireRole('Owner', 'Admin'), asy
 });
 
 // ── Admin: Reject withdrawal ──────────────────────────────────────────────────
-router.post('/admin/withdrawals/:id/reject', requireRole('Owner', 'Admin'), async (req: any, res) => {
+router.post('/admin/withdrawals/:id/reject', requireRole('Admin'), async (req: any, res) => {
   try {
     const { reason } = req.body;
     if (!reason) {

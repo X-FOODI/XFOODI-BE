@@ -130,7 +130,7 @@ router.post('/', async (req: any, res: Response) => {
 // ── Staff/Admin: list all reservations ──────────────────────────────────────
 router.get('/', authMiddleware, requireRole('Owner', 'Admin', 'Staff'), async (req: any, res: Response) => {
   try {
-    const { restaurantId, page, limit, status, from, to, search } = req.query;
+    const { restaurantId, page, limit, status, from, to, search, sortBy, sortOrder } = req.query;
     const result = await reservationService.listReservations({
       restaurantId: restaurantId as string,
       page: page ? Number(page) : 1,
@@ -139,6 +139,8 @@ router.get('/', authMiddleware, requireRole('Owner', 'Admin', 'Staff'), async (r
       from: from as string,
       to: to as string,
       search: search as string,
+      sortBy: sortBy as string,
+      sortOrder: sortOrder as 'asc' | 'desc',
     });
     return res.json({ success: true, data: result });
   } catch (err: any) {
