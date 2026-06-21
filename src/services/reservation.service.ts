@@ -80,10 +80,55 @@ export interface ReservationFilter {
 
 export class ReservationService {
 
-  // GET status value by code
+  // Self-healing: ensure RESERVATION status values exist in DB
+  private async ensureReservationStatuses(): Promise<Record<string, string>> {
+    const prisma = getPrisma();
+    let statusType = await prisma.statusType.findUnique({ where: { code: 'RESERVATION' } });
+    if (!statusType) {
+      statusType = await prisma.statusType.create({ data: { code: 'RESERVATION' } });
+    }
+    const defaults = [
+      { code: 'PENDING',    name: 'Chờ xác nhận', colorCode: '#f1c40f', isDefault: true },
+      { code: 'CONFIRMED',  name: 'Đã xác nhận',  colorCode: '#3498db', isDefault: false },
+      { code: 'CHECKED_IN', name: 'Đã check-in',  colorCode: '#9b59b6', isDefault: false },
+      { code: 'COMPLETED',  name: 'Hoàn thành',   colorCode: '#2ecc71', isDefault: false },
+      { code: 'CANCELLED',  name: 'Đã hủy',       colorCode: '#95a5a6', isDefault: false },
+    ];
+    const map: Record<string, string> = {};
+    for (const s of defaults) {
+      let val = await prisma.statusValue.findFirst({
+        where: { statusTypeId: statusType.id, code: s.code }
+      });
+      if (!val) {
+        val = await prisma.statusValue.create({
+          data: {
+            statusTypeId: statusType.id,
+            code: s.code,
+            name: s.name,
+            colorCode: s.colorCode,
+            isDefault: s.isDefault,
+            isSystem: true,
+          }
+        });
+      }
+      map[s.code] = val.id;
+    }
+    return map;
+  }
+
+  // GET status value by code — always scoped to RESERVATION type
   private async getStatusByCode(code: string) {
     const prisma = getPrisma();
-    return prisma.statusValue.findFirst({ where: { code } });
+    // Find within RESERVATION statusType first
+    const sv = await prisma.statusValue.findFirst({
+      where: { statusType: { code: 'RESERVATION' }, code }
+    });
+    if (sv) return sv;
+    // Fallback: run self-healing then retry
+    await this.ensureReservationStatuses();
+    return prisma.statusValue.findFirst({
+      where: { statusType: { code: 'RESERVATION' }, code }
+    });
   }
 
   // Validate status transition against the allowed state machine
