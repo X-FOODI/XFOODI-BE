@@ -26,13 +26,40 @@ router.post('/', async (req: any, res: Response) => {
       }
     }
 
-    const { prismaStorage } = await import('../../lib/prisma');
+    const { prismaStorage, centralPrisma } = await import('../../lib/prisma');
     const { PrismaClient } = await import('@prisma/client');
     const db = prismaStorage.getStore() as InstanceType<typeof PrismaClient>;
 
     let customerId: string;
 
     if (userId) {
+      // 1. Fetch user from central DB and ensure they exist in tenant database
+      const centralUser = await centralPrisma.user.findUnique({ where: { id: userId } });
+      if (centralUser) {
+        await db.user.upsert({
+          where: { id: userId },
+          update: {
+            email: centralUser.email,
+            userName: centralUser.userName,
+            fullName: centralUser.fullName,
+            phoneNumber: centralUser.phoneNumber,
+            passwordHash: centralUser.passwordHash,
+            isActive: centralUser.isActive,
+            emailVerified: centralUser.emailVerified,
+          },
+          create: {
+            id: centralUser.id,
+            email: centralUser.email,
+            userName: centralUser.userName,
+            fullName: centralUser.fullName,
+            phoneNumber: centralUser.phoneNumber,
+            passwordHash: centralUser.passwordHash,
+            isActive: centralUser.isActive,
+            emailVerified: centralUser.emailVerified,
+          }
+        });
+      }
+
       // Logged-in user
       let customer = await db.customer.findFirst({ where: { userId } });
       if (!customer) {
@@ -151,11 +178,39 @@ router.get('/', authMiddleware, requireRole('Owner', 'Admin', 'Staff'), async (r
 // ── Customer: my reservations ────────────────────────────────────────────────
 router.get('/my', authMiddleware, requireRole('Customer'), async (req: any, res: Response) => {
   try {
-    const { prismaStorage } = await import('../../lib/prisma');
+    const { prismaStorage, centralPrisma } = await import('../../lib/prisma');
     const { PrismaClient } = await import('@prisma/client');
     const db = prismaStorage.getStore() as InstanceType<typeof PrismaClient>;
 
     const userId = req.user.sub || req.user.id;
+
+    // Ensure the customer's User record exists in this tenant DB
+    const centralUser = await centralPrisma.user.findUnique({ where: { id: userId } });
+    if (centralUser) {
+      await db.user.upsert({
+        where: { id: userId },
+        update: {
+          email: centralUser.email,
+          userName: centralUser.userName,
+          fullName: centralUser.fullName,
+          phoneNumber: centralUser.phoneNumber,
+          passwordHash: centralUser.passwordHash,
+          isActive: centralUser.isActive,
+          emailVerified: centralUser.emailVerified,
+        },
+        create: {
+          id: centralUser.id,
+          email: centralUser.email,
+          userName: centralUser.userName,
+          fullName: centralUser.fullName,
+          phoneNumber: centralUser.phoneNumber,
+          passwordHash: centralUser.passwordHash,
+          isActive: centralUser.isActive,
+          emailVerified: centralUser.emailVerified,
+        }
+      });
+    }
+
     let customer = await db.customer.findFirst({ where: { userId } });
     if (!customer) {
       customer = await db.customer.create({
