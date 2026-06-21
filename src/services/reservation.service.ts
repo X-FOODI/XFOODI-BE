@@ -80,13 +80,54 @@ export interface ReservationFilter {
 
 export class ReservationService {
 
-  // GET status value by code — MUST scope to the RESERVATION status type, since
-  // the same code (e.g. PENDING/COMPLETED/CANCELLED) also exists under the ORDER
-  // and TABLE status types and an unscoped lookup can return the wrong one.
+  // Self-healing: ensure RESERVATION status values exist in DB
+  private async ensureReservationStatuses(): Promise<Record<string, string>> {
+    const prisma = getPrisma();
+    let statusType = await prisma.statusType.findUnique({ where: { code: 'RESERVATION' } });
+    if (!statusType) {
+      statusType = await prisma.statusType.create({ data: { code: 'RESERVATION' } });
+    }
+    const defaults = [
+      { code: 'PENDING',    name: 'Chờ xác nhận', colorCode: '#f1c40f', isDefault: true },
+      { code: 'CONFIRMED',  name: 'Đã xác nhận',  colorCode: '#3498db', isDefault: false },
+      { code: 'CHECKED_IN', name: 'Đã check-in',  colorCode: '#9b59b6', isDefault: false },
+      { code: 'COMPLETED',  name: 'Hoàn thành',   colorCode: '#2ecc71', isDefault: false },
+      { code: 'CANCELLED',  name: 'Đã hủy',       colorCode: '#95a5a6', isDefault: false },
+    ];
+    const map: Record<string, string> = {};
+    for (const s of defaults) {
+      let val = await prisma.statusValue.findFirst({
+        where: { statusTypeId: statusType.id, code: s.code }
+      });
+      if (!val) {
+        val = await prisma.statusValue.create({
+          data: {
+            statusTypeId: statusType.id,
+            code: s.code,
+            name: s.name,
+            colorCode: s.colorCode,
+            isDefault: s.isDefault,
+            isSystem: true,
+          }
+        });
+      }
+      map[s.code] = val.id;
+    }
+    return map;
+  }
+
+  // GET status value by code — always scoped to RESERVATION type
   private async getStatusByCode(code: string) {
     const prisma = getPrisma();
+    // Find within RESERVATION statusType first
+    const sv = await prisma.statusValue.findFirst({
+      where: { statusType: { code: 'RESERVATION' }, code }
+    });
+    if (sv) return sv;
+    // Fallback: run self-healing then retry
+    await this.ensureReservationStatuses();
     return prisma.statusValue.findFirst({
-      where: { code, statusType: { code: 'RESERVATION' } },
+      where: { statusType: { code: 'RESERVATION' }, code }
     });
   }
 
@@ -436,12 +477,9 @@ export class ReservationService {
             });
           }
 
-          // Generate order reference
+          // Generate order reference — use reservation ID suffix to guarantee uniqueness
           const todayStr = new Date().toISOString().slice(2, 10).replace(/-/g, ''); // YYMMDD
-          const count = await prisma.order.count({
-            where: { restaurantId: dto.restaurantId, createdAt: { gte: new Date(new Date().setHours(0, 0, 0, 0)) } },
-          });
-          const reference = `ORD-${todayStr}-${(count + 1).toString().padStart(4, '0')}`;
+          const reference = `ORD-${todayStr}-${reservation.id.slice(-6).toUpperCase()}`;
 
           const subTotal = dto.dishes.reduce((sum, item) => sum + item.quantity * (dishPriceMap[item.dishId] || 0), 0);
           const taxAmount = subTotal * 0.1;
@@ -491,13 +529,8 @@ export class ReservationService {
       (reservation as any).metadata = { ...(reservation.metadata as any ?? {}), qrCodeUrl };
     }
 
-    // Send confirmation email immediately only if no deposit is required.
-    // If a deposit is required, the email will be sent after payment is completed.
-    if (calculatedDeposit === 0) {
-      this.sendConfirmationEmail(reservation.id).catch((e: any) =>
-        console.error('[CreateReservation] Failed to send email:', e)
-      );
-    }
+    // NOTE: Confirmation email (with code) is only sent when staff CONFIRMS the reservation.
+    // We do NOT send it here at creation time. The pending email was already sent from the route handler.
 
     // Save bankRefund info into Customer metadata for auto-payout on cancellation
     if (dto.bankRefund && dto.bankRefund.accountNumber) {
@@ -606,7 +639,16 @@ export class ReservationService {
           orderBy: { createdAt: 'desc' },
           include: { paymentMethod: true },
         },
-        orders: { select: { id: true, reference: true, totalAmount: true } },
+        orders: {
+          include: {
+            orderDetails: {
+              include: {
+                dish: { select: { id: true, name: true, price: true, imageUrl: true } },
+                statusValue: { select: { id: true, code: true, name: true, colorCode: true } }
+              }
+            }
+          }
+        },
         refunds: { orderBy: { createdAt: 'desc' } },
       },
     });
@@ -632,7 +674,7 @@ export class ReservationService {
   }
 
   // ── Update status ────────────────────────────────────────────────────────────
-  async updateStatus(id: string, statusCode: string, actorId?: string) {
+  async updateStatus(id: string, statusCode: string, actorId?: string, reason?: string) {
     const prisma = getPrisma();
 
     // Fetch current reservation with its status to validate transition
@@ -681,6 +723,25 @@ export class ReservationService {
       },
     });
 
+    if (targetCode === 'CANCELLED') {
+      // Send rejection email with reason — non-blocking
+      import('../lib/email').then(({ sendReservationRejectedEmail }) => {
+        const customerEmail = updated.customer?.user?.email;
+        if (customerEmail) {
+          prisma.restaurant.findUnique({ where: { id: (current as any).restaurantId }, select: { name: true } })
+            .then((rest: any) => {
+              sendReservationRejectedEmail(customerEmail, {
+                restaurantName: rest?.name ?? '',
+                confirmationCode: (current as any).confirmationCode ?? '',
+                numberOfGuests: (current as any).numberOfGuests,
+                time: (current as any).time?.toISOString?.() ?? '',
+                rejectionReason: reason ?? '',
+              }, id).catch((e: any) => console.error('[UpdateStatus] Rejection email failed:', e));
+            }).catch(() => {});
+        }
+      }).catch(() => {});
+    }
+
     if (targetCode === 'CONFIRMED') {
       this.sendConfirmationEmail(id).catch((e: any) =>
         console.error('[UpdateStatus] Failed to send confirmation email:', e)
@@ -708,7 +769,6 @@ export class ReservationService {
           });
 
           if (order) {
-            // eslint-disable-next-line @typescript-eslint/no-var-requires
             const { getIO } = require('../socket');
             const io = getIO();
 
@@ -720,7 +780,7 @@ export class ReservationService {
             const broadcastPayload = {
               id: order.id,
               reference: order.reference,
-              table: 'Mang đi',
+              table: null,
               tableId: null,
               subTotal: Number(order.subTotal),
               totalAmount: Number(order.totalAmount),
@@ -915,7 +975,6 @@ export class ReservationService {
 
           // Broadcast TABLE_SESSION_STARTED via socket
           try {
-            // eslint-disable-next-line @typescript-eslint/no-var-requires
             const { getIO } = require('../socket');
             const io = getIO();
             io.to(`restaurant_${reservation.restaurantId}`).emit('TABLE_SESSION_STARTED', {
@@ -1371,7 +1430,6 @@ export class ReservationService {
 
             // Broadcast status change to kitchen
             try {
-              // eslint-disable-next-line @typescript-eslint/no-var-requires
               const { getIO } = require('../socket');
               const io = getIO();
               io.to(`restaurant_${reservation.restaurantId}`).emit('ORDER_STATUS_CHANGED', {
@@ -1604,6 +1662,10 @@ export class ReservationService {
       },
       orderBy: { code: 'asc' },
     });
+
+    // Note: allTables already contains has3DView, viewDescription, defaultViewUrl,
+    // cubeBackImageUrl, cubeBottomImageUrl, cubeFrontImageUrl, cubeLeftImageUrl,
+    // cubeRightImageUrl, cubeTopImageUrl via spread (...t) in the return mapping below.
 
     // Check which tables are free from hard conflicts
     const activeTablesNoHardConflict = allTables.filter((t) => {
