@@ -1,3 +1,4 @@
+// Trigger hot reload to load new env configuration
 import { PrismaClient } from '@prisma/client';
 import { AsyncLocalStorage } from 'async_hooks';
 

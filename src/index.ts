@@ -1,4 +1,6 @@
 import express from 'express';
+import helmet from 'helmet';
+import dashboardRoutes from './models/routes/dashboard';
 import http from 'http';
 import cors from 'cors';
 import { initializeSocket } from './socket';
@@ -58,6 +60,7 @@ const corsOptions = {
   credentials: true
 };
 
+app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
 app.use(cors(corsOptions));
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
@@ -260,6 +263,7 @@ app.use('/api/payments', paymentRoutes);
 app.use('/api/feedbacks', feedbackRoutes);
 app.use('/api/wallet', walletRoutes);
 app.use('/api/layouts', layoutsRoutes);
+app.use('/api/dashboard', dashboardRoutes);
 
 // Health check endpoint
 app.get(API_ROUTES.HEALTH.BASE, (req, res) => {
@@ -288,3 +292,31 @@ httpServer.listen(PORT, () => {
   console.log(`- Social realtime: http://localhost:${PORT}/hubs/social (Socket.io)`);
 });
 
+// ── Graceful shutdown ─────────────────────────────────────────────────────────
+// On deploy/restart the orchestrator sends SIGTERM; stop accepting new
+// connections, then disconnect Prisma so in-flight work can drain cleanly.
+let shuttingDown = false;
+const shutdown = async (signal: string) => {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`\n[Shutdown] Received ${signal}, closing server...`);
+
+  const forceExit = setTimeout(() => {
+    console.error('[Shutdown] Forced exit after timeout');
+    process.exit(1);
+  }, 10_000);
+
+  httpServer.close(async () => {
+    try {
+      await centralPrisma.$disconnect();
+    } catch (e) {
+      console.error('[Shutdown] Error disconnecting Prisma:', e);
+    }
+    clearTimeout(forceExit);
+    console.log('[Shutdown] Closed cleanly');
+    process.exit(0);
+  });
+};
+
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));

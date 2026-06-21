@@ -1,7 +1,9 @@
-import { prisma } from '../lib/prisma';
+import { prisma, centralPrisma } from '../lib/prisma';
 import { AIService } from './ai.service';
 import { PDFParse } from 'pdf-parse';
 import { randomUUID } from 'crypto';
+import { spawn } from 'child_process';
+import path from 'path';
 
 export class KnowledgeBaseService {
   /**
@@ -25,8 +27,13 @@ export class KnowledgeBaseService {
     let chunkSize = 800;
     let chunkOverlap = 100;
 
+    if (restaurantId === 'system') {
+      isCentralDb = true;
+    }
+    const db = isCentralDb ? centralPrisma : prisma;
+
     if (bucketId) {
-      const bucket = await prisma.restaurantBucket.findUnique({
+      const bucket = await db.restaurantBucket.findUnique({
         where: { id: bucketId }
       });
       if (bucket) {
@@ -38,7 +45,7 @@ export class KnowledgeBaseService {
     }
 
     // 1. Create a RestaurantDocument record
-    const document = await prisma.restaurantDocument.create({
+    const document = await db.restaurantDocument.create({
       data: {
         restaurantId,
         bucketId: bucketId || null,
@@ -82,8 +89,14 @@ export class KnowledgeBaseService {
     fileUrl: string,
     chunkingStrategy: string = 'FIXED',
     chunkSize: number = 800,
-    chunkOverlap: number = 100
+    chunkOverlap: number = 100,
+    isCentralDb: boolean = false
   ): Promise<any> {
+    if (restaurantId === 'system') {
+      isCentralDb = true;
+    }
+    const db = isCentralDb ? centralPrisma : prisma;
+
     try {
       // 2. Extract text from file buffer
       let text = '';
@@ -125,7 +138,7 @@ export class KnowledgeBaseService {
         const metadata = JSON.stringify({ index: i, filename });
 
         // Save to pgvector using parameterized raw SQL and explicit JSONB cast ($5::jsonb)
-        await prisma.$executeRawUnsafe(
+        await db.$executeRawUnsafe(
           `INSERT INTO "DocumentChunks" (id, "documentId", content, embedding, metadata, "createdAt") 
            VALUES ($1, $2, $3, $4::public.vector, $5::jsonb, NOW())`,
           chunkId,
@@ -137,7 +150,7 @@ export class KnowledgeBaseService {
       }
 
       // 5. Update document status to INDEXED
-      const updatedDoc = await prisma.restaurantDocument.update({
+      const updatedDoc = await db.restaurantDocument.update({
         where: { id: documentId },
         data: { status: 'INDEXED' },
       });
@@ -145,19 +158,20 @@ export class KnowledgeBaseService {
       return updatedDoc;
     } catch (err: any) {
       console.error(`[KBService] Failed to process document chunks for ${filename}:`, err);
-      // Update document status to FAILED
-      await prisma.restaurantDocument.update({
+      // Update document status to FAILED and save error log
+      await db.restaurantDocument.update({
         where: { id: documentId },
-        data: { status: 'FAILED' },
-      }).catch(() => {});
+        data: { 
+          status: 'FAILED',
+          errorLog: err.stack || err.message || String(err)
+        },
+      }).catch((e) => console.error(`[KBService] Failed to update error log for failed document:`, e));
       throw err;
     }
   }
 
   private static async chunkTextAdaptive(text: string): Promise<string[]> {
     return new Promise((resolve, reject) => {
-      const { spawn } = require('child_process');
-      const path = require('path');
       const scriptPath = path.resolve(process.cwd(), 'scripts/adaptive_chunk.py');
       
       const pythonCommand = process.env.PYTHON_PATH || 'python';

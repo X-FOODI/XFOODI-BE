@@ -80,10 +80,14 @@ export interface ReservationFilter {
 
 export class ReservationService {
 
-  // GET status value by code
+  // GET status value by code — MUST scope to the RESERVATION status type, since
+  // the same code (e.g. PENDING/COMPLETED/CANCELLED) also exists under the ORDER
+  // and TABLE status types and an unscoped lookup can return the wrong one.
   private async getStatusByCode(code: string) {
     const prisma = getPrisma();
-    return prisma.statusValue.findFirst({ where: { code } });
+    return prisma.statusValue.findFirst({
+      where: { code, statusType: { code: 'RESERVATION' } },
+    });
   }
 
   // Validate status transition against the allowed state machine
