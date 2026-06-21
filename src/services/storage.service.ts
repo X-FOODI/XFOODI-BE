@@ -94,13 +94,47 @@ export class StorageService {
         // Supabase doesn't return versionId directly, use cleanFilename as unique version reference
         return { fileUrl: publicData.publicUrl, versionId: cleanFilename };
       } catch (err: any) {
-        console.warn(`[StorageService] Supabase upload failed, falling back to local storage. Error:`, err.message || err);
+        console.warn(`[StorageService] Supabase upload failed, trying Cloudinary. Error:`, err.message || err);
       }
-    } else {
-      console.log(`[StorageService] Supabase/AWS credentials not found. Using local disk fallback.`);
     }
 
-    // 3. Local fallback storage
+    // 3. Try Cloudinary if configured
+    const { getCloudinary, isCloudinaryConfigured } = await import('../lib/cloudinary');
+    if (isCloudinaryConfigured()) {
+      try {
+        console.log(`[StorageService] Attempting to upload ${filename} to Cloudinary...`);
+        const cloudinaryInstance = getCloudinary();
+        
+        const fileUrl = await new Promise<string>((resolve, reject) => {
+          const stream = cloudinaryInstance.uploader.upload_stream(
+            {
+              folder: 'xfoodi/kb',
+              resource_type: 'raw',
+              public_id: cleanFilename,
+            },
+            (error, result) => {
+              if (error) {
+                reject(error);
+              } else if (result && result.secure_url) {
+                resolve(result.secure_url);
+              } else {
+                reject(new Error('Cloudinary upload returned no secure URL'));
+              }
+            }
+          );
+          stream.end(fileBuffer);
+        });
+
+        console.log(`[StorageService] Successfully uploaded to Cloudinary: ${fileUrl}`);
+        return { fileUrl, versionId: cleanFilename };
+      } catch (err: any) {
+        console.warn(`[StorageService] Cloudinary upload failed, falling back to local storage. Error:`, err.message || err);
+      }
+    } else {
+      console.log(`[StorageService] Cloudinary/Supabase/AWS credentials not found. Using local disk fallback.`);
+    }
+
+    // 4. Local fallback storage
     try {
       const uploadDir = path.resolve(process.cwd(), 'uploads/kb');
       if (!fs.existsSync(uploadDir)) {

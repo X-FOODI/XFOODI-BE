@@ -1,6 +1,6 @@
 import { Router, type Router as ExpressRouter } from 'express';
 import multer from 'multer';
-import { prisma, prismaStorage, getTenantPrisma, getTenantConnectionUrl } from '../../lib/prisma';
+import { prisma } from '../../lib/prisma';
 import { authMiddleware } from './auth';
 import { tenantGuard } from '../../middlewares/tenantGuard';
 import { KnowledgeBaseService } from '../../services/knowledgeBase.service';
@@ -35,10 +35,11 @@ router.post('/kb/upload', authMiddleware, tenantGuard, upload.any(), async (req:
       return res.status(400).json({ success: false, message: 'Không tìm thấy thông tin nhà hàng cho miền này.' });
     }
 
-    const tenantDbUrl = getTenantConnectionUrl(ENV.DATABASE_URL, activeRestaurant.slug);
-    const tenantPrisma = getTenantPrisma(tenantDbUrl);
-
-    return await prismaStorage.run(tenantPrisma, async () => {
+    // Use the ambient Prisma context set by the tenant-DB middleware in index.ts
+    // (same as every other /kb/* route below) instead of forcing a tenant schema here —
+    // forcing it caused a schema mismatch with buckets created/listed under centralPrisma
+    // (e.g. on the admin domain, where index.ts always uses centralPrisma).
+    {
       const restaurantId = activeRestaurant.id;
       let bucketId = req.body.bucketId || req.query.bucketId || undefined;
 
@@ -109,13 +110,17 @@ router.post('/kb/upload', authMiddleware, tenantGuard, upload.any(), async (req:
         const { fileUrl, versionId } = await StorageService.uploadFile(originalName, file.buffer, fileType);
 
         console.log(`[KB API] Registering file ${originalName} in database and queuing...`);
+        // req.tenant / req.restaurant are set by the tenant-DB middleware for subdomain requests.
+        // When both are absent, the request came from the admin domain → documents in central schema.
+        const isCentralDb = !req.tenant && !req.restaurant;
         const document = await KnowledgeBaseService.processDocument(
           restaurantId,
           originalName,
           fileType,
           fileUrl,
           bucketId,
-          versionId || undefined
+          versionId || undefined,
+          isCentralDb
         );
 
         processedDocuments.push(document);
@@ -130,7 +135,7 @@ router.post('/kb/upload', authMiddleware, tenantGuard, upload.any(), async (req:
         data: processedDocuments.length === 1 ? processedDocuments[0] : processedDocuments,
         message: `Đang xử lý ${processedDocuments.length} tài liệu trong nền! Trạng thái sẽ tự động cập nhật khi hoàn tất.`,
       });
-    });
+    }
   } catch (err: any) {
     console.error('[KB API] Upload error:', err);
     return res.status(500).json({ success: false, message: err.message || 'Lỗi server khi tải lên tài liệu.' });
@@ -643,7 +648,9 @@ router.post('/kb/buckets/:id/process', authMiddleware, tenantGuard, async (req: 
         fileType: doc.fileType as 'PDF' | 'TXT' | 'MD',
         chunkingStrategy: strategy,
         chunkSize: size,
-        chunkOverlap: overlap
+        chunkOverlap: overlap,
+        // Bucket/documents found via ambient prisma = centralPrisma on admin domain
+        isCentralDb: !req.tenant && !req.restaurant,
       });
     }
 

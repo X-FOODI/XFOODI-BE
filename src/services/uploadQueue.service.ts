@@ -3,6 +3,7 @@ import axios from 'axios';
 import fs from 'fs';
 import path from 'path';
 import { prisma, prismaStorage, centralPrisma, getTenantPrisma, getTenantConnectionUrl } from '../lib/prisma';
+import type { PrismaClient } from '@prisma/client';
 import { KnowledgeBaseService } from './knowledgeBase.service';
 import redisClient from '../lib/redis';
 
@@ -20,6 +21,7 @@ export class UploadQueueService {
     chunkingStrategy?: string;
     chunkSize?: number;
     chunkOverlap?: number;
+    isCentralDb?: boolean;
   }> = [];
   private static isProcessingInMemory = false;
 
@@ -50,8 +52,8 @@ export class UploadQueueService {
       });
 
       this.worker = new Worker('document-uploads', async (job) => {
-        const { documentId, restaurantId, filename, fileUrl, fileType, chunkingStrategy, chunkSize, chunkOverlap } = job.data;
-        await this.processJob(documentId, restaurantId, filename, fileUrl, fileType, chunkingStrategy, chunkSize, chunkOverlap);
+        const { documentId, restaurantId, filename, fileUrl, fileType, chunkingStrategy, chunkSize, chunkOverlap, isCentralDb } = job.data;
+        await this.processJob(documentId, restaurantId, filename, fileUrl, fileType, chunkingStrategy, chunkSize, chunkOverlap, isCentralDb);
       }, {
         connection: {
           url: redisUrl,
@@ -89,6 +91,7 @@ export class UploadQueueService {
     chunkingStrategy?: string;
     chunkSize?: number;
     chunkOverlap?: number;
+    isCentralDb?: boolean;
   }) {
     if (this.isBullMQActive && this.queue) {
       try {
@@ -153,6 +156,9 @@ export class UploadQueueService {
             chunkingStrategy,
             chunkSize,
             chunkOverlap,
+            // pollPendingDocumentsFromDb queries via centralPrisma (outside request context),
+            // so all recovered documents live in the central/public schema.
+            isCentralDb: true,
           });
         }
       }
@@ -178,7 +184,8 @@ export class UploadQueueService {
             task.fileType,
             task.chunkingStrategy,
             task.chunkSize,
-            task.chunkOverlap
+            task.chunkOverlap,
+            task.isCentralDb
           );
         } catch (err) {
           console.error(`[UploadQueue] Failed to process in-memory task for ${task.filename}:`, err);
@@ -197,28 +204,34 @@ export class UploadQueueService {
     fileType: 'PDF' | 'TXT' | 'MD',
     chunkingStrategy?: string,
     chunkSize?: number,
-    chunkOverlap?: number
+    chunkOverlap?: number,
+    isCentralDb?: boolean
   ) {
     const { ENV } = await import('../config/env');
 
-    // Resolve tenant client dynamically from central database
-    const restaurant = await centralPrisma.restaurant.findUnique({
-      where: { id: restaurantId }
-    });
+    // Determine which Prisma client the document lives in:
+    // - isCentralDb=true  → uploaded from admin domain, stored in public/central schema
+    // - isCentralDb=false → uploaded from tenant subdomain, stored in tenant schema
+    let dbClient: PrismaClient;
+    let logLabel: string;
 
-    if (!restaurant) {
-      throw new Error(`[UploadQueue] Restaurant with ID ${restaurantId} not found in central database.`);
+    if (isCentralDb) {
+      dbClient = centralPrisma as unknown as PrismaClient;
+      logLabel = 'central';
+    } else {
+      const restaurant = await centralPrisma.restaurant.findUnique({ where: { id: restaurantId } });
+      if (!restaurant) {
+        throw new Error(`[UploadQueue] Restaurant with ID ${restaurantId} not found in central database.`);
+      }
+      const tenantDbUrl = getTenantConnectionUrl(ENV.DATABASE_URL, restaurant.slug);
+      dbClient = getTenantPrisma(tenantDbUrl) as unknown as PrismaClient;
+      logLabel = `tenant "${restaurant.slug}"`;
     }
 
-    const tenantDbUrl = getTenantConnectionUrl(ENV.DATABASE_URL, restaurant.slug);
-    const tenantPrisma = getTenantPrisma(tenantDbUrl);
-
-    await prismaStorage.run(tenantPrisma, async () => {
-      // 1. Fetch file content from URL
-      console.log(`[UploadQueue] Fetching file buffer from: ${fileUrl} for tenant "${restaurant.slug}"`);
+    await prismaStorage.run(dbClient as any, async () => {
+      console.log(`[UploadQueue] Fetching file buffer from: ${fileUrl} for ${logLabel}`);
       const buffer = await this.getFileBuffer(fileUrl);
 
-      // 2. Call the KnowledgeBase chunks processing logic
       await KnowledgeBaseService.processDocumentChunks(
         documentId,
         restaurantId,
@@ -234,37 +247,39 @@ export class UploadQueueService {
   }
 
   public static async getFileBuffer(fileUrl: string): Promise<Buffer> {
-    if (fileUrl.startsWith('http://127.0.0.1:5000/uploads/kb/') || 
-        fileUrl.startsWith('http://localhost:5000/uploads/kb/') ||
-        fileUrl.startsWith('http://127.0.0.1:5000/api/uploads/kb/') ||
-        fileUrl.startsWith('http://localhost:5000/api/uploads/kb/')) {
+    // 1. Try local disk first if it's a local upload URL pattern or contains uploads/kb
+    if (fileUrl.includes('/uploads/kb/') || fileUrl.startsWith('file://local-storage/')) {
+      const cleanFilename = fileUrl.replace('file://local-storage/', '').split('/').pop() || '';
+      const localPath = path.resolve(process.cwd(), 'uploads/kb', cleanFilename);
+      if (fs.existsSync(localPath)) {
+        try {
+          return fs.readFileSync(localPath);
+        } catch (err) {
+          console.warn(`[UploadQueue] Failed to read local file: ${localPath}`, err);
+        }
+      }
+    }
+
+    // 2. Fetch via HTTP if it's a remote URL
+    if (fileUrl.startsWith('http://') || fileUrl.startsWith('https://')) {
+      const response = await axios.get(fileUrl, { responseType: 'arraybuffer' });
+      return Buffer.from(response.data);
+    }
+
+    // 3. Fallback: try extracting filename and reading locally
+    try {
       const cleanFilename = fileUrl.split('/').pop() || '';
       const localPath = path.resolve(process.cwd(), 'uploads/kb', cleanFilename);
       if (fs.existsSync(localPath)) {
         return fs.readFileSync(localPath);
       }
+    } catch (err) {
+      // ignore
     }
 
-    if (fileUrl.startsWith('http://') || fileUrl.startsWith('https://')) {
-      const response = await axios.get(fileUrl, { responseType: 'arraybuffer' });
-      return Buffer.from(response.data);
-    } else if (fileUrl.startsWith('file://local-storage/')) {
-      const cleanFilename = fileUrl.replace('file://local-storage/', '');
-      const localPath = path.resolve(process.cwd(), 'uploads/kb', cleanFilename);
-      return fs.readFileSync(localPath);
-    } else {
-      try {
-        const cleanFilename = fileUrl.split('/').pop() || '';
-        const localPath = path.resolve(process.cwd(), 'uploads/kb', cleanFilename);
-        if (fs.existsSync(localPath)) {
-          return fs.readFileSync(localPath);
-        }
-      } catch (err) {
-        // eslint-disable-next-line no-empty
-      }
-      const response = await axios.get(fileUrl, { responseType: 'arraybuffer' });
-      return Buffer.from(response.data);
-    }
+    // Ultimate fallback: try HTTP request anyway
+    const response = await axios.get(fileUrl, { responseType: 'arraybuffer' });
+    return Buffer.from(response.data);
   }
 
   private static async checkEvictionPolicy() {
