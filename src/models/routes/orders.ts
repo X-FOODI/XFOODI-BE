@@ -14,7 +14,11 @@ const router: Router = Router();
 
 // ── Test API ─────────────────────────────────────────────────────────────────
 // Simulates a mock order broadcast for testing socket connections.
+// Dev-only: never expose a fake-order generator in production.
 router.post('/test', authMiddleware, async (req: any, res: any) => {
+  if (process.env.NODE_ENV === 'production') {
+    return res.status(404).json({ success: false, message: 'Not found' });
+  }
   try {
     const restaurantId = req.user?.restaurantId;
     if (!restaurantId) {

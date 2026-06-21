@@ -375,6 +375,37 @@ export const handleDeleteTable: RequestHandler = async (req, res) => {
   }
 };
 
+export const handleBulkDeleteTables: RequestHandler = async (req, res) => {
+  try {
+    const restaurantId = getRestaurantId(req);
+    if (!restaurantId) {
+      return res.status(400).json({ success: false, message: 'Restaurant ID is required.' });
+    }
+
+    const { ids } = req.body as { ids?: unknown };
+
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ success: false, message: 'ids must be a non-empty array of table IDs.' });
+    }
+
+    const validIds = ids.filter((id) => typeof id === 'string' && id.trim().length > 0) as string[];
+    if (validIds.length === 0) {
+      return res.status(400).json({ success: false, message: 'No valid table IDs provided.' });
+    }
+
+    const result = await tableService.bulkDeleteTables(restaurantId, validIds);
+
+    res.json({
+      success: true,
+      message: `Đã xóa ${result.deleted.length} bàn thành công.${result.skipped.length > 0 ? ` Bỏ qua ${result.skipped.length} bàn đang phục vụ: ${result.skipped.join(', ')}.` : ''}`,
+      data: result,
+    });
+  } catch (err) {
+    handleTableError(res, err);
+  }
+};
+
+
 // ─── Session Controllers (RestX-compatible routes) ─────────────────────────────
 
 export const handleGetSessions: RequestHandler = async (req, res) => {

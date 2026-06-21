@@ -63,53 +63,31 @@ export class PaymentService {
   // ── Finalize Order Payment Helper ──
   private async finalizeOrderPayment(orderId: string, transactionId?: string) {
     const prisma = getPrisma();
-    
-    // 1. Get COMPLETED status for ORDER
-    const completedStatus = await prisma.statusValue.findFirst({
-      where: {
-        statusType: { code: 'ORDER' },
-        code: 'COMPLETED',
-      },
-    });
 
-    if (completedStatus) {
-      await prisma.order.update({
-        where: { id: orderId },
-        data: {
-          completedAt: new Date(),
-          orderStatusId: completedStatus.id,
-        },
-      });
-
-      // Update all items in this order to COMPLETED
-      const detailStatusType = await prisma.statusType.findUnique({ where: { code: 'ORDER_DETAIL' } });
-      if (detailStatusType) {
-        const completedDetailStatus = await prisma.statusValue.findFirst({
-          where: { statusTypeId: detailStatusType.id, code: 'COMPLETED' },
-        });
-        if (completedDetailStatus) {
-          await prisma.orderDetail.updateMany({
-            where: { orderId },
-            data: { itemStatusId: completedDetailStatus.id },
-          });
-        }
-      }
-    }
-
-    // 2. Fetch order to get restaurantId
+    // ── Gather everything we need up front (read-only) ──
     const order = await prisma.order.findUnique({
       where: { id: orderId },
       select: { restaurantId: true },
     });
-    
     if (!order) return;
 
-    // 3. Find and close active table sessions linked to this order
+    const completedStatus = await prisma.statusValue.findFirst({
+      where: { statusType: { code: 'ORDER' }, code: 'COMPLETED' },
+    });
+
+    const detailStatusType = await prisma.statusType.findUnique({ where: { code: 'ORDER_DETAIL' } });
+    let completedDetailStatusId: string | undefined;
+    if (detailStatusType) {
+      const completedDetailStatus = await prisma.statusValue.findFirst({
+        where: { statusTypeId: detailStatusType.id, code: 'COMPLETED' },
+      });
+      completedDetailStatusId = completedDetailStatus?.id;
+    }
+
     const activeSessions = await prisma.tableSession.findMany({
       where: { orderId, isActive: true },
     });
 
-    // Get AVAILABLE status for TABLE
     const tableStatusType = await prisma.statusType.findUnique({ where: { code: 'TABLE' } });
     let availableStatusId: string | undefined;
     if (tableStatusType) {
@@ -119,23 +97,40 @@ export class PaymentService {
       availableStatusId = availableStatus?.id;
     }
 
-    for (const session of activeSessions) {
-      await prisma.tableSession.update({
-        where: { id: session.id },
-        data: {
-          isActive: false,
-          endedAt: new Date(),
-        },
-      });
-
-      if (availableStatusId) {
-        await prisma.table.update({
-          where: { id: session.tableId },
-          data: { tableStatusId: availableStatusId },
+    // ── Apply all writes atomically so an order can never be marked COMPLETED
+    //    while its tables remain OCCUPIED (or vice versa). ──
+    await prisma.$transaction(async (tx) => {
+      if (completedStatus) {
+        await tx.order.update({
+          where: { id: orderId },
+          data: { completedAt: new Date(), orderStatusId: completedStatus.id },
         });
+
+        if (completedDetailStatusId) {
+          await tx.orderDetail.updateMany({
+            where: { orderId },
+            data: { itemStatusId: completedDetailStatusId },
+          });
+        }
       }
 
-      // Broadcast TABLE_SESSION_CLOSED via Socket.io
+      for (const session of activeSessions) {
+        await tx.tableSession.update({
+          where: { id: session.id },
+          data: { isActive: false, endedAt: new Date() },
+        });
+
+        if (availableStatusId) {
+          await tx.table.update({
+            where: { id: session.tableId },
+            data: { tableStatusId: availableStatusId },
+          });
+        }
+      }
+    });
+
+    // ── Side effects after the data is durably committed ──
+    for (const session of activeSessions) {
       try {
         const io = getIO();
         io.to(`restaurant_${order.restaurantId}`).emit('TABLE_SESSION_CLOSED', {
@@ -148,7 +143,6 @@ export class PaymentService {
       }
     }
 
-    // Broadcast ORDER_STATUS_CHANGED via Socket.io
     try {
       const io = getIO();
       io.to(`restaurant_${order.restaurantId}`).emit('ORDER_STATUS_CHANGED', {
@@ -236,11 +230,18 @@ export class PaymentService {
       }
     }
 
-    // Mark reservation deposit as paid
+    // Mark reservation deposit as paid. Scope to the RESERVATION status type —
+    // a 'CONFIRMED' code can also exist under other status types.
     if (dto.reservationId) {
+      const confirmedStatus = await prisma.statusValue.findFirst({
+        where: { code: 'CONFIRMED', statusType: { code: 'RESERVATION' } },
+      });
       await prisma.reservation.update({
         where: { id: dto.reservationId },
-        data: { paymentDeadline: null },
+        data: {
+          paymentDeadline: null,
+          ...(confirmedStatus && { reservationStatusId: confirmedStatus.id }),
+        },
       });
     }
 
@@ -325,9 +326,13 @@ export class PaymentService {
   // ── SePay Webhook handler ─────────────────────────────────────────────────────
   // ── SePay Webhook handler ─────────────────────────────────────────────────────
   async handleSePayWebhook(payload: SePayWebhookPayload, sePayToken: string) {
-    // 1. Verify token
+    // 1. Verify token. The token MUST be configured — without it anyone could
+    //    POST fake payment confirmations, so we fail closed instead of skipping.
     const expectedToken = process.env.SEPAY_WEBHOOK_TOKEN ?? process.env.SEPAY_WEBHOOK_KEY ?? '';
-    if (expectedToken && sePayToken !== expectedToken) {
+    if (!expectedToken) {
+      throw new Error('SePay webhook token is not configured (SEPAY_WEBHOOK_TOKEN)');
+    }
+    if (sePayToken !== expectedToken) {
       throw new Error('Invalid SePay webhook token');
     }
 
@@ -432,10 +437,11 @@ export class PaymentService {
         include: { payments: { where: { status: PaymentStatus.PENDING, purpose: PaymentPurpose.DEPOSIT } } },
       });
 
+      // Exact match only — substring matching could credit the wrong reservation.
       const reservation = pendingReservations.find(r => {
         if (!r.confirmationCode) return false;
         const codeNorm = r.confirmationCode.replace(/[^A-Z0-9]/ig, '').toUpperCase();
-        return codeNorm === normalizedCode || codeNorm.includes(normalizedCode) || normalizedCode.includes(codeNorm);
+        return codeNorm === normalizedCode;
       });
 
       if (reservation && reservation.payments.length > 0) {
@@ -470,9 +476,12 @@ export class PaymentService {
         include: { payments: { where: { status: PaymentStatus.PENDING } } },
       });
 
+      // Exact match only. Substring matching could credit the wrong order when
+      // one reference is contained in another — for money, an unmatched payment
+      // (manual reconciliation) is far safer than crediting the wrong order.
       const order = pendingOrders.find(o => {
         const orderNorm = o.reference.replace(/[^A-Z0-9]/ig, '').toUpperCase();
-        return orderNorm === normalizedRef || orderNorm.includes(normalizedRef) || normalizedRef.includes(orderNorm);
+        return orderNorm === normalizedRef;
       });
 
       if (order && order.payments.length > 0) {

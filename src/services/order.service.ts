@@ -233,7 +233,12 @@ export class OrderService {
         const count = await tx.order.count({
           where: { restaurantId, createdAt: { gte: new Date(new Date().setHours(0, 0, 0, 0)) } },
         });
-        const reference = `ORD-${todayStr}-${(count + 1).toString().padStart(4, '0')}`;
+        // The daily sequence stays human-readable, but a short random suffix
+        // prevents unique-constraint collisions when two orders are created
+        // concurrently and read the same count (which would otherwise fail the
+        // customer's order with a P2002 error).
+        const suffix = Math.random().toString(36).slice(2, 5).toUpperCase();
+        const reference = `ORD-${todayStr}-${(count + 1).toString().padStart(4, '0')}-${suffix}`;
 
         order = await tx.order.create({
           data: {
@@ -376,35 +381,38 @@ export class OrderService {
       };
     }
 
-    const orders = await prisma.order.findMany({
-      where: whereClause,
-      include: {
-        orderDetails: {
-          include: {
-            dish: true,
-            statusValue: true,
+    const [orders, total] = await Promise.all([
+      prisma.order.findMany({
+        where: whereClause,
+        include: {
+          orderDetails: {
+            include: {
+              dish: true,
+              statusValue: true,
+            },
           },
-        },
-        tableSessions: {
-          where: { isActive: true },
-          include: { table: true },
-        },
-        customer: {
-          include: {
-            user: true,
+          tableSessions: {
+            where: { isActive: true },
+            include: { table: true },
           },
+          customer: {
+            include: {
+              user: true,
+            },
+          },
+          payments: {
+            where: { status: 1 }, // COMPLETED
+          },
+          reservation: true,
         },
-        payments: {
-          where: { status: 1 }, // COMPLETED
-        },
-        reservation: true,
-      },
-      orderBy: { createdAt: 'desc' },
-      skip,
-      take: limit,
-    });
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: limit,
+      }),
+      prisma.order.count({ where: whereClause }),
+    ]);
 
-    return orders.map((o) => {
+    const items = orders.map((o) => {
       const activeSession = o.tableSessions[0];
       return {
         id: o.id,
@@ -434,6 +442,14 @@ export class OrderService {
         })),
       };
     });
+
+    return {
+      items,
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+    };
   }
 
   /**

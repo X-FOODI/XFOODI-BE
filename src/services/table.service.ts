@@ -712,6 +712,63 @@ export async function deleteTable(restaurantId: string, id: string) {
   broadcastTableUpdate(restaurantId, 'TABLE_DELETED', { tableId: id, floorId: existing.floorId });
 }
 
+/**
+ * Bulk delete multiple tables at once.
+ * Tables with active sessions are skipped (not deleted) and reported back.
+ * Returns a summary: { deleted, skipped, failed }
+ */
+export async function bulkDeleteTables(
+  restaurantId: string,
+  ids: string[]
+): Promise<{ deleted: string[]; skipped: string[]; failed: string[] }> {
+  const deleted: string[] = [];
+  const skipped: string[] = [];
+  const failed: string[] = [];
+
+  for (const id of ids) {
+    try {
+      const existing = await prisma.table.findFirst({
+        where: { id, restaurantId, isActive: true },
+      });
+
+      if (!existing) {
+        failed.push(id);
+        continue;
+      }
+
+      // Skip tables that currently have an active session
+      const activeSessionCount = await prisma.tableSession.count({
+        where: { tableId: id, isActive: true },
+      });
+
+      if (activeSessionCount > 0) {
+        skipped.push(existing.code);
+        continue;
+      }
+
+      await prisma.table.update({
+        where: { id },
+        data: {
+          isActive: false,
+          code: `${existing.code}_deleted_${Date.now()}`,
+        },
+      });
+
+      deleted.push(id);
+    } catch (err) {
+      console.error(`[bulkDeleteTables] Failed to delete table ${id}:`, err);
+      failed.push(id);
+    }
+  }
+
+  // Broadcast a single bulk-delete event if anything was deleted
+  if (deleted.length > 0) {
+    broadcastTableUpdate(restaurantId, 'TABLE_DELETED', { tableIds: deleted });
+  }
+
+  return { deleted, skipped, failed };
+}
+
 // ─── Table Session Operations ──────────────────────────────────────────────────
 
 export async function createTableSession(restaurantId: string, tableId: string, orderId?: string) {

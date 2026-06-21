@@ -10,7 +10,7 @@ const router: Router = Router();
 // ── Customer: submit feedback for an order (Guest & Logged-in support) ───────
 router.post('/orders/:orderId', async (req: any, res: Response) => {
   try {
-    const { prismaStorage } = await import('../../lib/prisma');
+    const { prismaStorage, centralPrisma } = await import('../../lib/prisma');
     const { PrismaClient } = await import('@prisma/client');
     const db = prismaStorage.getStore() as InstanceType<typeof PrismaClient>;
 
@@ -38,6 +38,33 @@ router.post('/orders/:orderId', async (req: any, res: Response) => {
     let customerId: string;
 
     if (userId) {
+      // Ensure user exists in this tenant DB
+      const centralUser = await centralPrisma.user.findUnique({ where: { id: userId } });
+      if (centralUser) {
+        await db.user.upsert({
+          where: { id: userId },
+          update: {
+            email: centralUser.email,
+            userName: centralUser.userName,
+            fullName: centralUser.fullName,
+            phoneNumber: centralUser.phoneNumber,
+            passwordHash: centralUser.passwordHash,
+            isActive: centralUser.isActive,
+            emailVerified: centralUser.emailVerified,
+          },
+          create: {
+            id: centralUser.id,
+            email: centralUser.email,
+            userName: centralUser.userName,
+            fullName: centralUser.fullName,
+            phoneNumber: centralUser.phoneNumber,
+            passwordHash: centralUser.passwordHash,
+            isActive: centralUser.isActive,
+            emailVerified: centralUser.emailVerified,
+          }
+        });
+      }
+
       // Logged in user: get or create customer record
       let customer = await db.customer.findFirst({ where: { userId } });
       if (!customer) {

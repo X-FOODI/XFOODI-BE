@@ -71,18 +71,27 @@ export const ENV = {
   },
 };
 
-// Validate required environment variables
+// Validate required environment variables.
+// In production a missing secret must abort startup (fail fast) instead of
+// letting the app boot with `undefined` cast to string and crash mysteriously
+// later at runtime.
 const validateEnv = () => {
   const required = [
-    'DATABASE_URL', 
-    'JWT_ACCESS_SECRET', 
-    'JWT_REFRESH_SECRET'
+    'DATABASE_URL',
+    'JWT_ACCESS_SECRET',
+    'JWT_REFRESH_SECRET',
+    'REDIS_URL',
   ];
-  
-  const missing = required.filter(key => !process.env[key]);
-  
+
+  const missing = required.filter((key) => !process.env[key]);
+
   if (missing.length > 0) {
-    console.warn(`⚠️ Warning: Missing required environment variables: ${missing.join(', ')}`);
+    const msg = `Missing required environment variables: ${missing.join(', ')}`;
+    if (process.env.NODE_ENV === 'production') {
+      console.error(`❌ ${msg}`);
+      process.exit(1);
+    }
+    console.warn(`⚠️ Warning: ${msg}`);
   }
 };
 

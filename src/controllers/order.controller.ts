@@ -171,14 +171,25 @@ export async function listOrders(req: any, res: Response) {
     }
 
     const { status, tableId, page, limit } = req.query;
-    const orders = await orderService.listOrders(restaurantId, {
+    const result = await orderService.listOrders(restaurantId, {
       status: status as string,
       tableId: tableId as string,
       page: page ? Number(page) : undefined,
       limit: limit ? Number(limit) : undefined,
     });
 
-    return res.json({ success: true, data: orders });
+    // Keep `data` as the array for backward compatibility with existing clients,
+    // and expose pagination metadata alongside it.
+    return res.json({
+      success: true,
+      data: result.items,
+      pagination: {
+        total: result.total,
+        page: result.page,
+        limit: result.limit,
+        totalPages: result.totalPages,
+      },
+    });
   } catch (error: any) {
     console.error('[OrderController] listOrders error:', error);
     const statusCode = error.statusCode || 500;

@@ -346,6 +346,7 @@ model DishImage {
   updatedAt    DateTime @updatedAt
   dish         Dish     @relation(fields: [dishId], references: [id], onDelete: Cascade)
 
+  @@index([dishId])
   @@map("DishImages")
 }
 
@@ -468,6 +469,8 @@ model DishRecipe {
   dish         Dish       @relation(fields: [dishId], references: [id], onDelete: Cascade)
   ingredient   Ingredient @relation(fields: [ingredientId], references: [id])
 
+  @@index([dishId])
+  @@index([ingredientId])
   @@map("DishRecipes")
 }
 
@@ -509,6 +512,8 @@ model ComboDetail {
   combo      MealCombo @relation(fields: [comboId], references: [id], onDelete: Cascade)
   dish       Dish      @relation(fields: [dishId], references: [id])
 
+  @@index([comboId])
+  @@index([dishId])
   @@map("ComboDetails")
 }
 
@@ -867,6 +872,8 @@ model PointsTransaction {
   customer    Customer @relation(fields: [customerId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   order       Order?   @relation(fields: [orderId], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
+  @@index([customerId])
+  @@index([orderId])
   @@map("PointsTransactions")
 }
 
@@ -883,6 +890,8 @@ model PromotionHistory {
   order          Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
   promotion      Promotion @relation(fields: [promotionId], references: [id])
 
+  @@index([promotionId])
+  @@index([orderId])
   @@map("PromotionHistories")
 }
 
@@ -1194,6 +1203,7 @@ model RestaurantDocument {
   status       String   @default("PENDING") // "PENDING" | "PROCESSING" | "INDEXED" | "FAILED"
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
+  errorLog     String?
 
   restaurant   Restaurant        @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
   bucket       RestaurantBucket? @relation(fields: [bucketId], references: [id], onDelete: Cascade)
