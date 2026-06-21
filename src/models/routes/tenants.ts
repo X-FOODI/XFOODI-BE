@@ -77,6 +77,7 @@ router.get('/:domain', async (req, res) => {
       email: restaurant.email,
       status: restaurant.isActive,
       isActive: restaurant.isActive,
+      metadata: restaurant.metadata,
     });
   } catch (error) {
     console.error('Error fetching tenant:', error);
