@@ -4,6 +4,7 @@ import {
   createOrder,
   listOrders,
   getOrderById,
+  getMyOrders,
   updateOrderStatus,
   updateOrderDetailStatus,
 } from '../../controllers/order.controller';
@@ -61,13 +62,16 @@ router.get('/', (req: any, res: any, next: any) => {
   return authMiddleware(req, res, next);
 }, listOrders);
 
-// 3. Get single order details (Public - guests track their order via UUID)
+// 3. Get my orders — customer's own order history (Protected)
+router.get('/my', authMiddleware, getMyOrders);
+
+// 4. Get single order details (Public - guests track their order via UUID)
 router.get('/:id', getOrderById);
 
-// 4. Update order status (Protected - staff confirms or completes order)
+// 5. Update order status (Protected - staff confirms or completes order)
 router.patch('/:id/status', authMiddleware, updateOrderStatus);
 
-// 5. Update individual dish item status (Protected - kitchen cooking update)
+// 6. Update individual dish item status (Protected - kitchen cooking update)
 router.patch('/items/:detailId/status', authMiddleware, updateOrderDetailStatus);
 
 export default router;

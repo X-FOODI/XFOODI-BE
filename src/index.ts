@@ -29,7 +29,7 @@ import { ENV } from './config/env';
 import { UploadQueueService } from './services/uploadQueue.service';
 import { startReservationCronJobs } from './cron/reservationCron';
 
-
+// Trigger restart after Prisma generate
 const app = express();
 const httpServer = http.createServer(app);
 const PORT = ENV.PORT;

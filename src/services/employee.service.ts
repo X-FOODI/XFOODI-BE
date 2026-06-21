@@ -33,9 +33,12 @@ async function getScopedCredentials(restaurantId: string, email: string, usernam
   }
 
   const prefix = restaurant.slug.trim().toLowerCase();
+  const cleanEmailVal = email.includes(':') ? email.substring(email.lastIndexOf(':') + 1) : email;
+  const cleanUsernameVal = username.includes(':') ? username.substring(username.lastIndexOf(':') + 1) : username;
+
   return {
-    scopedEmail: `${prefix}:${email.trim().toLowerCase()}`,
-    scopedUsername: `${prefix}:${username.trim().toLowerCase()}`,
+    scopedEmail: `${prefix}:staff:${cleanEmailVal.trim().toLowerCase()}`,
+    scopedUsername: `${prefix}:staff:${cleanUsernameVal.trim().toLowerCase()}`,
     restaurantSlug: restaurant.slug
   };
 }
@@ -45,7 +48,7 @@ async function getScopedCredentials(restaurantId: string, email: string, usernam
  */
 export function cleanScopedEmail(email: string | null | undefined): string {
   if (!email) return '';
-  return email.includes(':') ? email.substring(email.indexOf(':') + 1) : email;
+  return email.includes(':') ? email.substring(email.lastIndexOf(':') + 1) : email;
 }
 
 export async function listEmployees(restaurantId: string, query: ListEmployeesQuery) {

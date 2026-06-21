@@ -494,7 +494,14 @@ export const handleGetPublicTableDetail: RequestHandler = async (req, res) => {
       return;
     }
 
-    res.json({ success: true, data: tableService.mapTableToItem(table) });
+    res.json({
+      success: true,
+      data: {
+        ...tableService.mapTableToItem(table),
+        restaurant: table.restaurant,
+        floor: table.floor,
+      },
+    });
   } catch (err) {
     handleTableError(res, err);
   }
