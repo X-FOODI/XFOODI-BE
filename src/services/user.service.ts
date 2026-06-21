@@ -47,7 +47,7 @@ const USER_SAFE_SELECT = {
 
 function cleanUserEmail(email: string | null | undefined): string | null {
   if (!email) return null;
-  return email.includes(':') ? email.substring(email.indexOf(':') + 1) : email;
+  return email.includes(':') ? email.substring(email.lastIndexOf(':') + 1) : email;
 }
 
 function toProfileResponse(user: {

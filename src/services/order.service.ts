@@ -351,7 +351,19 @@ export class OrderService {
     const limit = filters.limit || 50;
     const skip = (page - 1) * limit;
 
-    const whereClause: any = { restaurantId };
+    const whereClause: any = {
+      restaurantId,
+      OR: [
+        { reservationId: null },
+        {
+          reservation: {
+            statusValue: {
+              code: { in: ['CONFIRMED', 'CHECKED_IN', 'COMPLETED'] }
+            }
+          }
+        }
+      ]
+    };
     if (filters.status) {
       const sId = statusMap[filters.status.toUpperCase()];
       if (sId) {
@@ -385,6 +397,7 @@ export class OrderService {
         payments: {
           where: { status: 1 }, // COMPLETED
         },
+        reservation: true,
       },
       orderBy: { createdAt: 'desc' },
       skip,
@@ -406,6 +419,9 @@ export class OrderService {
         customerName: o.customer?.user?.fullName || o.customer?.user?.userName || null,
         customerPhone: o.customer?.user?.phoneNumber || null,
         customerEmail: o.customer?.user?.email || null,
+        reservationId: o.reservationId,
+        reservationTime: o.reservation?.time || null,
+        reservationCode: o.reservation?.confirmationCode || null,
         items: o.orderDetails.map((d) => ({
           id: d.id,
           name: d.dish?.name || 'Món ăn',
@@ -450,6 +466,7 @@ export class OrderService {
         payments: {
           where: { status: 1 }, // COMPLETED
         },
+        reservation: true,
       },
     });
 
@@ -471,6 +488,9 @@ export class OrderService {
       customerName: order.customer?.user?.fullName || order.customer?.user?.userName || null,
       customerPhone: order.customer?.user?.phoneNumber || null,
       customerEmail: order.customer?.user?.email || null,
+      reservationId: order.reservationId,
+      reservationTime: order.reservation?.time || null,
+      reservationCode: order.reservation?.confirmationCode || null,
       items: order.orderDetails.map((d) => ({
         id: d.id,
         name: d.dish?.name || 'Món ăn',

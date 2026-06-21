@@ -1,4 +1,4 @@
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient, Prisma } from '@prisma/client';
 import { prismaStorage } from '../lib/prisma';
 import { randomBytes } from 'crypto';
 import { sendReservationReminderEmail } from '../lib/email';
@@ -50,6 +50,11 @@ export interface CreateReservationDto {
     accountNumber: string;
     accountName: string;
   };
+  dishes?: Array<{
+    dishId: string;
+    quantity: number;
+    note?: string;
+  }>;
 }
 
 export interface UpdateReservationDto {
@@ -67,6 +72,8 @@ export interface ReservationFilter {
   from?: string;
   to?: string;
   search?: string;
+  sortBy?: string;
+  sortOrder?: 'asc' | 'desc';
 }
 
 // ── Service ───────────────────────────────────────────────────────────────────
@@ -347,7 +354,10 @@ export class ReservationService {
         reservationStatusId: pendingStatus.id,
         confirmationCode,
         paymentDeadline,
-        metadata: mustLeaveBy ? { mustLeaveBy: mustLeaveBy.toISOString() } : {},
+        metadata: {
+          ...(mustLeaveBy ? { mustLeaveBy: mustLeaveBy.toISOString() } : {}),
+          isAutoAssignment: isAuto,
+        },
         ...(dto.tableIds && dto.tableIds.length > 0
           ? {
               tables: {
@@ -366,6 +376,101 @@ export class ReservationService {
         },
       },
     });
+
+    // Create pre-ordered dishes if provided
+    if (dto.dishes && dto.dishes.length > 0) {
+      try {
+        const dishIds = dto.dishes.map((item) => item.dishId);
+        const dishes = await prisma.dish.findMany({
+          where: { id: { in: dishIds }, restaurantId: dto.restaurantId, isActive: true },
+        });
+
+        if (dishes.length === dishIds.length) {
+          const dishPriceMap = dishes.reduce((acc, dish) => {
+            acc[dish.id] = Number(dish.price);
+            return acc;
+          }, {} as Record<string, number>);
+
+          // Get or create ORDER and ORDER_DETAIL statuses
+          const orderStatusType = await prisma.statusType.upsert({
+            where: { code: 'ORDER' },
+            update: {},
+            create: { code: 'ORDER' },
+          });
+          let orderStatusPending = await prisma.statusValue.findFirst({
+            where: { statusTypeId: orderStatusType.id, code: 'PENDING' },
+          });
+          if (!orderStatusPending) {
+            orderStatusPending = await prisma.statusValue.create({
+              data: {
+                statusTypeId: orderStatusType.id,
+                code: 'PENDING',
+                name: 'Chờ xác nhận',
+                colorCode: '#f1c40f',
+                isSystem: true,
+              },
+            });
+          }
+
+          const detailStatusType = await prisma.statusType.upsert({
+            where: { code: 'ORDER_DETAIL' },
+            update: {},
+            create: { code: 'ORDER_DETAIL' },
+          });
+          let orderDetailStatusPending = await prisma.statusValue.findFirst({
+            where: { statusTypeId: detailStatusType.id, code: 'PENDING' },
+          });
+          if (!orderDetailStatusPending) {
+            orderDetailStatusPending = await prisma.statusValue.create({
+              data: {
+                statusTypeId: detailStatusType.id,
+                code: 'PENDING',
+                name: 'Chờ làm',
+                colorCode: '#f39c12',
+                isSystem: true,
+              },
+            });
+          }
+
+          // Generate order reference
+          const todayStr = new Date().toISOString().slice(2, 10).replace(/-/g, ''); // YYMMDD
+          const count = await prisma.order.count({
+            where: { restaurantId: dto.restaurantId, createdAt: { gte: new Date(new Date().setHours(0, 0, 0, 0)) } },
+          });
+          const reference = `ORD-${todayStr}-${(count + 1).toString().padStart(4, '0')}`;
+
+          const subTotal = dto.dishes.reduce((sum, item) => sum + item.quantity * (dishPriceMap[item.dishId] || 0), 0);
+          const taxAmount = subTotal * 0.1;
+          const totalAmount = subTotal + taxAmount;
+
+          await prisma.order.create({
+            data: {
+              reference,
+              restaurantId: dto.restaurantId,
+              customerId: dto.customerId || null,
+              reservationId: reservation.id,
+              orderStatusId: orderStatusPending.id,
+              subTotal: new Prisma.Decimal(subTotal),
+              discountAmount: 0,
+              taxAmount: new Prisma.Decimal(taxAmount),
+              serviceCharge: 0,
+              totalAmount: new Prisma.Decimal(totalAmount),
+              orderDetails: {
+                create: dto.dishes.map((item) => ({
+                  dishId: item.dishId,
+                  quantity: item.quantity,
+                  note: item.note || null,
+                  itemStatusId: orderDetailStatusPending!.id,
+                  unitPrice: new Prisma.Decimal(dishPriceMap[item.dishId] || 0),
+                })),
+              },
+            },
+          });
+        }
+      } catch (err: any) {
+        console.error('[CreateReservation] Failed to create pre-order:', err?.message);
+      }
+    }
 
     // Generate QR code — non-blocking, never throws
     let qrCodeUrl: string | null = null;
@@ -451,12 +556,19 @@ export class ReservationService {
       ];
     }
 
+    const orderBy: any = {};
+    if (filter.sortBy) {
+      orderBy[filter.sortBy] = filter.sortOrder ?? 'asc';
+    } else {
+      orderBy.time = 'asc';
+    }
+
     const [items, total] = await Promise.all([
       prisma.reservation.findMany({
         where,
         skip,
         take: limit,
-        orderBy: { time: 'asc' },
+        orderBy,
         include: {
           tables: { include: { table: { select: { id: true, code: true, seatingCapacity: true } } } },
           statusValue: { select: { id: true, code: true, name: true, colorCode: true } },
@@ -569,6 +681,71 @@ export class ReservationService {
       this.sendConfirmationEmail(id).catch((e: any) =>
         console.error('[UpdateStatus] Failed to send confirmation email:', e)
       );
+
+      // Check if there is an associated pre-order and broadcast it to the kitchen
+      (async () => {
+        try {
+          const order = await prisma.order.findFirst({
+            where: { reservationId: id },
+            include: {
+              orderDetails: {
+                include: {
+                  dish: { select: { name: true, price: true, imageUrl: true } },
+                  statusValue: { select: { code: true, name: true, colorCode: true } },
+                },
+              },
+              customer: {
+                include: {
+                  user: true,
+                },
+              },
+              reservation: true,
+            },
+          });
+
+          if (order) {
+            const { getIO } = require('../socket');
+            const io = getIO();
+
+            const statusMap = await prisma.statusValue.findFirst({
+              where: { id: order.orderStatusId },
+              select: { code: true }
+            });
+
+            const broadcastPayload = {
+              id: order.id,
+              reference: order.reference,
+              table: 'Mang đi',
+              tableId: null,
+              subTotal: Number(order.subTotal),
+              totalAmount: Number(order.totalAmount),
+              createdAt: order.createdAt,
+              status: statusMap?.code || 'PENDING',
+              customerName: order.customer?.user?.fullName || order.customer?.user?.userName || null,
+              customerPhone: order.customer?.user?.phoneNumber || null,
+              customerEmail: order.customer?.user?.email || null,
+              reservationId: order.reservationId,
+              reservationTime: order.reservation?.time || null,
+              reservationCode: order.reservation?.confirmationCode || null,
+              items: order.orderDetails.map((d: any) => ({
+                id: d.id,
+                name: d.dish?.name || 'Món ăn',
+                imageUrl: d.dish?.imageUrl || null,
+                quantity: d.quantity,
+                price: Number(d.unitPrice),
+                note: d.note,
+                status: d.statusValue?.code,
+                statusName: d.statusValue?.name,
+              })),
+            };
+
+            io.to(`restaurant_${updated.restaurantId || (current as any).restaurantId}`).emit('NEW_ORDER', broadcastPayload);
+            console.log(`[UpdateStatus] Broadcasted pre-order ${order.reference} for confirmed reservation ${id}`);
+          }
+        } catch (orderBroadcastErr: any) {
+          console.warn('[UpdateStatus] Failed to broadcast pre-order to kitchen:', orderBroadcastErr?.message);
+        }
+      })();
     }
 
     return updated;
@@ -671,6 +848,88 @@ export class ReservationService {
       ).catch((e: any) =>
         console.error('[CheckIn] Welcome email failed (non-blocking):', e?.message ?? e),
       );
+    }
+
+    // Start table sessions for all assigned tables and link preorder if exists
+    try {
+      const preOrder = await prisma.order.findFirst({
+        where: {
+          reservationId: reservation.id,
+          orderStatusId: {
+            not: (await prisma.statusValue.findFirst({
+              where: { statusType: { code: 'ORDER' }, code: 'CANCELLED' }
+            }))?.id
+          }
+        },
+        select: { id: true }
+      });
+      const orderId = preOrder?.id || null;
+
+      // Find occupied status ID
+      let occupiedStatus = await prisma.statusValue.findFirst({
+        where: { statusType: { code: 'TABLE' }, code: 'OCCUPIED' }
+      });
+      if (!occupiedStatus) {
+        const tableStatusType = await prisma.statusType.upsert({
+          where: { code: 'TABLE' },
+          update: {},
+          create: { code: 'TABLE' }
+        });
+        occupiedStatus = await prisma.statusValue.create({
+          data: {
+            statusTypeId: tableStatusType.id,
+            code: 'OCCUPIED',
+            name: 'Đang dùng bữa',
+            colorCode: '#e74c3c',
+            isSystem: true
+          }
+        });
+      }
+
+      for (const rt of updated.tables) {
+        const tableId = rt.tableId;
+        // Check if there is already an active session
+        const existingSession = await prisma.tableSession.findFirst({
+          where: { tableId, isActive: true }
+        });
+        if (!existingSession) {
+          // Create new table session
+          const newSession = await prisma.tableSession.create({
+            data: {
+              tableId,
+              orderId,
+              startedAt: now,
+              isActive: true
+            }
+          });
+          // Update table status to Occupied
+          await prisma.table.update({
+            where: { id: tableId },
+            data: { tableStatusId: occupiedStatus.id }
+          });
+
+          // Broadcast TABLE_SESSION_STARTED via socket
+          try {
+            const { getIO } = require('../socket');
+            const io = getIO();
+            io.to(`restaurant_${reservation.restaurantId}`).emit('TABLE_SESSION_STARTED', {
+              tableId,
+              sessionId: newSession.id,
+              status: 'OCCUPIED',
+            });
+          } catch (e) {
+            console.warn('[CheckIn] Socket broadcast failed:', e);
+          }
+        } else if (orderId && !existingSession.orderId) {
+          // Link pre-order to existing active session if it doesn't have an order
+          await prisma.tableSession.update({
+            where: { id: existingSession.id },
+            data: { orderId }
+          });
+        }
+      }
+    } catch (sessionErr: any) {
+      console.error('[CheckIn] Failed to start table sessions:', sessionErr?.message);
     }
 
     return updated;
@@ -834,6 +1093,12 @@ export class ReservationService {
           data: newTableIds.map(tableId => ({ reservationId: id, tableId }))
         });
       }
+      // Also update metadata isAutoAssignment to false
+      const currentMetadata = (reservation.metadata as any) || {};
+      updateData.metadata = {
+        ...currentMetadata,
+        isAutoAssignment: false,
+      };
     }
 
     const updated = await prisma.reservation.update({
@@ -1078,6 +1343,44 @@ export class ReservationService {
       }
     }
 
+    // If the reservation has an associated pre-order, update its status to CANCELLED and notify kitchen
+    try {
+      const order = await prisma.order.findFirst({
+        where: { reservationId: id },
+      });
+      if (order) {
+        const orderStatusType = await prisma.statusType.findUnique({
+          where: { code: 'ORDER' },
+        });
+        if (orderStatusType) {
+          const cancelledOrderStatus = await prisma.statusValue.findFirst({
+            where: { statusTypeId: orderStatusType.id, code: 'CANCELLED' },
+          });
+          if (cancelledOrderStatus) {
+            await prisma.order.update({
+              where: { id: order.id },
+              data: { orderStatusId: cancelledOrderStatus.id },
+            });
+            console.log(`[Cancel] Cancelled associated order ${order.reference} for reservation ${id}`);
+
+            // Broadcast status change to kitchen
+            try {
+              const { getIO } = require('../socket');
+              const io = getIO();
+              io.to(`restaurant_${reservation.restaurantId}`).emit('ORDER_STATUS_CHANGED', {
+                orderId: order.id,
+                status: 'CANCELLED',
+              });
+            } catch (socketErr: any) {
+              console.warn('[Cancel] Socket broadcast failed for cancelled order:', socketErr?.message);
+            }
+          }
+        }
+      }
+    } catch (orderCancelErr: any) {
+      console.warn('[Cancel] Failed to cancel associated pre-order:', orderCancelErr?.message);
+    }
+
     // Update reservation status to CANCELLED and clear review/no-show flags
     const updated = await prisma.reservation.update({
       where: { id },
@@ -1289,7 +1592,7 @@ export class ReservationService {
         isActive: true,
       },
       include: {
-        floor: { select: { id: true, name: true } },
+        floor: { select: { id: true, name: true, width: true, height: true, imageUrl: true } },
         tableStatus: { select: { id: true, code: true, name: true } },
       },
       orderBy: { code: 'asc' },
