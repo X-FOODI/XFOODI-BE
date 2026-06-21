@@ -215,7 +215,7 @@ export class UploadQueueService {
     let dbClient: PrismaClient;
     let logLabel: string;
 
-    if (isCentralDb) {
+    if (isCentralDb || restaurantId === 'system') {
       dbClient = centralPrisma as unknown as PrismaClient;
       logLabel = 'central';
     } else {
@@ -228,22 +228,39 @@ export class UploadQueueService {
       logLabel = `tenant "${restaurant.slug}"`;
     }
 
-    await prismaStorage.run(dbClient as any, async () => {
-      console.log(`[UploadQueue] Fetching file buffer from: ${fileUrl} for ${logLabel}`);
-      const buffer = await this.getFileBuffer(fileUrl);
+    try {
+      await prismaStorage.run(dbClient as any, async () => {
+        console.log(`[UploadQueue] Fetching file buffer from: ${fileUrl} for ${logLabel}`);
+        const buffer = await this.getFileBuffer(fileUrl);
 
-      await KnowledgeBaseService.processDocumentChunks(
-        documentId,
-        restaurantId,
-        filename,
-        buffer,
-        fileType,
-        fileUrl,
-        chunkingStrategy,
-        chunkSize,
-        chunkOverlap
-      );
-    });
+        await KnowledgeBaseService.processDocumentChunks(
+          documentId,
+          restaurantId,
+          filename,
+          buffer,
+          fileType,
+          fileUrl,
+          chunkingStrategy,
+          chunkSize,
+          chunkOverlap,
+          isCentralDb || restaurantId === 'system'
+        );
+      });
+    } catch (err: any) {
+      console.error(`[UploadQueue] Job failed for document ${filename}:`, err);
+      try {
+        await dbClient.restaurantDocument.update({
+          where: { id: documentId },
+          data: {
+            status: 'FAILED',
+            errorLog: err.stack || err.message || String(err)
+          }
+        });
+      } catch (dbErr) {
+        console.error(`[UploadQueue] Failed to update document status to FAILED in DB:`, dbErr);
+      }
+      throw err;
+    }
   }
 
   public static async getFileBuffer(fileUrl: string): Promise<Buffer> {

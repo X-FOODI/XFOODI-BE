@@ -182,6 +182,7 @@ router.get('/kb/documents', authMiddleware, tenantGuard, async (req: any, res: a
         status: true,
         createdAt: true,
         bucketId: true,
+        errorLog: true,
       },
     });
 
@@ -959,6 +960,85 @@ router.get('/kb/documents/:id/raw', authMiddleware, tenantGuard, async (req: any
   } catch (err: any) {
     console.error('[KB API] Get raw content error:', err);
     return res.status(500).json({ success: false, message: err.message || 'Lỗi server khi tải nội dung file.' });
+  }
+});
+
+/**
+ * 3.7. POST /api/ai/kb/documents/:id/process
+ * Xử lý lại (retry) chunking/embedding cho một tài liệu lẻ
+ */
+router.post('/kb/documents/:id/process', authMiddleware, tenantGuard, async (req: any, res: any) => {
+  try {
+    const { id } = req.params;
+    let restaurantId = req.user?.restaurantId;
+
+    const userRoles = Array.isArray(req.user?.roles) ? req.user?.roles : req.user?.role ? [req.user.role] : [];
+    const isSystemAdmin = userRoles.includes('Admin') || userRoles.includes('SuperAdmin') || userRoles.includes('System Admin');
+    
+    if (isSystemAdmin && (req.body.restaurantId || req.query.restaurantId)) {
+      restaurantId = req.body.restaurantId || req.query.restaurantId;
+    }
+
+    let doc;
+    if (isSystemAdmin) {
+      doc = await prisma.restaurantDocument.findUnique({ where: { id } });
+    } else {
+      if (!restaurantId) {
+        return res.status(400).json({ success: false, message: 'Không tìm thấy nhà hàng.' });
+      }
+      doc = await prisma.restaurantDocument.findFirst({ where: { id, restaurantId } });
+    }
+
+    if (!doc) {
+      return res.status(404).json({ success: false, message: 'Không tìm thấy tài liệu hoặc không có quyền xử lý.' });
+    }
+
+    let strategy = 'FIXED';
+    let size = 800;
+    let overlap = 100;
+
+    if (doc.bucketId) {
+      const bucket = await prisma.restaurantBucket.findUnique({
+        where: { id: doc.bucketId }
+      });
+      if (bucket) {
+        strategy = bucket.chunkingStrategy || 'FIXED';
+        size = bucket.chunkSize !== undefined ? Number(bucket.chunkSize) : 800;
+        overlap = bucket.chunkOverlap !== undefined ? Number(bucket.chunkOverlap) : 100;
+      }
+    }
+
+    // Xóa các chunk cũ
+    await prisma.documentChunk.deleteMany({ where: { documentId: doc.id } });
+
+    // Đặt trạng thái PROCESSING
+    await prisma.restaurantDocument.update({
+      where: { id: doc.id },
+      data: { status: 'PROCESSING' }
+    });
+
+    const { UploadQueueService } = await import('../../services/uploadQueue.service');
+
+    // Queue xử lý
+    await UploadQueueService.addUploadJob({
+      documentId: doc.id,
+      restaurantId: doc.restaurantId,
+      filename: doc.filename,
+      fileUrl: doc.fileUrl,
+      fileType: doc.fileType as 'PDF' | 'TXT' | 'MD',
+      chunkingStrategy: strategy,
+      chunkSize: size,
+      chunkOverlap: overlap,
+      isCentralDb: !req.tenant && !req.restaurant,
+    });
+
+    return res.json({
+      success: true,
+      message: `Đã đưa tài liệu "${doc.filename}" vào hàng đợi xử lý lại.`
+    });
+  } catch (err: any) {
+    console.error('[KB API] Process single document error:', err);
+    return res.status(500).json({ success: false, message: err.message || 'Lỗi server khi xử lý lại tài liệu.' });
   }
 });
 

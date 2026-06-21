@@ -6,5 +6,7 @@ dist
 .git
 .github
 *.log
+logs
+uploads
 Dockerfile
 .dockerignore

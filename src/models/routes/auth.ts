@@ -1277,8 +1277,22 @@ router.post('/phone-login/otp', async (req: any, res: any) => {
       normalizedPhone = '+84' + normalizedPhone.substring(1);
     }
 
-    // Generate secure 6-digit verification code
-    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    // Rate limit: max 3 OTP sends per phone per 15 minutes (prevents SMS-cost
+    // abuse and OTP brute-force by flooding new codes).
+    const otpRateKey = `phone_otp_rate:${normalizedPhone}`;
+    const otpAttempts = await redisClient.incr(otpRateKey);
+    if (otpAttempts === 1) {
+      await redisClient.expire(otpRateKey, 15 * 60);
+    }
+    if (otpAttempts > 3) {
+      return res.status(429).json({
+        success: false,
+        message: 'Bạn đã yêu cầu mã quá nhiều lần. Vui lòng thử lại sau 15 phút.',
+      });
+    }
+
+    // Generate cryptographically secure 6-digit verification code
+    const otp = crypto.randomInt(100000, 1000000).toString();
 
     // Store in Redis (Key phone_otp:{phoneNumber}, TTL 300 seconds = 5 minutes)
     await redisClient.setEx(`phone_otp:${normalizedPhone}`, 300, otp);

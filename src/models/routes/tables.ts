@@ -1,8 +1,9 @@
-import { Router } from 'express';
+import { Router, type RequestHandler } from 'express';
 import type { Router as ExpressRouter } from 'express';
 import multer from 'multer';
 import { authMiddleware } from './auth';
 import { tenantGuard } from '../../middlewares/tenantGuard';
+import { prismaStorage, centralPrisma } from '../../lib/prisma';
 import {
   handleListTables,
   handleGetTableById,
@@ -10,6 +11,7 @@ import {
   handleUpdateTable,
   handleUpdateTableStatus,
   handleDeleteTable,
+  handleBulkDeleteTables,
   handleGetSessions,
   handleCreateSessionByTableId,
   handleCloseSessions,
@@ -40,6 +42,27 @@ function multerErrorHandler(err: any, req: any, res: any, next: any) {
   next();
 }
 
+/**
+ * Wraps a multer middleware to preserve the AsyncLocalStorage context.
+ * Multer internally uses streams/callbacks that can break out of the
+ * AsyncLocalStorage execution context, causing prismaStorage.getStore()
+ * to return undefined in downstream handlers.
+ *
+ * This wrapper captures the active store BEFORE multer runs and re-runs
+ * prismaStorage.run() AFTER multer completes so the context is restored.
+ */
+function withContextPreserved(multerMiddleware: RequestHandler): RequestHandler {
+  return (req, res, next) => {
+    const activeClient = prismaStorage.getStore() || centralPrisma;
+    multerMiddleware(req, res, (err) => {
+      if (err) return next(err);
+      prismaStorage.run(activeClient, () => {
+        next();
+      });
+    });
+  };
+}
+
 // Public route for customers scanning QR code
 router.get('/public/:id', handleGetPublicTableDetail);
 
@@ -56,9 +79,11 @@ router.post('/:tableId/sessions', handleCreateSessionByTableId);
 // Table CRUD
 router.get('/', handleListTables);
 router.post('/', handleCreateTable);
+// Bulk delete must come before /:id to avoid route conflict
+router.delete('/', handleBulkDeleteTables);
 router.get('/:id', handleGetTableById);
 router.put('/:id/status', handleUpdateTableStatus);
-router.put('/:id', tableUpload.any(), multerErrorHandler, handleUpdateTable);
+router.put('/:id', withContextPreserved(tableUpload.any() as RequestHandler), multerErrorHandler, handleUpdateTable);
 router.delete('/:id', handleDeleteTable);
 
 export default router;

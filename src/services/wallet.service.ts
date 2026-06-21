@@ -86,38 +86,35 @@ export class WalletService {
     const before = Number(wallet.balance);
     const after = isCash ? before : before + params.amount;
 
-    // Update balance atomically
-    if (isCash) {
-      await prisma.restaurantWallet.update({
+    // Update balance and record the ledger entry atomically so the wallet
+    // balance can never diverge from its transaction history.
+    await prisma.$transaction(async (tx) => {
+      await tx.restaurantWallet.update({
         where: { id: wallet.id },
-        data: {
-          cashBalance: { increment: params.amount },
-          lifetimeEarned: { increment: params.amount },
-        },
+        data: isCash
+          ? {
+              cashBalance: { increment: params.amount },
+              lifetimeEarned: { increment: params.amount },
+            }
+          : {
+              balance: { increment: params.amount },
+              lifetimeEarned: { increment: params.amount },
+            },
       });
-    } else {
-      await prisma.restaurantWallet.update({
-        where: { id: wallet.id },
-        data: {
-          balance: { increment: params.amount },
-          lifetimeEarned: { increment: params.amount },
-        },
-      });
-    }
 
-    // Record transaction
-    await prisma.walletTransaction.create({
-      data: {
-        walletId: wallet.id,
-        type: isCash ? 'CASH_REVENUE' : 'ORDER_REVENUE',
-        amount: params.amount,
-        balanceBefore: before,
-        balanceAfter: after,
-        orderId: params.orderId,
-        paymentId: params.paymentId,
-        description: isCash ? 'Doanh thu tiền mặt' : 'Doanh thu chuyển khoản',
-        metadata: { orderId: params.orderId, paymentMethodCode: params.paymentMethodCode },
-      },
+      await tx.walletTransaction.create({
+        data: {
+          walletId: wallet.id,
+          type: isCash ? 'CASH_REVENUE' : 'ORDER_REVENUE',
+          amount: params.amount,
+          balanceBefore: before,
+          balanceAfter: after,
+          orderId: params.orderId,
+          paymentId: params.paymentId,
+          description: isCash ? 'Doanh thu tiền mặt' : 'Doanh thu chuyển khoản',
+          metadata: { orderId: params.orderId, paymentMethodCode: params.paymentMethodCode },
+        },
+      });
     });
 
     return { walletId: wallet.id, newBalance: after };
@@ -162,37 +159,49 @@ export class WalletService {
    */
   async requestWithdrawal(dto: WithdrawDto) {
     const prisma = getPrisma();
-    const wallet = await this.getOrCreateWallet(dto.restaurantId);
-
-    // Check available balance (subtract pending withdrawals)
-    const pending = await prisma.withdrawalRequest.findMany({
-      where: { walletId: wallet.id, status: { in: ['PENDING', 'PROCESSING'] } },
-    });
-    const locked = pending.reduce((s, w) => s + Number(w.amount), 0);
-    const available = Number(wallet.balance) - locked;
-
-    if (dto.amount > available) {
-      throw new Error(
-        `Số dư khả dụng không đủ. Khả dụng: ${available.toLocaleString('vi-VN')}đ`,
-      );
-    }
 
     if (dto.amount < 10000) {
       throw new Error('Số tiền rút tối thiểu là 10,000đ');
     }
 
-    const request = await prisma.withdrawalRequest.create({
-      data: {
-        walletId: wallet.id,
-        restaurantId: dto.restaurantId,
-        amount: dto.amount,
-        bankCode: dto.bankCode,
-        bankBin: dto.bankBin,
-        accountNumber: dto.accountNumber,
-        accountName: dto.accountName,
-        status: 'PENDING',
+    const wallet = await this.getOrCreateWallet(dto.restaurantId);
+
+    // Re-read balance + pending withdrawals and create the new request inside a
+    // single serializable transaction. Without this, two concurrent requests can
+    // both pass the available-balance check and overdraw the wallet.
+    const request = await prisma.$transaction(
+      async (tx) => {
+        const freshWallet = await tx.restaurantWallet.findUniqueOrThrow({
+          where: { id: wallet.id },
+        });
+
+        const pending = await tx.withdrawalRequest.findMany({
+          where: { walletId: wallet.id, status: { in: ['PENDING', 'PROCESSING'] } },
+        });
+        const locked = pending.reduce((s, w) => s + Number(w.amount), 0);
+        const available = Number(freshWallet.balance) - locked;
+
+        if (dto.amount > available) {
+          throw new Error(
+            `Số dư khả dụng không đủ. Khả dụng: ${available.toLocaleString('vi-VN')}đ`,
+          );
+        }
+
+        return tx.withdrawalRequest.create({
+          data: {
+            walletId: wallet.id,
+            restaurantId: dto.restaurantId,
+            amount: dto.amount,
+            bankCode: dto.bankCode,
+            bankBin: dto.bankBin,
+            accountNumber: dto.accountNumber,
+            accountName: dto.accountName,
+            status: 'PENDING',
+          },
+        });
       },
-    });
+      { isolationLevel: 'Serializable' },
+    );
 
     return request;
   }
@@ -200,12 +209,13 @@ export class WalletService {
   /**
    * [ADMIN] Get all withdrawal requests.
    */
-  async listWithdrawals(filter: { status?: string; page?: number; limit?: number }) {
+  async listWithdrawals(filter: { status?: string; restaurantId?: string; page?: number; limit?: number }) {
     const prisma = getPrisma();
     const page = filter.page ?? 1;
     const limit = filter.limit ?? 20;
     const where: any = {};
     if (filter.status) where.status = filter.status;
+    if (filter.restaurantId) where.restaurantId = filter.restaurantId;
 
     const [items, total] = await Promise.all([
       prisma.withdrawalRequest.findMany({
@@ -244,8 +254,15 @@ export class WalletService {
       data: { status: 'PROCESSING', adminNote },
     });
 
+    // Track whether the external payout actually went through. If the payout
+    // succeeded but the ledger update later fails, we must NOT mark the request
+    // FAILED (that would imply no money moved) — leave it PROCESSING for manual
+    // reconciliation instead.
+    let payoutDone = false;
+
     try {
-      // Try PayOS payout
+      // Try PayOS payout (external network call kept OUTSIDE the DB transaction
+      // so we never hold row locks across a remote request).
       const payos = getPayOS();
       let externalTxId = `MANUAL_${Date.now()}`;
 
@@ -263,42 +280,56 @@ export class WalletService {
         );
         externalTxId = result.id || result.referenceId || referenceId;
       }
+      payoutDone = true;
 
-      // Deduct balance
       const before = Number(withdrawal.wallet.balance);
       const after = before - Number(withdrawal.amount);
 
-      await prisma.restaurantWallet.update({
-        where: { id: withdrawal.walletId },
-        data: { balance: { decrement: Number(withdrawal.amount) } },
-      });
+      // Deduct balance, record the debit and mark completed atomically. The
+      // balance is only ever touched AFTER the payout has succeeded.
+      await prisma.$transaction(async (tx) => {
+        await tx.restaurantWallet.update({
+          where: { id: withdrawal.walletId },
+          data: { balance: { decrement: Number(withdrawal.amount) } },
+        });
 
-      // Record debit transaction
-      await prisma.walletTransaction.create({
-        data: {
-          walletId: withdrawal.walletId,
-          type: 'WITHDRAWAL_DEBIT',
-          amount: Number(withdrawal.amount),
-          balanceBefore: before,
-          balanceAfter: after,
-          description: `Rút tiền về tài khoản ${withdrawal.accountNumber}`,
-          metadata: { withdrawalId, externalTxId },
-        },
-      });
+        await tx.walletTransaction.create({
+          data: {
+            walletId: withdrawal.walletId,
+            type: 'WITHDRAWAL_DEBIT',
+            amount: Number(withdrawal.amount),
+            balanceBefore: before,
+            balanceAfter: after,
+            description: `Rút tiền về tài khoản ${withdrawal.accountNumber}`,
+            metadata: { withdrawalId, externalTxId },
+          },
+        });
 
-      // Mark completed
-      await prisma.withdrawalRequest.update({
-        where: { id: withdrawalId },
-        data: {
-          status: 'COMPLETED',
-          externalTxId,
-          processedAt: new Date(),
-        },
+        await tx.withdrawalRequest.update({
+          where: { id: withdrawalId },
+          data: {
+            status: 'COMPLETED',
+            externalTxId,
+            processedAt: new Date(),
+          },
+        });
       });
 
       return { success: true, externalTxId };
     } catch (err: any) {
-      // Rollback to PENDING on failure so admin can retry
+      if (payoutDone) {
+        // Money already disbursed — keep PROCESSING and flag for reconciliation.
+        await prisma.withdrawalRequest.update({
+          where: { id: withdrawalId },
+          data: {
+            adminNote: `PAYOUT_SENT_BUT_LEDGER_FAILED: ${err.message}`,
+          },
+        });
+        throw new Error(
+          `Đã giải ngân nhưng cập nhật sổ thất bại, cần đối soát thủ công: ${err.message}`,
+        );
+      }
+      // Payout never happened — safe to mark FAILED so admin can retry.
       await prisma.withdrawalRequest.update({
         where: { id: withdrawalId },
         data: { status: 'FAILED', adminNote: err.message },
