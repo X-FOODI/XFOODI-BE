@@ -77,6 +77,7 @@ export const prisma = new Proxy({} as PrismaClient, {
       'socialHashtag',
       'socialPostHashtag',
       'socialNotification',
+      'systemSetting',
     ];
 
     // Determine whether to use the central client or the tenant-specific client
