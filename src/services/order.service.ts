@@ -516,6 +516,10 @@ export class OrderService {
         note: d.note,
         status: d.statusValue?.code,
         statusName: d.statusValue?.name,
+        comboId: d.comboId,
+        parentId: d.parentId,
+        comboName: d.comboName,
+        comboPrice: d.comboPrice ? Number(d.comboPrice) : null,
       })),
     };
   }
@@ -620,6 +624,157 @@ export class OrderService {
     });
 
     return updated;
+  }
+
+  /**
+   * Update the list of items in an unpaid order.
+   * - Validates order belongs to restaurant and is not paid.
+   * - Synchronizes the orderDetails (adds new, updates existing, removes missing).
+   * - Recalculates subTotal, taxAmount, and totalAmount.
+   */
+  async updateOrderItems(
+    restaurantId: string,
+    orderId: string,
+    items: Array<{
+      id?: string;
+      dishId?: string;
+      quantity: number;
+      note?: string;
+      comboId?: string;
+      parentId?: string;
+      comboName?: string;
+      comboPrice?: number;
+    }>
+  ) {
+    if (!items || items.length === 0) {
+      throw new OrderServiceError(400, 'Danh sách món ăn không được để trống');
+    }
+
+    // Check order and payment status
+    const order = await prisma.order.findUnique({
+      where: { id: orderId },
+      include: { payments: true }
+    });
+
+    if (!order || order.restaurantId !== restaurantId) {
+      throw new OrderServiceError(404, 'Đơn hàng không tồn tại');
+    }
+
+    const isPaid = order.payments.some((p) => p.status === 1); // 1 = COMPLETED
+    if (isPaid) {
+      throw new OrderServiceError(400, 'Không thể chỉnh sửa hóa đơn đã thanh toán');
+    }
+
+    const itemStatusMap = await ensureOrderDetailStatuses();
+    const pendingStatusId = itemStatusMap['PENDING'];
+
+    const dishIds = items.filter(i => i.dishId).map(i => i.dishId as string);
+    const dishes = await prisma.dish.findMany({
+      where: { id: { in: dishIds }, restaurantId },
+    });
+    const dishPriceMap = dishes.reduce((acc, dish) => {
+      acc[dish.id] = Number(dish.price);
+      return acc;
+    }, {} as Record<string, number>);
+
+    return await prisma.$transaction(async (tx) => {
+      // 1. Get existing order details
+      const existingDetails = await tx.orderDetail.findMany({
+        where: { orderId: order.id }
+      });
+      const existingIds = existingDetails.map(d => d.id);
+      
+      const newItems = items.filter(i => !i.id);
+      const updateItems = items.filter(i => i.id);
+      const updateIds = updateItems.map(i => i.id as string);
+      
+      // Items to delete (exist in DB but not in request)
+      const idsToDelete = existingIds.filter(id => !updateIds.includes(id));
+
+      // 2. Delete removed items
+      if (idsToDelete.length > 0) {
+        await tx.orderDetail.deleteMany({
+          where: { id: { in: idsToDelete } }
+        });
+      }
+
+      // 3. Update existing items
+      for (const item of updateItems) {
+        await tx.orderDetail.update({
+          where: { id: item.id },
+          data: {
+            quantity: item.quantity,
+            note: item.note || null,
+          }
+        });
+      }
+
+      // 4. Add new items
+      for (const item of newItems) {
+        let unitPrice = 0;
+        if (item.dishId && dishPriceMap[item.dishId]) {
+          unitPrice = dishPriceMap[item.dishId];
+        }
+        
+        await tx.orderDetail.create({
+          data: {
+            orderId: order.id,
+            dishId: item.dishId || null,
+            quantity: item.quantity,
+            note: item.note || null,
+            itemStatusId: pendingStatusId,
+            unitPrice: new Prisma.Decimal(unitPrice),
+            comboId: item.comboId || null,
+            parentId: item.parentId || null,
+            comboName: item.comboName || null,
+            comboPrice: item.comboPrice ? new Prisma.Decimal(item.comboPrice) : null,
+          }
+        });
+      }
+
+      // 5. Recalculate totals
+      const currentDetails = await tx.orderDetail.findMany({
+        where: { orderId: order.id }
+      });
+
+      const subTotal = currentDetails.reduce((sum, item) => {
+        const price = item.comboPrice && !item.parentId ? Number(item.comboPrice) : Number(item.unitPrice);
+        return sum + (item.quantity * price);
+      }, 0);
+
+      const taxAmount = subTotal * 0.1; // Standard 10% tax
+      const totalAmount = subTotal + taxAmount;
+
+      const updatedOrder = await tx.order.update({
+        where: { id: order.id },
+        data: {
+          subTotal: new Prisma.Decimal(subTotal),
+          taxAmount: new Prisma.Decimal(taxAmount),
+          totalAmount: new Prisma.Decimal(totalAmount),
+        },
+        include: {
+          orderDetails: {
+            include: {
+              dish: { select: { name: true, price: true, imageUrl: true } },
+              statusValue: { select: { code: true, name: true, colorCode: true } },
+            },
+          },
+        }
+      });
+
+      // Broadcast update
+      const io = getIO();
+      const broadcastPayload = {
+        id: updatedOrder.id,
+        reference: updatedOrder.reference,
+        subTotal,
+        totalAmount,
+        status: 'UPDATED',
+      };
+      io.to(`restaurant_${restaurantId}`).emit('ORDER_UPDATED', broadcastPayload);
+
+      return updatedOrder;
+    });
   }
 }
 
