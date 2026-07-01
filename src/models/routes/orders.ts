@@ -7,6 +7,7 @@ import {
   getMyOrders,
   updateOrderStatus,
   updateOrderDetailStatus,
+  updateOrderItems,
 } from '../../controllers/order.controller';
 import { getIO } from '../../socket';
 
@@ -77,5 +78,8 @@ router.patch('/:id/status', authMiddleware, updateOrderStatus);
 
 // 6. Update individual dish item status (Protected - kitchen cooking update)
 router.patch('/items/:detailId/status', authMiddleware, updateOrderDetailStatus);
+
+// 7. Update order items list (Protected - staff updates unpaid order)
+router.put('/:id/items', authMiddleware, updateOrderItems);
 
 export default router;

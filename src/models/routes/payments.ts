@@ -90,4 +90,61 @@ router.post('/sepay-webhook', async (req, res) => {
   }
 });
 
+// ── Admin: List all payments platform-wide ───────────────────────────────────
+router.get('/admin/list', authMiddleware, requireRole('Admin', 'SuperAdmin'), async (req, res) => {
+  try {
+    const { page = '1', limit = '15', search = '' } = req.query;
+    const skip = (parseInt(page as string) - 1) * parseInt(limit as string);
+
+    // Using central prisma (since we are on admin endpoint, getPrisma might point to central anyway if no tenant header)
+    const { prisma } = await import('../../lib/prisma');
+
+    const where: any = {};
+    if (search) {
+      // Just basic search by transactionId or something
+      where.OR = [
+        { transactionId: { contains: search, mode: 'insensitive' } },
+        { order: { reference: { contains: search, mode: 'insensitive' } } },
+      ];
+    }
+
+    const [items, total] = await Promise.all([
+      prisma.payment.findMany({
+        where,
+        skip,
+        take: parseInt(limit as string),
+        orderBy: { paymentDate: 'desc' },
+        include: {
+          paymentMethod: true,
+          order: {
+            include: {
+              restaurant: { select: { name: true, slug: true } }
+            }
+          },
+          reservation: {
+            include: {
+              restaurant: { select: { name: true, slug: true } }
+            }
+          },
+        },
+      }),
+      prisma.payment.count({ where }),
+    ]);
+
+    return res.json({
+      success: true,
+      data: {
+        items,
+        total,
+        page: parseInt(page as string),
+        limit: parseInt(limit as string),
+        totalPages: Math.ceil(total / parseInt(limit as string)),
+      }
+    });
+  } catch (err: any) {
+    console.error('Error in GET /api/payments/admin/list:', err);
+    return res.status(500).json({ success: false, message: 'Lỗi server' });
+  }
+});
+
 export default router;
