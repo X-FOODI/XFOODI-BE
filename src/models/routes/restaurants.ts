@@ -4,6 +4,9 @@ import { prisma } from '../../lib/prisma';
 import { authMiddleware } from './auth';
 import { tenantGuard } from '../../middlewares/tenantGuard';
 
+import { updateLoyaltyConfig } from '../../controllers/loyalty.controller';
+import { requireRole } from '../../middlewares/requireRole';
+
 const router: ExpressRouter = Router();
 
 /**
@@ -242,5 +245,12 @@ router.put('/me', authMiddleware, async (req: any, res: any) => {
     });
   }
 });
+
+/**
+ * POST/PUT /api/restaurants/:id/loyalty-config
+ * Configure loyalty points rate for a restaurant
+ */
+router.post('/:id/loyalty-config', authMiddleware, requireRole('Owner', 'Admin'), updateLoyaltyConfig);
+router.put('/:id/loyalty-config', authMiddleware, requireRole('Owner', 'Admin'), updateLoyaltyConfig);
 
 export default router;

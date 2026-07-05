@@ -5,6 +5,7 @@ import crypto from 'crypto';
 import { getIO } from '../socket';
 import { walletService } from './wallet.service';
 import { reservationService } from './reservation.service';
+import { loyaltyService } from './loyalty.service';
 
 function getPrisma(): PrismaClient {
   return prismaStorage.getStore() as PrismaClient;
@@ -153,6 +154,11 @@ export class PaymentService {
     } catch (e) {
       console.warn('[PaymentService] Failed to broadcast ORDER_STATUS_CHANGED:', e);
     }
+
+    // ── Loyalty Points: Fire-and-forget — must not fail the payment flow ──
+    loyaltyService.calculateAndRewardPoints(orderId).catch((e) => {
+      console.warn('[PaymentService] Loyalty points reward failed for order', orderId, ':', e.message);
+    });
   }
 
   // ── Cash payment ─────────────────────────────────────────────────────────────

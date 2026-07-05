@@ -8,6 +8,7 @@ import {
   updateOrderStatus,
   updateOrderDetailStatus,
 } from '../../controllers/order.controller';
+import { calculatePoints } from '../../controllers/loyalty.controller';
 import { getIO } from '../../socket';
 
 const router: Router = Router();
@@ -77,5 +78,8 @@ router.patch('/:id/status', authMiddleware, updateOrderStatus);
 
 // 6. Update individual dish item status (Protected - kitchen cooking update)
 router.patch('/items/:detailId/status', authMiddleware, updateOrderDetailStatus);
+
+// 7. Manually calculate loyalty points for a specific order (Protected - staff/admin)
+router.post('/calculate-points', authMiddleware, calculatePoints);
 
 export default router;

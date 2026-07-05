@@ -29,6 +29,7 @@ model Restaurant {
   latitude     Float?
   longitude    Float?
   cuisineType  String?  @default("other") // e.g. "vietnamese", "japanese", "fastfood", "other"
+  loyaltyPointRate Int  @default(10000)
 
   owner                User                 @relation("RestaurantOwner", fields: [ownerId], references: [id])
   userRoles            UserRole[]
@@ -49,6 +50,8 @@ model Restaurant {
   documents            RestaurantDocument[]
   buckets              RestaurantBucket[]
   wallet               RestaurantWallet?
+  vouchers             Voucher[]
+  userLoyaltyPoints    UserLoyaltyPoint[]
 
   @@map("Restaurants")
 }
@@ -107,6 +110,8 @@ model User {
   socialNotificationsSent     SocialNotification[] @relation("NotificationActor")
   restaurantApplications RestaurantApplication[]
   reviewedApplications   RestaurantApplication[] @relation("ApplicationReviewer")
+  userLoyaltyPoints      UserLoyaltyPoint[]
+  userVouchers           UserVoucher[]
 
   @@map("Users")
 }
@@ -1354,3 +1359,75 @@ model WithdrawalRequest {
   @@map("WithdrawalRequests")
 }
 
+model UserLoyaltyPoint {
+  id           String     @id @default(uuid())
+  userId       String
+  restaurantId String
+  points       Int        @default(0)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  user         User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  restaurant   Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, restaurantId])
+  @@index([userId])
+  @@index([restaurantId])
+  @@map("UserLoyaltyPoints")
+}
+
+model Voucher {
+  id                String        @id @default(uuid())
+  restaurantId      String?
+  code              String
+  title             String
+  description       String?
+  discountValue     Decimal       @db.Decimal(18, 2)
+  discountType      String        // "fixed" or "percentage"
+  pointsRequired    Int
+  expiryDate        DateTime
+  quantity          Int
+  applicableService String        @default("all") // "booking" | "shop" | "all"
+  distributionMode  String        @default("public") // "public" | "private"
+  status            String        @default("active") // "active" | "inactive"
+  isActive          Boolean       @default(true)
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  restaurant     Restaurant?   @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  userVouchers   UserVoucher[]
+
+  @@unique([code, restaurantId])
+  @@index([restaurantId])
+  @@map("Vouchers")
+}
+
+model UserVoucher {
+  id           String    @id @default(uuid())
+  userId       String
+  voucherId    String
+  isUsed       Boolean   @default(false)
+  usedAt       DateTime?
+  redeemedAt   DateTime  @default(now())
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  voucher      Voucher   @relation(fields: [voucherId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([voucherId])
+  @@map("UserVouchers")
+}
+
+model SystemSetting {
+  id          String   @id @default(uuid())
+  key         String   @unique
+  value       String   @db.Text
+  description String?
+  isPublic    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("SystemSettings")
+}
