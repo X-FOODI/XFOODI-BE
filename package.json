@@ -12,6 +12,7 @@
     "kill": "npx kill-port 5000",
     "test": "jest",
     "test:watch": "jest --watch",
+    "test:loyalty": "ts-node --skip-project --compiler-options \"{\\\"module\\\":\\\"commonjs\\\",\\\"esModuleInterop\\\":true,\\\"strict\\\":false}\" src/scripts/test-loyalty-flow.ts",
     "lint": "eslint src --ext .ts",
     "format": "prettier --write \"src/**/*.ts\"",
     "check": "pnpm lint && tsc --noEmit"
@@ -36,7 +37,6 @@
     "@supabase/supabase-js": "^2.108.1",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
-    "@types/helmet": "^4.0.0",
     "@types/multer": "^2.1.0",
     "@types/uuid": "^10.0.0",
     "@types/xlsx": "^0.0.36",
@@ -68,6 +68,7 @@
   },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",
+    "@types/helmet": "^4.0.0",
     "@types/jest": "^29.5.11",
     "@types/jsonwebtoken": "^9.0.10",
     "@types/multer": "^2.1.0",
