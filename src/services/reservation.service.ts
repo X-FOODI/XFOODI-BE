@@ -281,25 +281,9 @@ export class ReservationService {
       throw Object.assign(new Error(`Lượt đặt quá muộn. Thời gian đặt bàn muộn nhất là ${lastHourStr}:${lastMinStr}`), { statusCode: 400 });
     }
 
-    // 4. Fetch active status IDs for double-booking check (including CHECKED_IN)
-    const activeStatusIds = await prisma.statusValue.findMany({
-      where: { code: { in: ['PENDING', 'CONFIRMED', 'CHECKED_IN'] } },
-      select: { id: true }
-    }).then(list => list.map(s => s.id));
-
-    // 5. Prevent double booking (same customer booking at same time, buffer = dining duration)
-    const diningDurationMinutes = config.dining_duration_minutes ?? 90;
-    const diningDurationMs = diningDurationMinutes * 60 * 1000;
-    const bufferBeforeSelf = new Date(targetTime.getTime() - diningDurationMs);
-    const bufferAfterSelf = new Date(targetTime.getTime() + diningDurationMs);
-    const doubleBooked = await prisma.reservation.findFirst({
-      where: {
-        customerId: dto.customerId,
-        time: { gte: bufferBeforeSelf, lte: bufferAfterSelf },
-        reservationStatusId: { in: activeStatusIds }
-      }
-    });
-    if (doubleBooked) {
+    // 4. Prevent double booking (same customer booking at same time, buffer = dining duration)
+    const hasConflict = await this.hasDoubleBookingConflict(dto.customerId, targetTime, dto.restaurantId);
+    if (hasConflict) {
       throw Object.assign(new Error('Bạn đã có một lịch đặt bàn khác trùng khung giờ này (hoặc đang ngồi ăn tại nhà hàng)'), { statusCode: 400 });
     }
 
@@ -311,6 +295,9 @@ export class ReservationService {
     let mustLeaveBy: Date | null = null;
 
     // 6. Validate selected tables status, capacity, floors and conflicts
+    const diningDurationMinutes = config.dining_duration_minutes ?? 90;
+    const diningDurationMs = diningDurationMinutes * 60 * 1000;
+
     if (dto.tableIds && dto.tableIds.length > 0) {
       // Deduplicate table IDs
       dto.tableIds = [...new Set(dto.tableIds)];
@@ -322,15 +309,35 @@ export class ReservationService {
           isActive: true,
           floor: { isActive: true } // Floor active check
         },
-        select: { id: true, code: true, seatingCapacity: true }
+        select: { id: true, code: true, seatingCapacity: true, floorId: true }
       });
       if (dbTables.length !== dto.tableIds.length) {
         throw Object.assign(new Error('Một hoặc nhiều bàn được chọn không tồn tại, đã đóng cửa hoặc ngừng hoạt động'), { statusCode: 400 });
       }
 
+      if (dto.tableIds.length > 1) {
+        const floorIds = new Set(dbTables.map(t => t.floorId));
+        if (floorIds.size > 1) {
+          throw Object.assign(new Error('Tất cả các bàn được chọn để ghép phải nằm trên cùng một tầng/khu vực'), { statusCode: 400 });
+        }
+      }
+
       const totalCapacity = dbTables.reduce((sum, t) => sum + t.seatingCapacity, 0);
       if (totalCapacity < dto.numberOfGuests) {
         throw Object.assign(new Error(`Tổng sức chứa các bàn được chọn (${totalCapacity} người) không đủ cho số khách đặt (${dto.numberOfGuests} người)`), { statusCode: 400 });
+      }
+
+      // Guard: prevent a single small group from occupying a table that is way too large
+      // Rule: a single table's capacity must not exceed guests + 2
+      const maxAllowed = dto.numberOfGuests + 2;
+      if (dto.tableIds.length === 1) {
+        const singleTable = dbTables[0];
+        if (singleTable.seatingCapacity > maxAllowed) {
+          throw Object.assign(
+            new Error(`Bàn ${singleTable.code} có sức chứa ${singleTable.seatingCapacity} chỗ, quá lớn cho nhóm ${dto.numberOfGuests} người. Vui lòng chọn bàn nhỏ hơn (tối đa ${maxAllowed} chỗ) để tránh lãng phí bàn lớn.`),
+            { statusCode: 400 }
+          );
+        }
       }
 
       // Check if table is currently occupied by guests eating (if booking is within the dining duration window)
@@ -351,7 +358,11 @@ export class ReservationService {
           reservation: {
             restaurantId: dto.restaurantId,
             time: { gte: bufferBefore, lte: bufferAfter },
-            statusValue: { code: { notIn: ['CANCELLED'] } }
+            statusValue: { code: { notIn: ['CANCELLED'] } },
+            OR: [
+              { paymentDeadline: null },
+              { paymentDeadline: { gte: new Date() } }
+            ]
           }
         },
         include: {
@@ -398,7 +409,7 @@ export class ReservationService {
 
     // Calculate deposit amount dynamically
     let calculatedDeposit = 0;
-    if (config.deposit_enabled === true) {
+    if (config.deposit_enabled === true || String(config.deposit_enabled) === 'true') {
       if (config.deposit_amount !== undefined && config.deposit_amount !== null && Number(config.deposit_amount) > 0) {
         calculatedDeposit = Number(config.deposit_amount);
       } else {
@@ -611,6 +622,20 @@ export class ReservationService {
     const skip = (page - 1) * limit;
 
     const where: any = { restaurantId: filter.restaurantId };
+
+    // Exclude PENDING reservations with a deposit requirement that hasn't been paid yet
+    // (paymentDeadline is set = deposit required; reservation appears only after deposit is paid)
+    const pendingStatusId = await this.getStatusByCode('PENDING').then(sv => sv?.id);
+    if (pendingStatusId) {
+      where.NOT = {
+        AND: [
+          { reservationStatusId: pendingStatusId },
+          { depositAmount: { gt: 0 } },
+          { paymentDeadline: { not: null } },
+        ]
+      };
+    }
+
 
     if (filter.status) {
       const sv = await this.getStatusByCode(filter.status.toUpperCase());
@@ -2094,6 +2119,38 @@ export class ReservationService {
     }
 
     throw Object.assign(new Error('Không còn bàn trống phù hợp cho số lượng khách trong khung giờ này. Vui lòng chọn thời gian khác hoặc giảm số khách.'), { statusCode: 400 });
+  }
+
+  async hasDoubleBookingConflict(customerId: string, targetTime: Date, restaurantId: string): Promise<boolean> {
+    const prisma = getPrisma();
+
+    // Only block on CONFIRMED or CHECKED_IN — PENDING hasn't been accepted by restaurant yet
+    const activeStatusIds = await prisma.statusValue.findMany({
+      where: { code: { in: ['CONFIRMED', 'CHECKED_IN'] } },
+      select: { id: true }
+    }).then(list => list.map(s => s.id));
+
+    const now2 = new Date();
+
+    // Customer double-booking: block only if same customer already has a confirmed booking
+    // within ±30 min of the new time (to catch accidental duplicates, not legitimate separate bookings).
+    // Table-level conflicts (same table, different customer) are handled separately.
+    const DUPLICATE_WINDOW_MS = 30 * 60 * 1000; // 30 minutes
+    const windowStart = new Date(targetTime.getTime() - DUPLICATE_WINDOW_MS);
+    const windowEnd   = new Date(targetTime.getTime() + DUPLICATE_WINDOW_MS);
+
+    const doubleBooked = await prisma.reservation.findFirst({
+      where: {
+        customerId,
+        time: { gte: windowStart, lte: windowEnd },
+        reservationStatusId: { in: activeStatusIds },
+        OR: [
+          { paymentDeadline: null },
+          { paymentDeadline: { gte: now2 } },
+        ]
+      }
+    });
+    return !!doubleBooked;
   }
 }
 

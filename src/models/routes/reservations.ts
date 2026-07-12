@@ -248,6 +248,60 @@ router.get('/check-tables', async (req, res) => {
   }
 });
 
+// ── Check double booking conflict ───────────────────────────────────────────
+router.get('/check-conflict', async (req, res) => {
+  try {
+    const { restaurantId, time, email } = req.query;
+    if (!restaurantId || !time) {
+      return res.status(400).json({ success: false, message: 'restaurantId and time required' });
+    }
+
+    let customerId: string | null = null;
+    const { prismaStorage } = await import('../../lib/prisma');
+    const { PrismaClient } = await import('@prisma/client');
+    const db = prismaStorage.getStore() as InstanceType<typeof PrismaClient>;
+
+    // 1. Check if token is present
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      const token = authHeader.split(' ')[1];
+      try {
+        const { ENV } = await import('../../config/env');
+        const jwt = await import('jsonwebtoken');
+        const decoded: any = jwt.default.verify(token, ENV.JWT.ACCESS_SECRET);
+        const userId = decoded.sub || decoded.id;
+        const customer = await db.customer.findFirst({ where: { userId } });
+        if (customer) customerId = customer.id;
+      } catch (e) {}
+    }
+
+    // 2. Resolve customer by email if provided and not yet resolved
+    if (!customerId && email) {
+      const { resolveRestaurantFromHeaders } = await import('../../lib/tenant');
+      const restaurant = await resolveRestaurantFromHeaders(req.headers);
+      const normalizedEmail = (email as string).trim().toLowerCase();
+      const scopedEmail = restaurant ? `${restaurant.slug}:${normalizedEmail}` : normalizedEmail;
+      
+      const userRec = await db.user.findFirst({ where: { email: scopedEmail } });
+      if (userRec) {
+        const customer = await db.customer.findFirst({ where: { userId: userRec.id } });
+        if (customer) customerId = customer.id;
+      }
+    }
+
+    if (!customerId) {
+      return res.json({ success: true, conflict: false });
+    }
+
+    const targetTime = new Date(time as string);
+    const hasConflict = await reservationService.hasDoubleBookingConflict(customerId, targetTime, restaurantId as string);
+
+    return res.json({ success: true, conflict: hasConflict });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
 // ── Get by confirmation code ─────────────────────────────────────────────────
 router.get('/code/:code', async (req, res) => {
   try {
