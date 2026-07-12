@@ -11,6 +11,7 @@
 import { Router, type Router as ExpressRouter } from 'express';
 import { authMiddleware } from './auth';
 import { getMyProfile, updateMyProfile, changePassword } from '../../controllers/user.controller';
+import { getMyLoyaltyPoints } from '../../controllers/loyalty.controller';
 import { API_ROUTES } from '../../constants/routes';
 import { auditLogMiddleware } from '../../middlewares/auditLog';
 import multer from 'multer';
@@ -43,5 +44,8 @@ router.put(API_ROUTES.USERS.ME, upload.single('avatar'), updateMyProfile);
 
 // PUT /api/users/change-password
 router.put(API_ROUTES.USERS.CHANGE_PASSWORD, changePassword);
+
+// GET /api/users/loyalty-points
+router.get('/loyalty-points', getMyLoyaltyPoints);
 
 export default router;

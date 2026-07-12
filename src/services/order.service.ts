@@ -1,6 +1,7 @@
 import { prisma } from '../lib/prisma';
 import { Prisma } from '@prisma/client';
 import { getIO } from '../socket';
+import { loyaltyService } from './loyalty.service';
 
 export class OrderServiceError extends Error {
   constructor(
@@ -620,6 +621,13 @@ export class OrderService {
       status: status.toUpperCase(),
       isPaid,
     });
+
+    // ── Loyalty Points: Award on COMPLETED status change ──
+    if (status.toUpperCase() === 'COMPLETED') {
+      loyaltyService.calculateAndRewardPoints(orderId).catch((e) => {
+        console.warn('[OrderService] Loyalty points reward failed for order', orderId, ':', e.message);
+      });
+    }
 
     return updated;
   }
