@@ -43,6 +43,7 @@ export interface CreateReservationDto {
   specialRequests?: string;
   depositAmount?: number;
   tableIds?: string[];  // optional pre-select tables
+  acceptTimeLimit?: boolean; // accept time limit dining overlap
   bankRefund?: {         // bank account to auto-payout refund if cancelled
     bankBin: string;
     bankCode: string;
@@ -157,6 +158,26 @@ export class ReservationService {
     const metadata = (restaurant.metadata as any) ?? {};
     const config = metadata.reservationConfig ?? {};
 
+    // Validate pre-ordered dishes upfront if provided
+    if (dto.dishes && dto.dishes.length > 0) {
+      for (const item of dto.dishes) {
+        if (!item.dishId) {
+          throw Object.assign(new Error('Mã món ăn trong đơn đặt trước là bắt buộc'), { statusCode: 400 });
+        }
+        if (typeof item.quantity !== 'number' || item.quantity <= 0 || !Number.isInteger(item.quantity)) {
+          throw Object.assign(new Error('Số lượng món ăn trong đơn đặt trước phải là số nguyên dương'), { statusCode: 400 });
+        }
+      }
+      const dishIds = dto.dishes.map((item) => item.dishId);
+      const uniqueDishIds = [...new Set(dishIds)];
+      const dishes = await prisma.dish.findMany({
+        where: { id: { in: uniqueDishIds }, restaurantId: dto.restaurantId, isActive: true },
+      });
+      if (dishes.length !== uniqueDishIds.length) {
+        throw Object.assign(new Error('Một hoặc nhiều món ăn đặt trước không tồn tại hoặc đã ngừng bán'), { statusCode: 400 });
+      }
+    }
+
     // 1. Validate number of guests
     if (!dto.numberOfGuests || dto.numberOfGuests <= 0) {
       throw Object.assign(new Error('Số lượng khách phải lớn hơn 0'), { statusCode: 400 });
@@ -194,7 +215,10 @@ export class ReservationService {
     // closed_dates (default [])
     const closedDates = config.closed_dates ?? [];
     const localDate = new Date(targetTime.getTime() + 7 * 60 * 60 * 1000);
-    const dateStr = localDate.toISOString().split('T')[0]; // YYYY-MM-DD in UTC+7
+    const year = localDate.getUTCFullYear();
+    const month = String(localDate.getUTCMonth() + 1).padStart(2, '0');
+    const day = String(localDate.getUTCDate()).padStart(2, '0');
+    const dateStr = `${year}-${month}-${day}`; // YYYY-MM-DD in UTC+7 local time
     if (closedDates.includes(dateStr)) {
       throw Object.assign(new Error(`Nhà hàng nghỉ/đóng cửa vào ngày đã chọn (${dateStr})`), { statusCode: 400 });
     }
@@ -212,26 +236,62 @@ export class ReservationService {
     
     // last_booking_before_close_minutes (default 60)
     const lastBookingBeforeClose = config.last_booking_before_close_minutes ?? 60;
-    const lastOrderTime = closingTime - lastBookingBeforeClose;
+    
+    let isWithinOperatingHours = false;
+    let isTooLate = false;
+    let lastOrderTime = 0;
 
-    if (timeInMinutes < openingTime || timeInMinutes > closingTime) {
+    if (closingTime >= openingTime) {
+      isWithinOperatingHours = timeInMinutes >= openingTime && timeInMinutes <= closingTime;
+      lastOrderTime = closingTime - lastBookingBeforeClose;
+      isTooLate = isWithinOperatingHours && timeInMinutes > lastOrderTime;
+    } else {
+      // Midnight spanning, e.g. 18:00 (1080) to 02:00 (120)
+      isWithinOperatingHours = timeInMinutes >= openingTime || timeInMinutes <= closingTime;
+      lastOrderTime = closingTime - lastBookingBeforeClose;
+      if (lastOrderTime < 0) {
+        lastOrderTime += 24 * 60; // wrap to previous day
+      }
+      
+      if (timeInMinutes >= openingTime) {
+        // before midnight
+        if (lastOrderTime >= openingTime) {
+          isTooLate = timeInMinutes > lastOrderTime;
+        } else {
+          isTooLate = false; // last order is after midnight, so before midnight is fine
+        }
+      } else {
+        // after midnight
+        if (lastOrderTime >= openingTime) {
+          isTooLate = true; // last order was before midnight!
+        } else {
+          isTooLate = timeInMinutes > lastOrderTime;
+        }
+      }
+    }
+
+    if (!isWithinOperatingHours) {
       throw Object.assign(new Error(`Thời gian đặt ngoài giờ mở cửa của nhà hàng (${config.opening_time ?? "10:00"} - ${config.closing_time ?? "22:00"})`), { statusCode: 400 });
     }
-    if (timeInMinutes > lastOrderTime) {
-      const lastHourStr = Math.floor(lastOrderTime / 60).toString().padStart(2, '0');
-      const lastMinStr = (lastOrderTime % 60).toString().padStart(2, '0');
+    if (isTooLate) {
+      let lastHour = Math.floor(lastOrderTime / 60);
+      let lastMin = lastOrderTime % 60;
+      const lastHourStr = lastHour.toString().padStart(2, '0');
+      const lastMinStr = lastMin.toString().padStart(2, '0');
       throw Object.assign(new Error(`Lượt đặt quá muộn. Thời gian đặt bàn muộn nhất là ${lastHourStr}:${lastMinStr}`), { statusCode: 400 });
     }
 
-    // 4. Fetch active status IDs for double-booking check
+    // 4. Fetch active status IDs for double-booking check (including CHECKED_IN)
     const activeStatusIds = await prisma.statusValue.findMany({
-      where: { code: { in: ['PENDING', 'CONFIRMED'] } },
+      where: { code: { in: ['PENDING', 'CONFIRMED', 'CHECKED_IN'] } },
       select: { id: true }
     }).then(list => list.map(s => s.id));
 
-    // 5. Prevent double booking (same customer booking at same time)
-    const bufferBeforeSelf = new Date(targetTime.getTime() - 30 * 60 * 1000);
-    const bufferAfterSelf = new Date(targetTime.getTime() + 30 * 60 * 1000);
+    // 5. Prevent double booking (same customer booking at same time, buffer = dining duration)
+    const diningDurationMinutes = config.dining_duration_minutes ?? 90;
+    const diningDurationMs = diningDurationMinutes * 60 * 1000;
+    const bufferBeforeSelf = new Date(targetTime.getTime() - diningDurationMs);
+    const bufferAfterSelf = new Date(targetTime.getTime() + diningDurationMs);
     const doubleBooked = await prisma.reservation.findFirst({
       where: {
         customerId: dto.customerId,
@@ -240,25 +300,32 @@ export class ReservationService {
       }
     });
     if (doubleBooked) {
-      throw Object.assign(new Error('Bạn đã có một lịch đặt bàn khác trùng khung giờ này'), { statusCode: 400 });
+      throw Object.assign(new Error('Bạn đã có một lịch đặt bàn khác trùng khung giờ này (hoặc đang ngồi ăn tại nhà hàng)'), { statusCode: 400 });
     }
 
     if (isAuto) {
       dto.tableIds = await this.getOptimalTableAssignment(dto.restaurantId, targetTime, dto.numberOfGuests);
     }
 
-    // 6. Validate selected tables status, capacity and hard conflict overlaps
+    // Calculate mustLeaveBy if there is a booking after this one on the selected tables
+    let mustLeaveBy: Date | null = null;
+
+    // 6. Validate selected tables status, capacity, floors and conflicts
     if (dto.tableIds && dto.tableIds.length > 0) {
+      // Deduplicate table IDs
+      dto.tableIds = [...new Set(dto.tableIds)];
+
       const dbTables = await prisma.table.findMany({
         where: {
           id: { in: dto.tableIds },
           restaurantId: dto.restaurantId,
-          isActive: true
+          isActive: true,
+          floor: { isActive: true } // Floor active check
         },
         select: { id: true, code: true, seatingCapacity: true }
       });
       if (dbTables.length !== dto.tableIds.length) {
-        throw Object.assign(new Error('Một hoặc nhiều bàn được chọn không tồn tại hoặc đã ngừng hoạt động'), { statusCode: 400 });
+        throw Object.assign(new Error('Một hoặc nhiều bàn được chọn không tồn tại, đã đóng cửa hoặc ngừng hoạt động'), { statusCode: 400 });
       }
 
       const totalCapacity = dbTables.reduce((sum, t) => sum + t.seatingCapacity, 0);
@@ -266,10 +333,19 @@ export class ReservationService {
         throw Object.assign(new Error(`Tổng sức chứa các bàn được chọn (${totalCapacity} người) không đủ cho số khách đặt (${dto.numberOfGuests} người)`), { statusCode: 400 });
       }
 
-      // Hard conflict check (overlap under 30 minutes)
-      const bufferBefore = new Date(targetTime.getTime() - 30 * 60 * 1000);
-      const bufferAfter = new Date(targetTime.getTime() + 30 * 60 * 1000);
-      const conflict = await prisma.reservationTable.findFirst({
+      // Check if table is currently occupied by guests eating (if booking is within the dining duration window)
+      const activeSessions = await prisma.tableSession.findMany({
+        where: { tableId: { in: dto.tableIds }, isActive: true },
+      });
+      const isCurrentlyOccupied = activeSessions.length > 0 && (targetTime.getTime() - Date.now() < diningDurationMs);
+      if (isCurrentlyOccupied) {
+        throw Object.assign(new Error('Một hoặc nhiều bàn được chọn đang được khách ngồi ăn trực tiếp tại quán'), { statusCode: 400 });
+      }
+
+      // Time overlaps check
+      const bufferBefore = new Date(targetTime.getTime() - diningDurationMs);
+      const bufferAfter = new Date(targetTime.getTime() + diningDurationMs);
+      const overlaps = await prisma.reservationTable.findMany({
         where: {
           tableId: { in: dto.tableIds },
           reservation: {
@@ -278,75 +354,42 @@ export class ReservationService {
             statusValue: { code: { notIn: ['CANCELLED'] } }
           }
         },
-        include: { table: { select: { code: true } } }
-      });
-      if (conflict) {
-        throw Object.assign(new Error(`Bàn ${conflict.table.code} đã có lượt đặt trước trùng khung giờ này`), { statusCode: 400 });
-      }
-
-      // Check soft conflicts (within 90 minutes) and backup table requirements
-      const checkBufferBefore = new Date(targetTime.getTime() - 90 * 60 * 1000);
-      const checkBufferAfter = new Date(targetTime.getTime() + 90 * 60 * 1000);
-
-      // Find all reservations in the 90m window
-      const windowReservations = await prisma.reservationTable.findMany({
-        where: {
-          reservation: {
-            restaurantId: dto.restaurantId,
-            time: { gte: checkBufferBefore, lte: checkBufferAfter },
-            statusValue: { code: { notIn: ['CANCELLED'] } },
-          }
-        },
-        select: {
-          tableId: true,
+        include: {
+          table: { select: { code: true } },
           reservation: { select: { time: true } }
         }
       });
 
-      // Find all active tables in the restaurant
-      const allActiveTables = await prisma.table.findMany({
-        where: { restaurantId: dto.restaurantId, isActive: true }
-      });
+      for (const overlap of overlaps) {
+        const nextTime = new Date(overlap.reservation.time);
+        if (nextTime.getTime() <= targetTime.getTime()) {
+          // Hard conflict: overlap is in the past or exactly same time
+          throw Object.assign(new Error(`Bàn ${overlap.table.code} đã có lượt đặt trước trùng khung giờ này`), { statusCode: 400 });
+        }
+        
+        const diffMs = nextTime.getTime() - targetTime.getTime();
+        const eatTimeMs = diffMs - 30 * 60 * 1000; // leave 30 mins early for cleaning
+        if (eatTimeMs < 30 * 60 * 1000) {
+          // less than 30 mins eating time -> hard conflict
+          throw Object.assign(new Error(`Bàn ${overlap.table.code} đã có lượt đặt trước trùng khung giờ hoặc rất sát ca ăn này`), { statusCode: 400 });
+        }
 
-      for (const tableId of dto.tableIds) {
-        const table = allActiveTables.find(t => t.id === tableId);
-        if (!table) continue;
-
-        const tableConflicts = windowReservations.filter(wr => wr.tableId === tableId);
-        if (tableConflicts.length > 0) {
-          // Soft conflict: check if there is at least 1 backup table (capacity >= numberOfGuests) that has 0 conflicts
-          const hasBackup = allActiveTables.some(other => {
-            if (other.id === tableId) return false;
-            if (other.seatingCapacity < dto.numberOfGuests) return false;
-            const otherConflicts = windowReservations.filter(wr => wr.tableId === other.id);
-            return otherConflicts.length === 0;
-          });
-
-          if (!hasBackup && !isAuto) {
-            throw Object.assign(new Error(`Bàn ${table.code} hiện bận ở khung giờ lân cận và nhà hàng không còn bàn dự phòng nào khác cùng sức chứa. Vui lòng chọn bàn khác hoặc để nhà hàng tự sắp xếp.`), { statusCode: 400 });
+        if (!dto.acceptTimeLimit) {
+          // Fallback to auto-assignment if not accepted
+          try {
+            dto.tableIds = await this.getOptimalTableAssignment(dto.restaurantId, targetTime, dto.numberOfGuests);
+            // Deduplicate new tables
+            dto.tableIds = [...new Set(dto.tableIds)];
+            break;
+          } catch (e) {
+            throw Object.assign(new Error(`Bàn ${overlap.table.code} có giới hạn thời gian ăn tối đa là ${Math.floor(eatTimeMs / 60000)} phút. Bạn cần đồng ý giới hạn thời gian hoặc đổi giờ đặt.`), { statusCode: 400 });
+          }
+        } else {
+          const limitLeave = new Date(nextTime.getTime() - 30 * 60 * 1000);
+          if (!mustLeaveBy || limitLeave.getTime() < mustLeaveBy.getTime()) {
+            mustLeaveBy = limitLeave;
           }
         }
-      }
-    }
-
-    // Calculate mustLeaveBy if there is a booking after this one on the selected tables (within 4 hours)
-    let mustLeaveBy: Date | null = null;
-    if (dto.tableIds && dto.tableIds.length > 0) {
-      const nextBooking = await prisma.reservationTable.findFirst({
-        where: {
-          tableId: { in: dto.tableIds },
-          reservation: {
-            restaurantId: dto.restaurantId,
-            time: { gt: targetTime, lte: new Date(targetTime.getTime() + 4 * 60 * 60 * 1000) },
-            statusValue: { code: { notIn: ['CANCELLED'] } }
-          }
-        },
-        include: { reservation: { select: { time: true } } },
-        orderBy: { reservation: { time: 'asc' } }
-      });
-      if (nextBooking) {
-        // cleaning buffer = 30 minutes
-        mustLeaveBy = new Date(new Date(nextBooking.reservation.time).getTime() - 30 * 60 * 1000);
       }
     }
 
@@ -424,94 +467,89 @@ export class ReservationService {
 
     // Create pre-ordered dishes if provided
     if (dto.dishes && dto.dishes.length > 0) {
-      try {
-        const dishIds = dto.dishes.map((item) => item.dishId);
-        const dishes = await prisma.dish.findMany({
-          where: { id: { in: dishIds }, restaurantId: dto.restaurantId, isActive: true },
+      const dishIds = dto.dishes.map((item) => item.dishId);
+      const uniqueDishIds = [...new Set(dishIds)];
+      const dishes = await prisma.dish.findMany({
+        where: { id: { in: uniqueDishIds }, restaurantId: dto.restaurantId, isActive: true },
+      });
+
+      const dishPriceMap = dishes.reduce((acc, dish) => {
+        acc[dish.id] = Number(dish.price);
+        return acc;
+      }, {} as Record<string, number>);
+
+      // Get or create ORDER and ORDER_DETAIL statuses
+      const orderStatusType = await prisma.statusType.upsert({
+        where: { code: 'ORDER' },
+        update: {},
+        create: { code: 'ORDER' },
+      });
+      let orderStatusPending = await prisma.statusValue.findFirst({
+        where: { statusTypeId: orderStatusType.id, code: 'PENDING' },
+      });
+      if (!orderStatusPending) {
+        orderStatusPending = await prisma.statusValue.create({
+          data: {
+            statusTypeId: orderStatusType.id,
+            code: 'PENDING',
+            name: 'Chờ xác nhận',
+            colorCode: '#f1c40f',
+            isSystem: true,
+          },
         });
-
-        if (dishes.length === dishIds.length) {
-          const dishPriceMap = dishes.reduce((acc, dish) => {
-            acc[dish.id] = Number(dish.price);
-            return acc;
-          }, {} as Record<string, number>);
-
-          // Get or create ORDER and ORDER_DETAIL statuses
-          const orderStatusType = await prisma.statusType.upsert({
-            where: { code: 'ORDER' },
-            update: {},
-            create: { code: 'ORDER' },
-          });
-          let orderStatusPending = await prisma.statusValue.findFirst({
-            where: { statusTypeId: orderStatusType.id, code: 'PENDING' },
-          });
-          if (!orderStatusPending) {
-            orderStatusPending = await prisma.statusValue.create({
-              data: {
-                statusTypeId: orderStatusType.id,
-                code: 'PENDING',
-                name: 'Chờ xác nhận',
-                colorCode: '#f1c40f',
-                isSystem: true,
-              },
-            });
-          }
-
-          const detailStatusType = await prisma.statusType.upsert({
-            where: { code: 'ORDER_DETAIL' },
-            update: {},
-            create: { code: 'ORDER_DETAIL' },
-          });
-          let orderDetailStatusPending = await prisma.statusValue.findFirst({
-            where: { statusTypeId: detailStatusType.id, code: 'PENDING' },
-          });
-          if (!orderDetailStatusPending) {
-            orderDetailStatusPending = await prisma.statusValue.create({
-              data: {
-                statusTypeId: detailStatusType.id,
-                code: 'PENDING',
-                name: 'Chờ làm',
-                colorCode: '#f39c12',
-                isSystem: true,
-              },
-            });
-          }
-
-          // Generate order reference — use reservation ID suffix to guarantee uniqueness
-          const todayStr = new Date().toISOString().slice(2, 10).replace(/-/g, ''); // YYMMDD
-          const reference = `ORD-${todayStr}-${reservation.id.slice(-6).toUpperCase()}`;
-
-          const subTotal = dto.dishes.reduce((sum, item) => sum + item.quantity * (dishPriceMap[item.dishId] || 0), 0);
-          const taxAmount = subTotal * 0.1;
-          const totalAmount = subTotal + taxAmount;
-
-          await prisma.order.create({
-            data: {
-              reference,
-              restaurantId: dto.restaurantId,
-              customerId: dto.customerId || null,
-              reservationId: reservation.id,
-              orderStatusId: orderStatusPending.id,
-              subTotal: new Prisma.Decimal(subTotal),
-              discountAmount: 0,
-              taxAmount: new Prisma.Decimal(taxAmount),
-              serviceCharge: 0,
-              totalAmount: new Prisma.Decimal(totalAmount),
-              orderDetails: {
-                create: dto.dishes.map((item) => ({
-                  dishId: item.dishId,
-                  quantity: item.quantity,
-                  note: item.note || null,
-                  itemStatusId: orderDetailStatusPending!.id,
-                  unitPrice: new Prisma.Decimal(dishPriceMap[item.dishId] || 0),
-                })),
-              },
-            },
-          });
-        }
-      } catch (err: any) {
-        console.error('[CreateReservation] Failed to create pre-order:', err?.message);
       }
+
+      const detailStatusType = await prisma.statusType.upsert({
+        where: { code: 'ORDER_DETAIL' },
+        update: {},
+        create: { code: 'ORDER_DETAIL' },
+      });
+      let orderDetailStatusPending = await prisma.statusValue.findFirst({
+        where: { statusTypeId: detailStatusType.id, code: 'PENDING' },
+      });
+      if (!orderDetailStatusPending) {
+        orderDetailStatusPending = await prisma.statusValue.create({
+          data: {
+            statusTypeId: detailStatusType.id,
+            code: 'PENDING',
+            name: 'Chờ làm',
+            colorCode: '#f39c12',
+            isSystem: true,
+          },
+        });
+      }
+
+      // Generate order reference — use reservation ID suffix to guarantee uniqueness
+      const todayStr = new Date().toISOString().slice(2, 10).replace(/-/g, ''); // YYMMDD
+      const reference = `ORD-${todayStr}-${reservation.id.slice(-6).toUpperCase()}`;
+
+      const subTotal = dto.dishes.reduce((sum, item) => sum + item.quantity * (dishPriceMap[item.dishId] || 0), 0);
+      const taxAmount = subTotal * 0.1;
+      const totalAmount = subTotal + taxAmount;
+
+      await prisma.order.create({
+        data: {
+          reference,
+          restaurantId: dto.restaurantId,
+          customerId: dto.customerId || null,
+          reservationId: reservation.id,
+          orderStatusId: orderStatusPending.id,
+          subTotal: new Prisma.Decimal(subTotal),
+          discountAmount: 0,
+          taxAmount: new Prisma.Decimal(taxAmount),
+          serviceCharge: 0,
+          totalAmount: new Prisma.Decimal(totalAmount),
+          orderDetails: {
+            create: dto.dishes.map((item) => ({
+              dishId: item.dishId,
+              quantity: item.quantity,
+              note: item.note || null,
+              itemStatusId: orderDetailStatusPending!.id,
+              unitPrice: new Prisma.Decimal(dishPriceMap[item.dishId] || 0),
+            })),
+          },
+        },
+      });
     }
 
     // Generate QR code — non-blocking, never throws
@@ -842,6 +880,16 @@ export class ReservationService {
       throw err;
     }
 
+    // Validate that all assigned tables are free from active sessions before checkin
+    for (const rt of reservation.tables) {
+      const existingSession = await prisma.tableSession.findFirst({
+        where: { tableId: rt.tableId, isActive: true }
+      });
+      if (existingSession) {
+        throw Object.assign(new Error(`Bàn ${rt.table?.code || 'được chọn'} đang được sử dụng bởi nhóm khách khác. Vui lòng thanh toán giải phóng bàn hoặc đổi bàn trước khi check-in.`), { statusCode: 400 });
+      }
+    }
+
     // Not CONFIRMED → validate transition (will throw 422 if invalid)
     if (currentStatus !== 'CONFIRMED') {
       this.validateTransition(currentStatus, 'CHECKED_IN');
@@ -856,12 +904,15 @@ export class ReservationService {
     const earlyLimit = new Date(resTime.getTime() - earlyCheckinMinutes * 60 * 1000);
     const lateLimit = new Date(resTime.getTime() + lateCheckinMinutes * 60 * 1000);
 
-    if (now.getTime() < earlyLimit.getTime()) {
-      const earlyTimeStr = new Date(earlyLimit.getTime() + 7 * 60 * 60 * 1000).toISOString().substr(11, 5);
-      throw Object.assign(new Error(`Không thể check-in trước thời gian cho phép (Sớm tối đa ${earlyCheckinMinutes} phút. Thời gian check-in sớm nhất là từ ${earlyTimeStr})`), { statusCode: 400 });
-    }
-    if (now.getTime() > lateLimit.getTime()) {
-      throw Object.assign(new Error(`Đã quá thời hạn check-in (Trễ tối đa ${lateCheckinMinutes} phút). Vui lòng liên hệ nhân viên để xử lý.`), { statusCode: 400 });
+    // Bypass timing limit checks if checked in by Staff (actorId is present)
+    if (!actorId) {
+      if (now.getTime() < earlyLimit.getTime()) {
+        const earlyTimeStr = new Date(earlyLimit.getTime() + 7 * 60 * 60 * 1000).toISOString().substr(11, 5);
+        throw Object.assign(new Error(`Không thể check-in trước thời gian cho phép (Sớm tối đa ${earlyCheckinMinutes} phút. Thời gian check-in sớm nhất là từ ${earlyTimeStr})`), { statusCode: 400 });
+      }
+      if (now.getTime() > lateLimit.getTime()) {
+        throw Object.assign(new Error(`Đã quá thời hạn check-in (Trễ tối đa ${lateCheckinMinutes} phút). Vui lòng liên hệ nhân viên để xử lý.`), { statusCode: 400 });
+      }
     }
 
     const checkedInStatus = await this.getStatusByCode('CHECKED_IN');
@@ -1196,7 +1247,7 @@ export class ReservationService {
   }
 
   // ── Cancel ───────────────────────────────────────────────────────────────────
-  async cancel(id: string, actorId?: string, isStaff: boolean = false, approveReview?: boolean, reason?: string) {
+  async cancel(id: string, actorId?: string, isStaff: boolean = false, approveReview?: boolean, reason?: string, bankRefund?: any) {
     const prisma = getPrisma();
 
     const reservation = await prisma.reservation.findUnique({
@@ -1223,6 +1274,71 @@ export class ReservationService {
     const config = restaurantMeta.reservationConfig ?? {};
     const freeCancellationHours = config.free_cancellation_hours ?? 12;
     const freeCancellationMs = freeCancellationHours * 60 * 60 * 1000;
+
+    // Determine refund amount first to validate bank refund info
+    let refundAmount = 0;
+    if (totalDeposit > 0) {
+      if (isStaff && approveReview !== undefined) {
+        refundAmount = approveReview === true ? totalDeposit : 0;
+      } else {
+        const timeDiffMs = reservation.time.getTime() - now.getTime();
+        if (timeDiffMs >= freeCancellationMs) {
+          refundAmount = totalDeposit;
+        } else {
+          const feePercent: number = restaurantMeta.cancellationFeePercent ?? 0;
+          const reservationTime = reservation.time;
+          const twoHoursBefore = new Date(reservationTime.getTime() - 2 * 60 * 60 * 1000);
+          const isLateCancellation = now >= twoHoursBefore;
+          const effectiveFeePercent = isLateCancellation ? 100 : Math.min(100, Math.max(0, feePercent));
+          const cancellationFee = Math.floor(totalDeposit * effectiveFeePercent / 100);
+          refundAmount = Math.max(0, totalDeposit - cancellationFee);
+        }
+      }
+    }
+
+    // Validate bank refund info is present when cọc needs to be refunded
+    let finalBankRefund = bankRefund;
+    if (refundAmount > 0) {
+      // If not passed in body, try fetching from customer profile
+      if (!finalBankRefund || !finalBankRefund.accountNumber || !finalBankRefund.bankBin) {
+        const customerRecord = await prisma.customer.findUnique({
+          where: { id: reservation.customerId },
+          select: { metadata: true }
+        });
+        const savedBankRefund = (customerRecord?.metadata as any)?.bankRefund;
+        if (savedBankRefund && savedBankRefund.accountNumber && savedBankRefund.bankBin) {
+          finalBankRefund = savedBankRefund;
+        }
+      }
+
+      if (!finalBankRefund || !finalBankRefund.accountNumber || !finalBankRefund.bankBin) {
+        throw Object.assign(new Error('Vui lòng cung cấp thông tin tài khoản ngân hàng để nhận tiền hoàn cọc.'), { statusCode: 400 });
+      }
+
+      // Save/update it to customer metadata
+      if (bankRefund && bankRefund.accountNumber && bankRefund.bankBin) {
+        const customerRecord = await prisma.customer.findUnique({
+          where: { id: reservation.customerId },
+          select: { metadata: true }
+        });
+        const currentCustMeta = (customerRecord?.metadata as any) ?? {};
+        await prisma.customer.update({
+          where: { id: reservation.customerId },
+          data: {
+            metadata: {
+              ...currentCustMeta,
+              bankRefund: {
+                bankBin: bankRefund.bankBin,
+                bankCode: bankRefund.bankCode ?? '',
+                bankName: bankRefund.bankName ?? '',
+                accountNumber: bankRefund.accountNumber,
+                accountName: bankRefund.accountName
+              }
+            }
+          }
+        });
+      }
+    }
 
     if (!isStaff) {
       const timeDiffMs = reservation.time.getTime() - now.getTime();
@@ -1257,39 +1373,27 @@ export class ReservationService {
       }
     }
 
-    // Determine refund amount
-    let refundAmount = 0;
+    // Determine refund reason
     let refundReason = reason || 'Cancellation';
 
     if (isStaff && approveReview !== undefined) {
       if (approveReview === true) {
-        // Staff approved cancellation: 100% refund
-        refundAmount = totalDeposit;
         refundReason = reason || 'Staff approved cancellation (100% refund)';
       } else {
-        // Staff rejected/forfeited cancellation: 0% refund
-        refundAmount = 0;
         refundReason = reason || 'Staff rejected cancellation (No refund, deposit forfeited)';
       }
     } else {
-      // Standard cancellation logic (auto-approved if >= freeCancellationHours, or based on cancellation fee configuration)
       if (totalDeposit > 0) {
         const timeDiffMs = reservation.time.getTime() - now.getTime();
         if (timeDiffMs >= freeCancellationMs) {
-          // Free cancellation >= freeCancellationHours: 100% refund
-          refundAmount = totalDeposit;
           refundReason = reason || `Cancelled >= ${freeCancellationHours} hours before (100% refund)`;
         } else {
-          // Standard late fee calculation
           const restaurantMeta = (reservation.restaurant?.metadata as any) ?? {};
           const feePercent: number = restaurantMeta.cancellationFeePercent ?? 0;
           const reservationTime = reservation.time;
           const twoHoursBefore = new Date(reservationTime.getTime() - 2 * 60 * 60 * 1000);
           const isLateCancellation = now >= twoHoursBefore;
-
           const effectiveFeePercent = isLateCancellation ? 100 : Math.min(100, Math.max(0, feePercent));
-          const cancellationFee = Math.floor(totalDeposit * effectiveFeePercent / 100);
-          refundAmount = Math.max(0, totalDeposit - cancellationFee);
           refundReason = reason || (isLateCancellation ? 'Late cancellation (< 2 hours)' : `Cancellation fee ${effectiveFeePercent}%`);
         }
       }
@@ -1327,22 +1431,15 @@ export class ReservationService {
       // Auto PayOS payout if: refundAmount > 0, deposit was via BANK_TRANSFER, customer has bankRefund info
       if (refundRecord && refundAmount > 0) {
         try {
-          // Fetch customer bankRefund metadata
-          const customer = await prisma.customer.findUnique({
-            where: { id: reservation.customerId },
-            select: { metadata: true }
-          });
-          const bankRefund = (customer?.metadata as any)?.bankRefund;
-
           // Check if the deposit was paid via bank transfer (not cash)
           const isBankTransfer = completedDeposits.some((p: any) => {
             const code = p.paymentMethod?.code ?? '';
             return code === 'BANK_TRANSFER' || code === 'SEPAY';
           });
 
-          if (isBankTransfer && bankRefund?.accountNumber && bankRefund?.bankBin) {
+          if (isBankTransfer) {
             const payos = getPayOS();
-            if (payos) {
+            if (payos && finalBankRefund?.accountNumber && finalBankRefund?.bankBin) {
               const referenceId = `REFUND_${Date.now().toString().slice(-10)}_${refundRecord.id.slice(0, 6)}`;
               try {
                 const result = await (payos as any).payouts.create(
@@ -1350,8 +1447,8 @@ export class ReservationService {
                     referenceId,
                     amount: Math.floor(refundAmount),
                     description: `XFOODI HOAN COC ${reservation.confirmationCode ?? id.slice(0, 6)}`.slice(0, 50),
-                    toBin: bankRefund.bankBin,
-                    toAccountNumber: bankRefund.accountNumber,
+                    toBin: finalBankRefund.bankBin,
+                    toAccountNumber: finalBankRefund.accountNumber,
                   },
                   referenceId
                 );
@@ -1367,18 +1464,18 @@ export class ReservationService {
                       payout_method: 'PAYOS_AUTO',
                       payout_result: { externalTxId: result?.id ?? referenceId, status: 'SUCCESS' },
                       refund_bank: {
-                        bankBin: bankRefund.bankBin,
-                        bankCode: bankRefund.bankCode ?? '',
-                        bankName: bankRefund.bankName ?? '',
-                        accountNumber: bankRefund.accountNumber,
-                        accountName: bankRefund.accountName,
+                        bankBin: finalBankRefund.bankBin,
+                        bankCode: finalBankRefund.bankCode ?? '',
+                        bankName: finalBankRefund.bankName ?? '',
+                        accountNumber: finalBankRefund.accountNumber,
+                        accountName: finalBankRefund.accountName,
                       }
                     }
                   }
                 });
-                console.log(`[Cancel] Auto-payout SUCCESS for reservation ${id}: ${refundAmount}đ → ${bankRefund.accountNumber}`);
+                console.log(`[Cancel] Auto-payout SUCCESS for reservation ${id}: ${refundAmount}đ → ${finalBankRefund.accountNumber}`);
               } catch (payoutErr: any) {
-                // Payout failed → mark FAILED but do not block cancellation
+                // Payout failed → mark FAILED and create notification
                 await prisma.refund.update({
                   where: { id: refundRecord.id },
                   data: {
@@ -1390,19 +1487,54 @@ export class ReservationService {
                       payout_method: 'PAYOS_AUTO',
                       payout_error: payoutErr?.message ?? 'Unknown payout error',
                       refund_bank: {
-                        bankBin: bankRefund.bankBin,
-                        accountNumber: bankRefund.accountNumber,
-                        accountName: bankRefund.accountName,
+                        bankBin: finalBankRefund.bankBin,
+                        accountNumber: finalBankRefund.accountNumber,
+                        accountName: finalBankRefund.accountName,
                       }
                     }
                   }
                 });
                 console.error(`[Cancel] Auto-payout FAILED for reservation ${id}:`, payoutErr?.message);
+
+                // Create alert notification for manual refund
+                await prisma.notification.create({
+                  data: {
+                    restaurantId: reservation.restaurantId,
+                    isBroadcast: false,
+                    title: 'Yêu cầu hoàn tiền thủ công (Lỗi tự động)',
+                    message: `Lệnh chuyển khoản tự động thất bại cho đặt bàn ${reservation.confirmationCode}. Vui lòng chuyển khoản thủ công số tiền ${refundAmount.toLocaleString('vi-VN')}đ tới tài khoản ${finalBankRefund.accountNumber} (${finalBankRefund.bankCode ?? 'Ngân hàng'}) - ${finalBankRefund.accountName}.`,
+                    isPublished: true,
+                    priority: 'HIGH',
+                  }
+                });
               }
+            } else {
+              // No payos or bankRefund info -> manual refund notification
+              await prisma.notification.create({
+                data: {
+                  restaurantId: reservation.restaurantId,
+                  isBroadcast: false,
+                  title: 'Yêu cầu hoàn tiền thủ công',
+                  message: `Đặt bàn ${reservation.confirmationCode} đã bị hủy. Cần chuyển khoản thủ công ${refundAmount.toLocaleString('vi-VN')}đ tới tài khoản ${finalBankRefund?.accountNumber || 'N/A'} (${finalBankRefund?.bankCode || 'N/A'}) - ${finalBankRefund?.accountName || 'N/A'}.`,
+                  isPublished: true,
+                  priority: 'HIGH',
+                }
+              });
             }
+          } else {
+            // Cash deposit -> manual cash refund notification
+            await prisma.notification.create({
+              data: {
+                restaurantId: reservation.restaurantId,
+                isBroadcast: false,
+                title: 'Yêu cầu hoàn tiền thủ công (Tiền mặt)',
+                message: `Đặt bàn ${reservation.confirmationCode} đã bị hủy. Vui lòng hoàn trả tiền cọc ${refundAmount.toLocaleString('vi-VN')}đ trực tiếp bằng tiền mặt cho khách hàng.`,
+                isPublished: true,
+                priority: 'HIGH',
+              }
+            });
           }
         } catch (autoPayoutSetupErr: any) {
-          // Non-blocking: do not fail cancellation if auto-payout setup fails
           console.warn('[Cancel] Auto-payout setup error (non-blocking):', autoPayoutSetupErr?.message);
         }
       }
@@ -1623,8 +1755,19 @@ export class ReservationService {
   async checkAvailability(restaurantId: string, time: string, numberOfGuests: number) {
     const prisma = getPrisma();
     const targetTime = new Date(time);
-    const bufferBefore = new Date(targetTime.getTime() - 90 * 60 * 1000); // -90 min
-    const bufferAfter = new Date(targetTime.getTime() + 90 * 60 * 1000);  // +90 min
+
+    // Fetch restaurant config for dining duration
+    const restaurant = await prisma.restaurant.findUnique({
+      where: { id: restaurantId },
+      select: { metadata: true }
+    });
+    const metadata = (restaurant?.metadata as any) ?? {};
+    const config = metadata.reservationConfig ?? {};
+    const diningDurationMinutes = config.dining_duration_minutes ?? 90;
+    const diningDurationMs = diningDurationMinutes * 60 * 1000;
+
+    const bufferBefore = new Date(targetTime.getTime() - diningDurationMs);
+    const bufferAfter = new Date(targetTime.getTime() + diningDurationMs);
 
     // Find tables already reserved in that window with their reservation times
     const reservationTables = await prisma.reservationTable.findMany({
@@ -1650,11 +1793,19 @@ export class ReservationService {
       time: new Date(rt.reservation.time),
     }));
 
-    // Fetch all active tables
+    // Find tables currently occupied
+    const activeSessions = await prisma.tableSession.findMany({
+      where: { isActive: true },
+      select: { tableId: true }
+    });
+    const occupiedTableIds = activeSessions.map(s => s.tableId);
+
+    // Fetch all active tables (including active floor check)
     const allTables = await prisma.table.findMany({
       where: {
         restaurantId,
         isActive: true,
+        floor: { isActive: true } // Floor active check
       },
       include: {
         floor: { select: { id: true, name: true, width: true, height: true, imageUrl: true } },
@@ -1663,17 +1814,14 @@ export class ReservationService {
       orderBy: { code: 'asc' },
     });
 
-    // Note: allTables already contains has3DView, viewDescription, defaultViewUrl,
-    // cubeBackImageUrl, cubeBottomImageUrl, cubeFrontImageUrl, cubeLeftImageUrl,
-    // cubeRightImageUrl, cubeTopImageUrl via spread (...t) in the return mapping below.
-
-    // Check which tables are free from hard conflicts
+    // Check which tables are free from hard conflicts & not currently occupied
     const activeTablesNoHardConflict = allTables.filter((t) => {
       const tableConflicts = conflicts.filter((c) => c.tableId === t.id);
       const hasHardConflict = tableConflicts.some(
-        (c) => Math.abs(c.time.getTime() - targetTime.getTime()) < 30 * 60 * 1000
+        (c) => Math.abs(c.time.getTime() - targetTime.getTime()) < diningDurationMs
       );
-      return !hasHardConflict;
+      const isCurrentlyOccupied = occupiedTableIds.includes(t.id) && (targetTime.getTime() - Date.now() < diningDurationMs);
+      return !hasHardConflict && !isCurrentlyOccupied;
     });
 
     // 1. Check if a single table can accommodate numberOfGuests
@@ -1708,42 +1856,44 @@ export class ReservationService {
       
       let isAvailable = false;
       let conflictTime: string | null = null;
+      let limitReason: string | null = null;
+      let mustLeaveBy: string | null = null;
 
       const hasHardConflict = tableConflicts.some(
-        (c) => Math.abs(c.time.getTime() - targetTime.getTime()) < 30 * 60 * 1000
+        (c) => Math.abs(c.time.getTime() - targetTime.getTime()) < diningDurationMs
       );
+      const isCurrentlyOccupied = occupiedTableIds.includes(t.id) && (targetTime.getTime() - Date.now() < diningDurationMs);
 
-      if (!hasHardConflict) {
+      if (!hasHardConflict && !isCurrentlyOccupied) {
         if (hasFittingSingleTable) {
-          // If a single table fits, only tables with sufficient capacity are available
           isAvailable = t.seatingCapacity >= numberOfGuests;
         } else {
-          // If combining is required, all tables without hard conflicts are available to select
           isAvailable = true;
         }
 
-        // Soft conflict: check if there is a booking nearby (within 90 minutes but not hard conflict)
-        const hasSoftConflict = tableConflicts.length > 0;
-        if (hasSoftConflict) {
-          // Case 2 soft conflict check for backup table (only if single table fits)
-          if (hasFittingSingleTable) {
-            const hasBackup = allTables.some((other) => {
-              if (other.id === t.id) return false;
-              if (other.seatingCapacity >= numberOfGuests) {
-                const otherConflicts = conflicts.filter((c) => c.tableId === other.id);
-                return otherConflicts.length === 0;
-              }
-              return false;
-            });
-
-            if (!hasBackup) {
-              isAvailable = false;
-            } else {
-              conflictTime = tableConflicts[0].time.toISOString();
-            }
+        // Soft conflict: check if there is a future booking nearby (within diningDurationMs window)
+        const futureBookings = tableConflicts.filter(c => c.time.getTime() > targetTime.getTime());
+        if (futureBookings.length > 0) {
+          futureBookings.sort((a, b) => a.time.getTime() - b.time.getTime());
+          const nextBooking = futureBookings[0];
+          const diffMs = nextBooking.time.getTime() - targetTime.getTime();
+          const eatTimeMs = diffMs - 30 * 60 * 1000; // leave 30 mins early
+          
+          if (eatTimeMs < 30 * 60 * 1000) {
+            isAvailable = false;
           } else {
-            // For combined tables, we just set conflictTime as soft conflict hint
-            conflictTime = tableConflicts[0].time.toISOString();
+            conflictTime = nextBooking.time.toISOString();
+            const leaveTime = new Date(nextBooking.time.getTime() - 30 * 60 * 1000);
+            
+            // Format leaveTime as local HH:MM (UTC+7)
+            const localLeave = new Date(leaveTime.getTime() + 7 * 60 * 60 * 1000);
+            const lHour = String(localLeave.getUTCHours()).padStart(2, '0');
+            const lMin = String(localLeave.getUTCMinutes()).padStart(2, '0');
+            mustLeaveBy = `${lHour}:${lMin}`;
+            
+            const nextHour = String(nextBooking.time.getUTCHours() + 7).padStart(2, '0');
+            const nextMin = String(nextBooking.time.getUTCMinutes()).padStart(2, '0');
+            limitReason = `Bàn này đã được đặt từ ${nextHour}:${nextMin}. Bạn chỉ được sử dụng bàn này đến ${mustLeaveBy} (tối đa ${Math.floor(eatTimeMs / 60000)} phút).`;
           }
         }
       }
@@ -1754,6 +1904,8 @@ export class ReservationService {
         conflictTime,
         isSuggested,
         isCombinedSuggestion,
+        limitReason,
+        mustLeaveBy,
       };
     });
   }
@@ -1861,8 +2013,19 @@ export class ReservationService {
   // ── Helper: get optimal table assignment for auto reservations ──────────────
   async getOptimalTableAssignment(restaurantId: string, targetTime: Date, numberOfGuests: number): Promise<string[]> {
     const prisma = getPrisma();
-    const bufferBefore = new Date(targetTime.getTime() - 90 * 60 * 1000);
-    const bufferAfter = new Date(targetTime.getTime() + 90 * 60 * 1000);
+    
+    // Fetch restaurant config for dining duration
+    const restaurant = await prisma.restaurant.findUnique({
+      where: { id: restaurantId },
+      select: { metadata: true }
+    });
+    const metadata = (restaurant?.metadata as any) ?? {};
+    const config = metadata.reservationConfig ?? {};
+    const diningDurationMinutes = config.dining_duration_minutes ?? 90;
+    const diningDurationMs = diningDurationMinutes * 60 * 1000;
+
+    const bufferBefore = new Date(targetTime.getTime() - diningDurationMs);
+    const bufferAfter = new Date(targetTime.getTime() + diningDurationMs);
 
     // Find tables already reserved in that window with their reservation times
     const reservationTables = await prisma.reservationTable.findMany({
@@ -1884,19 +2047,31 @@ export class ReservationService {
       time: new Date(rt.reservation.time),
     }));
 
+    // Find tables currently occupied
+    const activeSessions = await prisma.tableSession.findMany({
+      where: { isActive: true },
+      select: { tableId: true }
+    });
+    const occupiedTableIds = activeSessions.map(s => s.tableId);
+
     // Fetch all active tables
     const allTables = await prisma.table.findMany({
-      where: { restaurantId, isActive: true },
+      where: {
+        restaurantId,
+        isActive: true,
+        floor: { isActive: true } // Floor active check
+      },
       orderBy: { code: 'asc' },
     });
 
-    // Find tables with no hard conflict
+    // Find tables with no hard conflict and not currently occupied (if close to now)
     const activeTablesNoHardConflict = allTables.filter((t) => {
       const tableConflicts = conflicts.filter((c) => c.tableId === t.id);
       const hasHardConflict = tableConflicts.some(
-        (c) => Math.abs(c.time.getTime() - targetTime.getTime()) < 30 * 60 * 1000
+        (c) => Math.abs(c.time.getTime() - targetTime.getTime()) < diningDurationMs
       );
-      return !hasHardConflict;
+      const isCurrentlyOccupied = occupiedTableIds.includes(t.id) && (targetTime.getTime() - Date.now() < diningDurationMs);
+      return !hasHardConflict && !isCurrentlyOccupied;
     });
 
     // 1. Try to find a single table

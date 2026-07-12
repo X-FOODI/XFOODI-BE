@@ -340,8 +340,8 @@ router.post('/:id/cancel', authMiddleware, requireRole('Owner', 'Admin', 'Staff'
   try {
     const actorId = req.user?.sub || req.user?.id;
     const isStaff = ['Owner', 'Admin', 'Staff'].includes(req.user?.role);
-    const { approveReview, reason } = req.body;
-    const updated = await reservationService.cancel(req.params.id, actorId, isStaff, approveReview, reason);
+    const { approveReview, reason, bankRefund } = req.body;
+    const updated = await reservationService.cancel(req.params.id, actorId, isStaff, approveReview, reason, bankRefund);
     return res.json({ success: true, data: updated });
   } catch (err: any) {
     return res.status(400).json({ success: false, message: err.message });

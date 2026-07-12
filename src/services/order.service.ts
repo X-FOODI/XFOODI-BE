@@ -147,8 +147,17 @@ export class OrderService {
       items: Array<{ dishId: string; quantity: number; note?: string }>;
     }
   ) {
-    if (data.items.length === 0) {
-      throw new OrderServiceError(400, 'Danh sách món ăn trống');
+    if (!data.items || !Array.isArray(data.items) || data.items.length === 0) {
+      throw new OrderServiceError(400, 'Danh sách món ăn trống hoặc không hợp lệ');
+    }
+
+    for (const item of data.items) {
+      if (!item.dishId) {
+        throw new OrderServiceError(400, 'Mã món ăn là bắt buộc');
+      }
+      if (typeof item.quantity !== 'number' || item.quantity <= 0 || !Number.isInteger(item.quantity)) {
+        throw new OrderServiceError(400, 'Số lượng món ăn phải là số nguyên dương');
+      }
     }
 
     const orderStatusMap = await ensureOrderStatuses();
@@ -165,10 +174,11 @@ export class OrderService {
 
     // 2. Fetch Dish Prices
     const dishIds = data.items.map((item) => item.dishId);
+    const uniqueDishIds = [...new Set(dishIds)];
     const dishes = await prisma.dish.findMany({
-      where: { id: { in: dishIds }, restaurantId, isActive: true },
+      where: { id: { in: uniqueDishIds }, restaurantId, isActive: true },
     });
-    if (dishes.length !== dishIds.length) {
+    if (dishes.length !== uniqueDishIds.length) {
       throw new OrderServiceError(400, 'Một số món ăn không hợp lệ hoặc đã dừng bán');
     }
 
@@ -558,6 +568,44 @@ export class OrderService {
         where: { orderId },
         data: { itemStatusId: itemStatusMap[targetItemStatus] },
       });
+    }
+
+    // Auto close table sessions and free tables when order is completed or cancelled
+    if (status.toUpperCase() === 'COMPLETED' || status.toUpperCase() === 'CANCELLED') {
+      const activeSessions = await prisma.tableSession.findMany({
+        where: { orderId, isActive: true },
+      });
+      const tableStatusType = await prisma.statusType.findUnique({ where: { code: 'TABLE' } });
+      let availableStatusId: string | undefined;
+      if (tableStatusType) {
+        const availableStatus = await prisma.statusValue.findFirst({
+          where: { statusTypeId: tableStatusType.id, code: 'AVAILABLE' },
+        });
+        availableStatusId = availableStatus?.id;
+      }
+      for (const session of activeSessions) {
+        await prisma.tableSession.update({
+          where: { id: session.id },
+          data: { isActive: false, endedAt: new Date() },
+        });
+        if (availableStatusId) {
+          await prisma.table.update({
+            where: { id: session.tableId },
+            data: { tableStatusId: availableStatusId },
+          });
+        }
+        // Notify via Socket.io
+        try {
+          const io = getIO();
+          io.to(`restaurant_${restaurantId}`).emit('TABLE_SESSION_CLOSED', {
+            tableId: session.tableId,
+            sessionId: session.id,
+            status: 'AVAILABLE',
+          });
+        } catch (e) {
+          console.warn('[OrderService] Failed to broadcast TABLE_SESSION_CLOSED:', e);
+        }
+      }
     }
 
     const payments = await prisma.payment.findFirst({

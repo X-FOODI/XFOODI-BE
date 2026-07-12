@@ -355,6 +355,28 @@ export class WalletService {
       data: { status: 'CANCELLED', rejectionReason: reason, processedAt: new Date() },
     });
   }
+
+  /**
+   * Direct PayOS Payout (Bypass DB checks, for quick testing/withdraw)
+   */
+  async directPayout(params: { amount: number; bankBin: string; accountNumber: string; description?: string }) {
+    const payos = getPayOS();
+    if (!payos) throw new Error('PayOS is not configured in .env');
+
+    const referenceId = `WD_DIRECT_${Date.now().toString().slice(-8)}`;
+    const result = await (payos as any).payouts.create(
+      {
+        referenceId,
+        amount: Math.floor(params.amount),
+        description: (params.description || 'XFOODI RUT TIEN LE').slice(0, 50),
+        toBin: params.bankBin,
+        toAccountNumber: params.accountNumber,
+      },
+      referenceId,
+    );
+
+    return { result, referenceId };
+  }
 }
 
 export const walletService = new WalletService();
