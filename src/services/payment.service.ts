@@ -49,6 +49,45 @@ export interface PaymentFilter {
   purpose?: number;
 }
 
+function normalizePaymentRef(value: string): string {
+  return value.replace(/[^A-Z0-9]/gi, '').toUpperCase();
+}
+
+/** Parse order/reservation reference from SePay/Momo transfer content (often has extra suffixes). */
+function extractRefsFromSePayContent(content: string): { type: 'ORD' | 'RES'; ref: string } | null {
+  const upper = content.toUpperCase();
+
+  const dashedOrd = content.match(/ORD-(?:\d{6}-\d{4}-[A-Z0-9]+)/i);
+  if (dashedOrd) {
+    return { type: 'ORD', ref: dashedOrd[0].toUpperCase() };
+  }
+
+  const compactOrd = content.match(/ORD\s+(ORD[A-Z0-9]+)/i);
+  if (compactOrd) {
+    return { type: 'ORD', ref: compactOrd[1].toUpperCase() };
+  }
+
+  const xfoodiOrd = content.match(/XFOODI\s+[A-Z0-9-]+\s+ORD\s+(ORD[A-Z0-9]+)/i);
+  if (xfoodiOrd) {
+    return { type: 'ORD', ref: xfoodiOrd[1].toUpperCase() };
+  }
+
+  const resMatch = content.match(/RES\s+([A-Z0-9]+)/i);
+  if (resMatch) {
+    return { type: 'RES', ref: resMatch[1].toUpperCase() };
+  }
+
+  if (upper.includes(' ORD ')) {
+    const loose = content.match(/ORD\s+([A-Z0-9-]{8,24})/i);
+    if (loose) {
+      const ref = loose[1].split('-CHUYEN')[0].split('-CHUYEN')[0].toUpperCase();
+      return { type: 'ORD', ref: ref.replace(/[^A-Z0-9-]/gi, '').toUpperCase().startsWith('ORD') ? ref.replace(/[^A-Z0-9-]/gi, '').toUpperCase() : `ORD${ref.replace(/[^A-Z0-9]/gi, '')}` };
+    }
+  }
+
+  return null;
+}
+
 // ── Service ───────────────────────────────────────────────────────────────────
 export class PaymentService {
 
@@ -59,7 +98,115 @@ export class PaymentService {
 
   private async getTransferMethod() {
     const prisma = getPrisma();
-    return prisma.paymentMethod.findFirst({ where: { code: 'BANK_TRANSFER' } });
+    let method = await prisma.paymentMethod.findFirst({ where: { code: 'BANK_TRANSFER' } });
+    if (!method) {
+      method = await prisma.paymentMethod.create({
+        data: { code: 'BANK_TRANSFER', name: 'Chuyển khoản', isActive: true },
+      });
+    }
+    return method;
+  }
+
+  private normalizePaymentRef(value: string): string {
+    return value.replace(/[^A-Z0-9]/gi, '').toUpperCase();
+  }
+
+  /** Parse order/reservation reference from SePay/Momo transfer content */
+  private extractPaymentRefFromContent(content: string): { type: 'ORD' | 'RES'; refOrCode: string; slug?: string } | null {
+    const dashedOrd = content.match(/XFOODI\s+([A-Za-z0-9-]+)\s+ORD\s+(ORD-\d{6}-\d{4}-[A-Z0-9]+)/i);
+    if (dashedOrd) {
+      return {
+        slug: dashedOrd[1].toLowerCase(),
+        type: 'ORD',
+        refOrCode: dashedOrd[2].toUpperCase(),
+      };
+    }
+
+    const compactOrd = content.match(/XFOODI\s+([A-Za-z0-9-]+)\s+ORD\s+(ORD[A-Z0-9]+)/i);
+    if (compactOrd) {
+      return {
+        slug: compactOrd[1].toLowerCase(),
+        type: 'ORD',
+        refOrCode: compactOrd[2].toUpperCase(),
+      };
+    }
+
+    const resFormat = content.match(/XFOODI\s+([A-Za-z0-9-]+)\s+RES\s+([A-Z0-9-]+)/i);
+    if (resFormat) {
+      return {
+        slug: resFormat[1].toLowerCase(),
+        type: 'RES',
+        refOrCode: resFormat[2].toUpperCase(),
+      };
+    }
+
+    const dashedOrdAnywhere = content.match(/(ORD-\d{6}-\d{4}-[A-Z0-9]+)/i);
+    if (dashedOrdAnywhere) {
+      return { type: 'ORD', refOrCode: dashedOrdAnywhere[1].toUpperCase() };
+    }
+
+    const compactOrdAnywhere = content.match(/\b(ORD[A-Z0-9]{10,24})\b/i);
+    if (compactOrdAnywhere) {
+      return { type: 'ORD', refOrCode: compactOrdAnywhere[1].toUpperCase() };
+    }
+
+    const resMatch = content.match(/RES\s+([A-Z0-9-]+)/i);
+    if (resMatch) {
+      return { type: 'RES', refOrCode: resMatch[1].toUpperCase() };
+    }
+
+    return null;
+  }
+
+  private async completeMatchedOrderPayment(params: {
+    order: { id: string; restaurantId: string; reference: string };
+    payment: { id: string; amount: any };
+    payload: SePayWebhookPayload;
+  }) {
+    const prisma = getPrisma();
+
+    await prisma.payment.update({
+      where: { id: params.payment.id },
+      data: {
+        status: PaymentStatus.COMPLETED,
+        transactionId: String(params.payload.id),
+        paymentDate: new Date(params.payload.transactionDate),
+      },
+    });
+
+    await this.finalizeOrderPayment(params.order.id, String(params.payload.id));
+
+    if (params.order.restaurantId) {
+      try {
+        await walletService.creditOrderRevenue({
+          restaurantId: params.order.restaurantId,
+          orderId: params.order.id,
+          paymentId: params.payment.id,
+          amount: Number(params.payment.amount),
+          paymentMethodCode: 'BANK_TRANSFER',
+        });
+      } catch (walletErr: any) {
+        console.warn('[SePay Webhook] Failed to credit wallet:', walletErr.message);
+      }
+    }
+
+    try {
+      const io = getIO();
+      io.to(`restaurant_${params.order.restaurantId}`).emit('PAYMENT_COMPLETED', {
+        paymentId: params.payment.id,
+        orderId: params.order.id,
+        restaurantId: params.order.restaurantId,
+        status: PaymentStatus.COMPLETED,
+      });
+    } catch (e) {
+      console.warn('[PaymentService] Failed to broadcast PAYMENT_COMPLETED:', e);
+    }
+
+    return {
+      matched: true,
+      type: 'order',
+      details: { orderId: params.order.id, ref: params.order.reference, paymentId: params.payment.id },
+    };
   }
 
   // ── Finalize Order Payment Helper ──
@@ -270,20 +417,40 @@ export class PaymentService {
   }) {
     const prisma = getPrisma();
 
+    if (!params.amount || Number(params.amount) <= 0) {
+      throw new Error('Số tiền thanh toán không hợp lệ');
+    }
+    if (!params.orderId && !params.reservationId) {
+      throw new Error('Thiếu orderId hoặc reservationId');
+    }
+
     // Retrieve bank info from restaurant metadata
     const restaurant = await prisma.restaurant.findUnique({
       where: { id: params.restaurantId },
       select: { metadata: true, name: true, slug: true },
     });
+    if (!restaurant) {
+      throw new Error('Không tìm thấy nhà hàng');
+    }
 
-    const meta = (restaurant?.metadata as any) ?? {};
-    const bankInfo = meta.bankInfo ?? {
-      bankCode: 'MB',        // Mã ngân hàng
-      accountNumber: '',     // Số tài khoản
-      accountName: '',       // Tên tài khoản
-    };
+    const meta = (restaurant.metadata as any) ?? {};
+    const bankInfo = meta.bankInfo ?? meta.paymentBank ?? (
+      process.env.ADMIN_BANK_ACCOUNT
+        ? {
+            bankCode: process.env.ADMIN_BANK_CODE || 'MB',
+            accountNumber: process.env.ADMIN_BANK_ACCOUNT,
+            accountName: process.env.ADMIN_BANK_NAME || '',
+          }
+        : null
+    );
 
-    const slug = restaurant?.slug || 'default';
+    if (!bankInfo?.accountNumber || !bankInfo?.bankCode) {
+      throw new Error(
+        'Nhà hàng chưa cấu hình tài khoản nhận chuyển khoản (metadata.bankInfo). Vui lòng cấu hình số tài khoản trong Cài đặt hoặc chọn thanh toán tiền mặt.'
+      );
+    }
+
+    const slug = restaurant.slug || 'default';
 
     // Generate transfer content that SePay can match
     let transferContent = '';
@@ -302,35 +469,61 @@ export class PaymentService {
     }
 
     // Build SePay QR URL (VietQR format)
-    const sePayQR = bankInfo.accountNumber
-      ? `https://qr.sepay.vn/img?bank=${bankInfo.bankCode}&acc=${bankInfo.accountNumber}&template=compact&amount=${params.amount}&des=${encodeURIComponent(transferContent)}`
-      : null;
+    const sePayQR = `https://qr.sepay.vn/img?bank=${encodeURIComponent(bankInfo.bankCode)}&acc=${encodeURIComponent(bankInfo.accountNumber)}&template=compact&amount=${Math.round(Number(params.amount))}&des=${encodeURIComponent(transferContent)}`;
 
-    // Mark a pending payment record
+    // Mark a pending payment record (reuse existing pending payment for same order/reservation)
     const method = await this.getTransferMethod();
     if (!method) throw new Error('BANK_TRANSFER payment method not configured');
 
-    const payment = await prisma.payment.create({
-      data: {
-        orderId: params.orderId,
-        reservationId: params.reservationId,
-        paymentMethodId: method.id,
-        amount: params.amount,
-        cashReceive: 0,
-        cashback: 0,
+    const existingPending = await prisma.payment.findFirst({
+      where: {
         status: PaymentStatus.PENDING,
         purpose: params.reservationId ? PaymentPurpose.DEPOSIT : PaymentPurpose.ORDER,
-        metadata: { transferContent, sePayQR } as any,
+        ...(params.orderId ? { orderId: params.orderId } : {}),
+        ...(params.reservationId ? { reservationId: params.reservationId } : {}),
+        paymentMethodId: method.id,
       },
-      select: { id: true, amount: true, status: true },
+      orderBy: { createdAt: 'desc' },
+      select: { id: true, amount: true, status: true, metadata: true },
     });
+
+    let payment = existingPending;
+    if (payment) {
+      payment = await prisma.payment.update({
+        where: { id: payment.id },
+        data: {
+          amount: params.amount,
+          metadata: { transferContent, sePayQR, bankInfo } as any,
+        },
+        select: { id: true, amount: true, status: true, metadata: true },
+      });
+    } else {
+      payment = await prisma.payment.create({
+        data: {
+          orderId: params.orderId,
+          reservationId: params.reservationId,
+          paymentMethodId: method.id,
+          amount: params.amount,
+          cashReceive: 0,
+          cashback: 0,
+          status: PaymentStatus.PENDING,
+          purpose: params.reservationId ? PaymentPurpose.DEPOSIT : PaymentPurpose.ORDER,
+          metadata: { transferContent, sePayQR, bankInfo } as any,
+        },
+        select: { id: true, amount: true, status: true, metadata: true },
+      });
+    }
 
     return {
       paymentId: payment.id,
-      amount: params.amount,
+      amount: Number(payment.amount),
       transferContent,
       qrUrl: sePayQR,
-      bankInfo,
+      bankInfo: {
+        bankCode: bankInfo.bankCode,
+        accountNumber: bankInfo.accountNumber,
+        accountName: bankInfo.accountName || '',
+      },
     };
   }
 
@@ -353,32 +546,24 @@ export class PaymentService {
     }
 
     const content = payload.content ?? '';
+    const parsed = this.extractPaymentRefFromContent(content);
 
-    // Fast Path: Try to parse slug and route directly
-    // Pattern: XFOODI\s+([A-Za-z0-9-]+)\s+(ORD|RES)\s+([A-Z0-9-]+)
-    const newFormatMatch = content.match(/XFOODI\s+([A-Za-z0-9-]+)\s+(ORD|RES)\s+([A-Z0-9-]+)/i);
-
-    if (newFormatMatch) {
-      const slug = newFormatMatch[1].toLowerCase();
-      const type = newFormatMatch[2].toUpperCase();
-      const refOrCode = newFormatMatch[3].toUpperCase();
-
-      // Find restaurant in central database
+    if (parsed?.slug) {
       const restaurant = await centralPrisma.restaurant.findFirst({
-        where: { slug, isActive: true },
+        where: { slug: parsed.slug, isActive: true },
       });
 
       if (restaurant) {
         const tenantDbUrl = getTenantConnectionUrl(process.env.DATABASE_URL ?? '', restaurant.slug);
         const tenantPrisma = getTenantPrisma(tenantDbUrl);
 
-        // Run within the context of the tenant database
         const result = await prismaStorage.run(tenantPrisma, async () => {
           return this.processMatchedPayment({
-            type,
-            refOrCode,
+            type: parsed.type,
+            refOrCode: parsed.refOrCode,
             payload,
             restaurantId: restaurant.id,
+            content,
           });
         });
 
@@ -393,35 +578,50 @@ export class PaymentService {
       where: { isActive: true },
     });
 
-    const ordMatch = content.match(/ORD\s+([A-Z0-9-]+)/i) || content.match(/(ORD-[A-Z0-9-]+)/i);
-    const resMatch = content.match(/RES\s+([A-Z0-9]+)/i);
-
-    const type = ordMatch ? 'ORD' : (resMatch ? 'RES' : null);
-    const refOrCode = ordMatch ? ordMatch[1].toUpperCase() : (resMatch ? resMatch[1].toUpperCase() : null);
-
-    if (type && refOrCode) {
+    if (parsed) {
       for (const restaurant of activeRestaurants) {
         const tenantDbUrl = getTenantConnectionUrl(process.env.DATABASE_URL ?? '', restaurant.slug);
         const tenantPrisma = getTenantPrisma(tenantDbUrl);
 
         const result = await prismaStorage.run(tenantPrisma, async () => {
           return this.processMatchedPayment({
-            type,
-            refOrCode,
+            type: parsed.type,
+            refOrCode: parsed.refOrCode,
             payload,
             restaurantId: restaurant.id,
+            content,
           });
         });
 
         if (result.matched) {
-          return { 
-            success: true, 
-            matched: result.type, 
-            slug: restaurant.slug, 
-            ...result.details, 
-            note: 'Resolved via fallback scan' 
+          return {
+            success: true,
+            matched: result.type,
+            slug: restaurant.slug,
+            ...result.details,
+            note: 'Resolved via fallback scan',
           };
         }
+      }
+    }
+
+    // Last resort: match pending payment by transferContent stored in metadata
+    for (const restaurant of activeRestaurants) {
+      const tenantDbUrl = getTenantConnectionUrl(process.env.DATABASE_URL ?? '', restaurant.slug);
+      const tenantPrisma = getTenantPrisma(tenantDbUrl);
+
+      const result = await prismaStorage.run(tenantPrisma, async () => {
+        return this.processMatchedPaymentByMetadata({ payload, restaurantId: restaurant.id, content });
+      });
+
+      if (result.matched) {
+        return {
+          success: true,
+          matched: result.type,
+          slug: restaurant.slug,
+          ...result.details,
+          note: 'Resolved via transferContent metadata',
+        };
       }
     }
 
@@ -430,12 +630,58 @@ export class PaymentService {
     return { success: true, matched: null, content };
   }
 
+  private async processMatchedPaymentByMetadata(params: {
+    payload: SePayWebhookPayload;
+    restaurantId: string;
+    content: string;
+  }) {
+    const prisma = getPrisma();
+    const normContent = this.normalizePaymentRef(params.content);
+
+    const pendingPayments = await prisma.payment.findMany({
+      where: {
+        status: PaymentStatus.PENDING,
+        orderId: { not: null },
+        purpose: PaymentPurpose.ORDER,
+        order: { restaurantId: params.restaurantId },
+      },
+      include: { order: true },
+      orderBy: { createdAt: 'desc' },
+      take: 20,
+    });
+
+    for (const payment of pendingPayments) {
+      const transferContent = (payment.metadata as any)?.transferContent as string | undefined;
+      if (!transferContent) continue;
+
+      const normTransfer = this.normalizePaymentRef(transferContent);
+      if (!normContent.includes(normTransfer) && !normTransfer.includes(normContent.slice(-normTransfer.length))) {
+        continue;
+      }
+
+      if (Math.abs(Number(payment.amount) - Number(params.payload.transferAmount)) > 1) {
+        continue;
+      }
+
+      if (!payment.order) continue;
+
+      return this.completeMatchedOrderPayment({
+        order: { ...payment.order, restaurantId: payment.order.restaurantId ?? '' },
+        payment,
+        payload: params.payload,
+      });
+    }
+
+    return { matched: false as const };
+  }
+
   // ── SePay payment processor helper ──
   private async processMatchedPayment(params: {
     type: 'ORD' | 'RES' | string;
     refOrCode: string;
     payload: SePayWebhookPayload;
     restaurantId: string;
+    content: string;
   }) {
     const prisma = getPrisma();
 
@@ -479,59 +725,47 @@ export class PaymentService {
         };
       }
     } else if (params.type === 'ORD') {
-      const normalizedRef = params.refOrCode.replace(/[^A-Z0-9]/ig, '').toUpperCase();
+      const normalizedRef = this.normalizePaymentRef(params.refOrCode);
       const pendingOrders = await prisma.order.findMany({
         where: {
-          payments: { some: { status: PaymentStatus.PENDING } }
+          restaurantId: params.restaurantId,
+          payments: { some: { status: PaymentStatus.PENDING, purpose: PaymentPurpose.ORDER } },
         },
-        include: { payments: { where: { status: PaymentStatus.PENDING } } },
+        include: {
+          payments: {
+            where: { status: PaymentStatus.PENDING, purpose: PaymentPurpose.ORDER },
+            orderBy: { createdAt: 'desc' },
+          },
+        },
+        orderBy: { createdAt: 'desc' },
       });
 
-      // Exact match only. Substring matching could credit the wrong order when
-      // one reference is contained in another — for money, an unmatched payment
-      // (manual reconciliation) is far safer than crediting the wrong order.
-      const order = pendingOrders.find(o => {
-        const orderNorm = o.reference.replace(/[^A-Z0-9]/ig, '').toUpperCase();
-        return orderNorm === normalizedRef;
+      const order = pendingOrders.find((o) => {
+        const orderNorm = this.normalizePaymentRef(o.reference);
+        return (
+          orderNorm === normalizedRef ||
+          orderNorm.includes(normalizedRef) ||
+          normalizedRef.includes(orderNorm)
+        );
       });
 
       if (order && order.payments.length > 0) {
         const payment = order.payments[0];
-        await prisma.payment.update({
-          where: { id: payment.id },
-          data: {
-            status: PaymentStatus.COMPLETED,
-            transactionId: String(params.payload.id),
-            paymentDate: new Date(params.payload.transactionDate),
-          },
-        });
-
-        await this.finalizeOrderPayment(order.id, String(params.payload.id));
-
-        // Credit restaurant owner wallet with this order's revenue
-        if (order.restaurantId) {
-          try {
-            await walletService.creditOrderRevenue({
-              restaurantId: order.restaurantId,
-              orderId: order.id,
-              paymentId: payment.id,
-              amount: Number(payment.amount),
-              paymentMethodCode: 'BANK_TRANSFER',
-            });
-          } catch (walletErr: any) {
-            console.warn('[SePay Webhook] Failed to credit wallet:', walletErr.message);
-          }
+        if (Math.abs(Number(payment.amount) - Number(params.payload.transferAmount)) > 1) {
+          return { matched: false as const };
         }
-
-        return {
-          matched: true,
-          type: 'order',
-          details: { orderId: order.id, ref: params.refOrCode },
-        };
+        return this.completeMatchedOrderPayment({ order: { ...order, restaurantId: order.restaurantId ?? '' }, payment, payload: params.payload });
       }
+
+      // Fallback within tenant: match by transferContent metadata
+      return this.processMatchedPaymentByMetadata({
+        payload: params.payload,
+        restaurantId: params.restaurantId,
+        content: params.content,
+      });
     }
 
-    return { matched: false };
+    return { matched: false as const };
   }
 
   // ── List payments ─────────────────────────────────────────────────────────────
@@ -658,6 +892,22 @@ export class PaymentService {
         },
       },
     });
+  }
+
+  /** Public status poll for guest checkout (QR waiting screen) */
+  async getPublicPaymentStatus(paymentId: string, orderId?: string) {
+    const prisma = getPrisma();
+    const payment = await prisma.payment.findUnique({
+      where: { id: paymentId },
+      select: { id: true, status: true, orderId: true, reservationId: true },
+    });
+    if (!payment) {
+      throw new Error('Payment not found');
+    }
+    if (orderId && payment.orderId && payment.orderId !== orderId) {
+      throw new Error('Payment does not belong to this order');
+    }
+    return { status: payment.status as PaymentStatus, orderId: payment.orderId, reservationId: payment.reservationId };
   }
 }
 

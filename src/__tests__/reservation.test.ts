@@ -272,10 +272,13 @@ describe('Reservation Service Integration Tests', () => {
     bookingTime.setDate(bookingTime.getDate() + 2);
     bookingTime.setHours(12, 0, 0, 0); // 12:00 PM in 2 days
 
+    const tableObj = await tenantPrisma.table.findUnique({ where: { id: testTableId2 } });
+    const tableCapacity = tableObj?.seatingCapacity || 4;
+
     const dto1 = {
       restaurantId: restaurant.id,
       customerId,
-      numberOfGuests: 4,
+      numberOfGuests: tableCapacity,
       time: bookingTime.toISOString(),
       tableIds: [testTableId2]
     };
@@ -320,7 +323,7 @@ describe('Reservation Service Integration Tests', () => {
     const dto2 = {
       restaurantId: restaurant.id,
       customerId: customer2.id,
-      numberOfGuests: 4,
+      numberOfGuests: tableCapacity,
       time: bookingTime.toISOString(),
       tableIds: [testTableId2] // Same table!
     };

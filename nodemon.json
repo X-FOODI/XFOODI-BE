@@ -1,0 +1,14 @@
+{
+  "watch": ["src"],
+  "ext": "ts,json",
+  "ignore": [
+    "src/**/*.spec.ts",
+    "node_modules",
+    "dist",
+    ".git",
+    "*.log",
+    "*.sql"
+  ],
+  "exec": "ts-node src/index.ts",
+  "delay": 1000
+}

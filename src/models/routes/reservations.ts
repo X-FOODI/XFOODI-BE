@@ -248,6 +248,42 @@ router.get('/check-tables', async (req, res) => {
   }
 });
 
+// ── Get all tables with availability status (for booking UI) ─────────────────
+router.get('/tables-availability', async (req, res) => {
+  try {
+    const { restaurantId, time, numberOfGuests } = req.query;
+    if (!restaurantId || !time || !numberOfGuests) {
+      return res.status(400).json({ success: false, message: 'restaurantId, time and numberOfGuests required' });
+    }
+    const tables = await reservationService.getTablesWithAvailability(
+      restaurantId as string,
+      new Date(time as string),
+      Number(numberOfGuests)
+    );
+    return res.json({ success: true, data: tables });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// ── Check available slots for a day ──────────────────────────────────────────
+router.get('/check-slots', async (req, res) => {
+  try {
+    const { restaurantId, date, numberOfGuests } = req.query;
+    if (!restaurantId || !date || !numberOfGuests) {
+      return res.status(400).json({ success: false, message: 'restaurantId, date and numberOfGuests required' });
+    }
+    const slots = await reservationService.checkAvailableSlots(
+      restaurantId as string,
+      date as string,
+      Number(numberOfGuests)
+    );
+    return res.json({ success: true, data: slots });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
 // ── Check double booking conflict ───────────────────────────────────────────
 router.get('/check-conflict', async (req, res) => {
   try {

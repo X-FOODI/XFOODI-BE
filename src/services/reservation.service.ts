@@ -43,7 +43,8 @@ export interface CreateReservationDto {
   specialRequests?: string;
   depositAmount?: number;
   tableIds?: string[];  // optional pre-select tables
-  acceptTimeLimit?: boolean; // accept time limit dining overlap
+  acceptTimeLimit?: boolean; // accept time limit dining overlap (leave 30 mins early)
+  acceptWaitForPendingCheckin?: boolean; // accept waiting for prior reservation that hasn't checked in
   bankRefund?: {         // bank account to auto-payout refund if cancelled
     bankBin: string;
     bankCode: string;
@@ -223,14 +224,29 @@ export class ReservationService {
       throw Object.assign(new Error(`Nhà hàng nghỉ/đóng cửa vào ngày đã chọn (${dateStr})`), { statusCode: 400 });
     }
 
-    // 3. Validate business hours (based on config opening_time / closing_time)
+    // 3. Validate business hours (based on config opening_time / closing_time and weekday config)
     const localHour = targetTime.getUTCHours() + 7;
     const hour = localHour >= 24 ? localHour - 24 : localHour;
     const minutes = targetTime.getUTCMinutes();
     const timeInMinutes = hour * 60 + minutes;
 
-    const openParts = (config.opening_time ?? "10:00").split(":");
-    const closeParts = (config.closing_time ?? "22:00").split(":");
+    let openStr = config.opening_time ?? "10:00";
+    let closeStr = config.closing_time ?? "22:00";
+
+    const days = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
+    const dayKey = days[localDate.getUTCDay()];
+    const operatingHours = metadata.operatingHours || {};
+    const dayConfig = operatingHours[dayKey];
+    if (dayConfig) {
+      if (!dayConfig.isOpen) {
+        throw Object.assign(new Error(`Nhà hàng nghỉ/đóng cửa vào ngày đã chọn (${dateStr})`), { statusCode: 400 });
+      }
+      openStr = dayConfig.open || openStr;
+      closeStr = dayConfig.close || closeStr;
+    }
+
+    const openParts = openStr.split(":");
+    const closeParts = closeStr.split(":");
     const openingTime = parseInt(openParts[0]) * 60 + parseInt(openParts[1] || "0");
     const closingTime = parseInt(closeParts[0]) * 60 + parseInt(closeParts[1] || "0");
     
@@ -271,7 +287,7 @@ export class ReservationService {
     }
 
     if (!isWithinOperatingHours) {
-      throw Object.assign(new Error(`Thời gian đặt ngoài giờ mở cửa của nhà hàng (${config.opening_time ?? "10:00"} - ${config.closing_time ?? "22:00"})`), { statusCode: 400 });
+      throw Object.assign(new Error(`Thời gian đặt ngoài giờ mở cửa của nhà hàng (${openStr} - ${closeStr})`), { statusCode: 400 });
     }
     if (isTooLate) {
       let lastHour = Math.floor(lastOrderTime / 60);
@@ -328,15 +344,23 @@ export class ReservationService {
       }
 
       // Guard: prevent a single small group from occupying a table that is way too large
-      // Rule: a single table's capacity must not exceed guests + 2
+      // Rule: a single table's capacity must not exceed guests + 2, UNLESS no smaller tables are available.
       const maxAllowed = dto.numberOfGuests + 2;
       if (dto.tableIds.length === 1 && !isAuto) {
         const singleTable = dbTables[0];
         if (singleTable.seatingCapacity > maxAllowed) {
-          throw Object.assign(
-            new Error(`Bàn ${singleTable.code} có sức chứa ${singleTable.seatingCapacity} chỗ, quá lớn cho nhóm ${dto.numberOfGuests} người. Vui lòng chọn bàn nhỏ hơn (tối đa ${maxAllowed} chỗ) để tránh lãng phí bàn lớn.`),
-            { statusCode: 400 }
+          const smallerTablesExist = await this.checkIfSmallerTablesAvailable(
+            dto.restaurantId,
+            targetTime,
+            dto.numberOfGuests,
+            maxAllowed
           );
+          if (smallerTablesExist) {
+            throw Object.assign(
+              new Error(`Bàn ${singleTable.code} có sức chứa ${singleTable.seatingCapacity} chỗ, quá lớn cho nhóm ${dto.numberOfGuests} người. Vui lòng chọn bàn nhỏ hơn (tối đa ${maxAllowed} chỗ) để tránh lãng phí bàn lớn.`),
+              { statusCode: 400 }
+            );
+          }
         }
       }
 
@@ -367,14 +391,26 @@ export class ReservationService {
         },
         include: {
           table: { select: { code: true } },
-          reservation: { select: { time: true } }
+          reservation: {
+            select: {
+              time: true,
+              statusValue: { select: { code: true } },
+            },
+          },
         }
       });
 
       for (const overlap of overlaps) {
         const nextTime = new Date(overlap.reservation.time);
         if (nextTime.getTime() <= targetTime.getTime()) {
-          // Hard conflict: overlap is in the past or exactly same time
+          // Overlap is a prior reservation in the dining window
+          const priorStatus = overlap.reservation.statusValue?.code;
+          const isPendingCheckin = ['PENDING', 'CONFIRMED'].includes(priorStatus);
+          if (isPendingCheckin && dto.acceptWaitForPendingCheckin) {
+            // Guest accepts waiting until prior party checks in / frees the table
+            continue;
+          }
+          // Hard conflict: prior booking already checked in, or guest did not accept wait
           throw Object.assign(new Error(`Bàn ${overlap.table.code} đã có lượt đặt trước trùng khung giờ này`), { statusCode: 400 });
         }
         
@@ -1836,13 +1872,13 @@ export class ReservationService {
     const bufferBefore = new Date(targetTime.getTime() - diningDurationMs);
     const bufferAfter = new Date(targetTime.getTime() + diningDurationMs);
 
-    // Find tables already reserved in that window with their reservation times
+    // Find tables already reserved in that window with their reservation times + status
     const reservationTables = await prisma.reservationTable.findMany({
       where: {
         reservation: {
           restaurantId,
           time: { gte: bufferBefore, lte: bufferAfter },
-          statusValue: { code: { notIn: ['CANCELLED'] } },
+          statusValue: { code: { notIn: ['CANCELLED', 'NO_SHOW'] } },
         },
       },
       select: {
@@ -1850,6 +1886,7 @@ export class ReservationService {
         reservation: {
           select: {
             time: true,
+            statusValue: { select: { code: true } },
           },
         },
       },
@@ -1858,6 +1895,7 @@ export class ReservationService {
     const conflicts = reservationTables.map((rt) => ({
       tableId: rt.tableId,
       time: new Date(rt.reservation.time),
+      status: rt.reservation.statusValue.code,
     }));
 
     // Find tables currently occupied
@@ -1882,11 +1920,21 @@ export class ReservationService {
     });
 
     // Check which tables are free from hard conflicts & not currently occupied
+    // Note: past PENDING/CONFIRMED (not checked-in) are soft "PENDING_CHECKIN" — not hard blocks
     const activeTablesNoHardConflict = allTables.filter((t) => {
       const tableConflicts = conflicts.filter((c) => c.tableId === t.id);
-      const hasHardConflict = tableConflicts.some(
-        (c) => Math.abs(c.time.getTime() - targetTime.getTime()) < diningDurationMs
-      );
+      const hasHardConflict = tableConflicts.some((c) => {
+        const diff = Math.abs(c.time.getTime() - targetTime.getTime());
+        if (diff >= diningDurationMs) return false;
+        // Past reservation still waiting to check in → not a hard block for suggestion
+        if (
+          c.time.getTime() < targetTime.getTime() &&
+          ['PENDING', 'CONFIRMED'].includes(c.status)
+        ) {
+          return false;
+        }
+        return true;
+      });
       const isCurrentlyOccupied = occupiedTableIds.includes(t.id) && (targetTime.getTime() - Date.now() < diningDurationMs);
       return !hasHardConflict && !isCurrentlyOccupied;
     });
@@ -1925,42 +1973,99 @@ export class ReservationService {
       let conflictTime: string | null = null;
       let limitReason: string | null = null;
       let mustLeaveBy: string | null = null;
+      let conflictType: 'PENDING_CHECKIN' | 'TIME_LIMIT' | null = null;
+      let pendingReservation: {
+        time: string;
+        expectedEndTime: string;
+        status: string;
+      } | null = null;
 
-      const hasHardConflict = tableConflicts.some(
-        (c) => Math.abs(c.time.getTime() - targetTime.getTime()) < diningDurationMs
-      );
       const isCurrentlyOccupied = occupiedTableIds.includes(t.id) && (targetTime.getTime() - Date.now() < diningDurationMs);
 
-      if (!hasHardConflict && !isCurrentlyOccupied) {
-        if (hasFittingSingleTable) {
-          isAvailable = t.seatingCapacity >= numberOfGuests;
-        } else {
-          isAvailable = true;
-        }
+      // Past reservation overlapping dining window that hasn't checked in yet
+      const pastOverlaps = tableConflicts
+        .filter((c) => {
+          const diff = targetTime.getTime() - c.time.getTime();
+          return diff > 0 && diff < diningDurationMs;
+        })
+        .sort((a, b) => b.time.getTime() - a.time.getTime());
 
-        // Soft conflict: check if there is a future booking nearby (within diningDurationMs window)
-        const futureBookings = tableConflicts.filter(c => c.time.getTime() > targetTime.getTime());
-        if (futureBookings.length > 0) {
-          futureBookings.sort((a, b) => a.time.getTime() - b.time.getTime());
-          const nextBooking = futureBookings[0];
-          const diffMs = nextBooking.time.getTime() - targetTime.getTime();
-          const eatTimeMs = diffMs - 30 * 60 * 1000; // leave 30 mins early
-          
-          if (eatTimeMs < 30 * 60 * 1000) {
-            isAvailable = false;
+      const pendingBefore = pastOverlaps.find((c) => ['PENDING', 'CONFIRMED'].includes(c.status));
+      const checkedInBefore = pastOverlaps.find((c) => c.status === 'CHECKED_IN');
+
+      // Future reservation overlapping dining window
+      const futureOverlaps = tableConflicts
+        .filter((c) => {
+          const diff = c.time.getTime() - targetTime.getTime();
+          return diff > 0 && diff < diningDurationMs;
+        })
+        .sort((a, b) => a.time.getTime() - b.time.getTime());
+
+      if (isCurrentlyOccupied || checkedInBefore) {
+        // Truly occupied — cannot select
+        return {
+          ...t,
+          isAvailable: false,
+          conflictTime: null,
+          isSuggested: false,
+          isCombinedSuggestion,
+          limitReason: null,
+          mustLeaveBy: null,
+          conflictType: null,
+          pendingReservation: null,
+        };
+      }
+
+      if (pendingBefore) {
+        // Booking AFTER a reservation that hasn't checked in → special wait dialog
+        const expectedEndTime = new Date(pendingBefore.time.getTime() + diningDurationMs);
+        conflictType = 'PENDING_CHECKIN';
+        isAvailable = false;
+        pendingReservation = {
+          time: pendingBefore.time.toISOString(),
+          expectedEndTime: expectedEndTime.toISOString(),
+          status: pendingBefore.status,
+        };
+        conflictTime = pendingBefore.time.toISOString();
+      } else if (futureOverlaps.length > 0) {
+        const nextBooking = futureOverlaps[0];
+        const diffMs = nextBooking.time.getTime() - targetTime.getTime();
+        const eatTimeMs = diffMs - 30 * 60 * 1000; // leave 30 mins early
+
+        if (eatTimeMs < 30 * 60 * 1000) {
+          // Too tight — treat as unavailable hard conflict
+          isAvailable = false;
+          conflictType = 'TIME_LIMIT';
+          conflictTime = nextBooking.time.toISOString();
+        } else {
+          // Soft time-limit conflict — can accept leave-early
+          if (hasFittingSingleTable) {
+            isAvailable = t.seatingCapacity >= numberOfGuests;
           } else {
-            conflictTime = nextBooking.time.toISOString();
-            const leaveTime = new Date(nextBooking.time.getTime() - 30 * 60 * 1000);
-            
-            // Format leaveTime as local HH:MM (UTC+7)
-            const localLeave = new Date(leaveTime.getTime() + 7 * 60 * 60 * 1000);
-            const lHour = String(localLeave.getUTCHours()).padStart(2, '0');
-            const lMin = String(localLeave.getUTCMinutes()).padStart(2, '0');
-            mustLeaveBy = `${lHour}:${lMin}`;
-            
-            const nextHour = String(nextBooking.time.getUTCHours() + 7).padStart(2, '0');
-            const nextMin = String(nextBooking.time.getUTCMinutes()).padStart(2, '0');
-            limitReason = `Bàn này đã được đặt từ ${nextHour}:${nextMin}. Bạn chỉ được sử dụng bàn này đến ${mustLeaveBy} (tối đa ${Math.floor(eatTimeMs / 60000)} phút).`;
+            isAvailable = true;
+          }
+          conflictType = 'TIME_LIMIT';
+          conflictTime = nextBooking.time.toISOString();
+          const leaveTime = new Date(nextBooking.time.getTime() - 30 * 60 * 1000);
+          const localLeave = new Date(leaveTime.getTime() + 7 * 60 * 60 * 1000);
+          const lHour = String(localLeave.getUTCHours()).padStart(2, '0');
+          const lMin = String(localLeave.getUTCMinutes()).padStart(2, '0');
+          mustLeaveBy = `${lHour}:${lMin}`;
+          const nextHour = String(nextBooking.time.getUTCHours() + 7).padStart(2, '0');
+          const nextMin = String(nextBooking.time.getUTCMinutes()).padStart(2, '0');
+          limitReason = `Bàn này đã được đặt từ ${nextHour}:${nextMin}. Bạn chỉ được sử dụng bàn này đến ${mustLeaveBy} (tối đa ${Math.floor(eatTimeMs / 60000)} phút).`;
+        }
+      } else {
+        // No overlapping conflicts
+        const hasOtherHardConflict = tableConflicts.some((c) => {
+          const diff = Math.abs(c.time.getTime() - targetTime.getTime());
+          return diff < diningDurationMs && c.time.getTime() >= targetTime.getTime();
+        });
+        if (!hasOtherHardConflict) {
+          if (hasFittingSingleTable) {
+            isAvailable = t.seatingCapacity >= numberOfGuests;
+          } else {
+            isAvailable = true;
           }
         }
       }
@@ -1973,6 +2078,8 @@ export class ReservationService {
         isCombinedSuggestion,
         limitReason,
         mustLeaveBy,
+        conflictType,
+        pendingReservation,
       };
     });
   }
@@ -2078,6 +2185,187 @@ export class ReservationService {
   }
 
   // ── Helper: get optimal table assignment for auto reservations ──────────────
+  /**
+   * Get all tables with availability status for booking UI
+   * Returns table status: FULLY_AVAILABLE, PARTIALLY_AVAILABLE (with next reservation), OCCUPIED, PENDING_CHECKIN
+   */
+  async getTablesWithAvailability(restaurantId: string, targetTime: Date, numberOfGuests: number) {
+    const prisma = getPrisma();
+    
+    // Fetch restaurant config
+    const restaurant = await prisma.restaurant.findUnique({
+      where: { id: restaurantId },
+      select: { metadata: true }
+    });
+    const metadata = (restaurant?.metadata as any) ?? {};
+    const config = metadata.reservationConfig ?? {};
+    const diningDurationMinutes = config.dining_duration_minutes ?? 90;
+    const diningDurationMs = diningDurationMinutes * 60 * 1000;
+    const bufferMinutes = config.buffer_minutes ?? 30;
+    const lateCheckinMinutes = config.late_checkin_minutes ?? 30;
+
+    // Find all tables
+    const allTables = await prisma.table.findMany({
+      where: {
+        restaurantId,
+        isActive: true,
+        floor: { isActive: true },
+      },
+      include: { floor: true },
+      orderBy: { code: 'asc' },
+    });
+
+    // Find currently occupied tables
+    const activeSessions = await prisma.tableSession.findMany({
+      where: { isActive: true },
+      select: { tableId: true }
+    });
+    const occupiedTableIds = new Set(activeSessions.map(s => s.tableId));
+
+    // Find all reservations in the relevant time window
+    const bufferBefore = new Date(targetTime.getTime() - diningDurationMs);
+    const bufferAfter = new Date(targetTime.getTime() + diningDurationMs * 2); // Look further ahead
+
+    const reservationTables = await prisma.reservationTable.findMany({
+      where: {
+        reservation: {
+          restaurantId,
+          time: { gte: bufferBefore, lte: bufferAfter },
+          statusValue: { code: { notIn: ['CANCELLED', 'NO_SHOW'] } },
+        },
+      },
+      select: {
+        tableId: true,
+        reservation: { 
+          select: { 
+            time: true, 
+            numberOfGuests: true,
+            statusValue: { select: { code: true } }
+          } 
+        },
+      },
+      orderBy: { reservation: { time: 'asc' } },
+    });
+
+    const now = new Date();
+
+    // Build table status map
+    const tableStatuses = allTables.map((table) => {
+      // Check if currently occupied
+      if (occupiedTableIds.has(table.id)) {
+        return {
+          id: table.id,
+          code: table.code,
+          seatingCapacity: table.seatingCapacity,
+          floor: table.floor.name,
+          status: 'OCCUPIED' as const,
+          nextReservation: null,
+          usableUntil: null,
+          pendingReservation: null,
+        };
+      }
+
+      // Find reservations for this table
+      const tableReservations = reservationTables
+        .filter((rt) => rt.tableId === table.id)
+        .map((rt) => ({
+          time: new Date(rt.reservation.time),
+          status: rt.reservation.statusValue.code,
+          numberOfGuests: rt.reservation.numberOfGuests,
+        }))
+        .sort((a, b) => a.time.getTime() - b.time.getTime());
+
+      // Find reservations around target time
+      const beforeReservation = tableReservations
+        .filter((res) => res.time.getTime() < targetTime.getTime())
+        .pop(); // Last reservation before target time
+
+      const afterReservation = tableReservations
+        .find((res) => res.time.getTime() > targetTime.getTime()); // First reservation after target time
+
+      // Booking AFTER a prior reservation that hasn't checked in (within dining window)
+      if (beforeReservation) {
+        const timeDiff = targetTime.getTime() - beforeReservation.time.getTime();
+        const overlapsDining = timeDiff < diningDurationMs;
+        const isPendingOrConfirmed = ['PENDING', 'CONFIRMED'].includes(beforeReservation.status);
+
+        if (overlapsDining && isPendingOrConfirmed) {
+          const expectedEndTime = new Date(beforeReservation.time.getTime() + diningDurationMs);
+          return {
+            id: table.id,
+            code: table.code,
+            seatingCapacity: table.seatingCapacity,
+            floor: table.floor.name,
+            status: 'PENDING_CHECKIN' as const,
+            nextReservation: afterReservation ? afterReservation.time.toISOString() : null,
+            usableUntil: afterReservation
+              ? new Date(afterReservation.time.getTime() - bufferMinutes * 60 * 1000).toISOString()
+              : null,
+            pendingReservation: {
+              time: beforeReservation.time.toISOString(),
+              expectedEndTime: expectedEndTime.toISOString(),
+              status: beforeReservation.status,
+            },
+          };
+        }
+      }
+
+      // Check if there's a hard conflict (reservation within dining duration)
+      const hasHardConflict = tableReservations.some(
+        (res) => Math.abs(res.time.getTime() - targetTime.getTime()) < diningDurationMs
+      );
+
+      if (hasHardConflict) {
+        return {
+          id: table.id,
+          code: table.code,
+          seatingCapacity: table.seatingCapacity,
+          floor: table.floor.name,
+          status: 'OCCUPIED' as const,
+          nextReservation: null,
+          usableUntil: null,
+          pendingReservation: null,
+        };
+      }
+
+      // Standard logic for next reservation (booking overlaps with future reservation)
+      if (afterReservation) {
+        const timeDiff = afterReservation.time.getTime() - targetTime.getTime();
+        const isWithinDining = timeDiff < diningDurationMs;
+        const isPendingOrConfirmed = ['PENDING', 'CONFIRMED'].includes(afterReservation.status);
+
+        if (isWithinDining && isPendingOrConfirmed) {
+          // Next reservation hasn't checked in yet and overlaps with current booking window
+          const usableUntil = new Date(afterReservation.time.getTime() - bufferMinutes * 60 * 1000);
+          return {
+            id: table.id,
+            code: table.code,
+            seatingCapacity: table.seatingCapacity,
+            floor: table.floor.name,
+            status: 'PARTIALLY_AVAILABLE' as const,
+            nextReservation: afterReservation.time.toISOString(),
+            usableUntil: usableUntil.toISOString(),
+            pendingReservation: null,
+          };
+        }
+      }
+
+      // Fully available
+      return {
+        id: table.id,
+        code: table.code,
+        seatingCapacity: table.seatingCapacity,
+        floor: table.floor.name,
+        status: 'FULLY_AVAILABLE' as const,
+        nextReservation: null,
+        usableUntil: null,
+        pendingReservation: null,
+      };
+    });
+
+    return tableStatuses;
+  }
+
   async getOptimalTableAssignment(restaurantId: string, targetTime: Date, numberOfGuests: number): Promise<string[]> {
     const prisma = getPrisma();
     
@@ -2193,6 +2481,204 @@ export class ReservationService {
       }
     });
     return !!doubleBooked;
+  }
+
+  async checkIfSmallerTablesAvailable(
+    restaurantId: string,
+    targetTime: Date,
+    numberOfGuests: number,
+    maxAllowed: number
+  ): Promise<boolean> {
+    const prisma = getPrisma();
+    
+    // Fetch restaurant config for dining duration
+    const restaurant = await prisma.restaurant.findUnique({
+      where: { id: restaurantId },
+      select: { metadata: true }
+    });
+    const metadata = (restaurant?.metadata as any) ?? {};
+    const config = metadata.reservationConfig ?? {};
+    const diningDurationMinutes = config.dining_duration_minutes ?? 90;
+    const diningDurationMs = diningDurationMinutes * 60 * 1000;
+
+    const bufferBefore = new Date(targetTime.getTime() - diningDurationMs);
+    const bufferAfter = new Date(targetTime.getTime() + diningDurationMs);
+
+    // Find tables already reserved
+    const reservationTables = await prisma.reservationTable.findMany({
+      where: {
+        reservation: {
+          restaurantId,
+          time: { gte: bufferBefore, lte: bufferAfter },
+          statusValue: { code: { notIn: ['CANCELLED'] } },
+        },
+      },
+      select: { tableId: true },
+    });
+    const reservedTableIds = reservationTables.map(rt => rt.tableId);
+
+    // Find tables currently occupied
+    const activeSessions = await prisma.tableSession.findMany({
+      where: { isActive: true },
+      select: { tableId: true }
+    });
+    const occupiedTableIds = activeSessions.map(s => s.tableId);
+
+    // Find if there is any active table within the small capacity range that is neither reserved nor occupied
+    const smallerTable = await prisma.table.findFirst({
+      where: {
+        restaurantId,
+        isActive: true,
+        floor: { isActive: true },
+        seatingCapacity: {
+          gte: numberOfGuests,
+          lte: maxAllowed
+        },
+        id: {
+          notIn: [...reservedTableIds, ...occupiedTableIds]
+        }
+      }
+    });
+
+    return !!smallerTable;
+  }
+
+  async checkAvailableSlots(
+    restaurantId: string,
+    dateStr: string,
+    numberOfGuests: number
+  ): Promise<Record<string, boolean>> {
+    const prisma = getPrisma();
+
+    // 1. Fetch restaurant config and operating hours
+    const restaurant = await prisma.restaurant.findUnique({
+      where: { id: restaurantId },
+      select: { metadata: true }
+    });
+    const metadata = (restaurant?.metadata as any) ?? {};
+    const config = metadata.reservationConfig ?? {};
+    const diningDurationMinutes = config.dining_duration_minutes ?? 90;
+    const diningDurationMs = diningDurationMinutes * 60 * 1000;
+    const lastBookingBeforeClose = config.last_booking_before_close_minutes ?? 60;
+
+    let openStr = config.opening_time ?? "10:00";
+    let closeStr = config.closing_time ?? "22:00";
+
+    const days = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
+    const d = new Date(dateStr);
+    const dayKey = days[d.getDay()];
+
+    const operatingHours = metadata.operatingHours || {};
+    const dayConfig = operatingHours[dayKey];
+    if (dayConfig) {
+      if (!dayConfig.isOpen) {
+        // Closed today, all slots unavailable
+        return {};
+      }
+      openStr = dayConfig.open || openStr;
+      closeStr = dayConfig.close || closeStr;
+    }
+
+    const openParts = openStr.split(":");
+    const closeParts = closeStr.split(":");
+    const openMin = parseInt(openParts[0]) * 60 + parseInt(openParts[1] || "0");
+    let closeMin = parseInt(closeParts[0]) * 60 + parseInt(closeParts[1] || "0");
+    if (closeMin < openMin) {
+      closeMin += 24 * 60;
+    }
+    const latestBookingMin = closeMin - lastBookingBeforeClose;
+
+    // Generate slots
+    const slots: string[] = [];
+    for (let min = openMin; min <= latestBookingMin; min += 30) {
+      const displayMin = min % (24 * 60);
+      const h = Math.floor(displayMin / 60).toString().padStart(2, '0');
+      const m = (displayMin % 60).toString().padStart(2, '0');
+      slots.push(`${h}:${m}`);
+    }
+
+    if (slots.length === 0) return {};
+
+    // 2. Fetch all active tables once
+    const allTables = await prisma.table.findMany({
+      where: {
+        restaurantId,
+        isActive: true,
+        floor: { isActive: true }
+      },
+      select: {
+        id: true,
+        seatingCapacity: true
+      }
+    });
+
+    // 3. Fetch all active reservations for the day (expand window around date)
+    const startOfDay = new Date(`${dateStr}T00:00:00.000Z`);
+    const endOfDay = new Date(`${dateStr}T23:59:59.999Z`);
+    // Buffer time: extend window by diningDurationMs to catch overlapping reservations
+    const bufferStart = new Date(startOfDay.getTime() - diningDurationMs);
+    const bufferEnd = new Date(endOfDay.getTime() + diningDurationMs);
+
+    const reservations = await prisma.reservation.findMany({
+      where: {
+        restaurantId,
+        time: { gte: bufferStart, lte: bufferEnd },
+        statusValue: { code: { notIn: ['CANCELLED'] } },
+      },
+      select: {
+        time: true,
+        tables: { select: { tableId: true } }
+      }
+    });
+
+    // 4. Fetch all occupied tables
+    const activeSessions = await prisma.tableSession.findMany({
+      where: { isActive: true },
+      select: { tableId: true }
+    });
+    const occupiedTableIds = new Set(activeSessions.map(s => s.tableId));
+
+    // 5. Check availability for each slot in memory
+    const results: Record<string, boolean> = {};
+
+    for (const slot of slots) {
+      const [sh, sm] = slot.split(":").map(Number);
+      const slotTime = new Date(startOfDay);
+      slotTime.setUTCHours(sh, sm, 0, 0);
+
+      // Find tables reserved at this window
+      const reservedTableIds = new Set<string>();
+      for (const res of reservations) {
+        const resTime = new Date(res.time);
+        if (Math.abs(resTime.getTime() - slotTime.getTime()) < diningDurationMs) {
+          res.tables.forEach(t => reservedTableIds.add(t.tableId));
+        }
+      }
+
+      // Check if slot is close to now to filter occupied tables
+      const isCloseToNow = Math.abs(slotTime.getTime() - Date.now()) < diningDurationMs;
+
+      // Filter available tables for this slot
+      const availableTablesForSlot = allTables.filter(t => {
+        const isReserved = reservedTableIds.has(t.id);
+        const isOccupied = isCloseToNow && occupiedTableIds.has(t.id);
+        return !isReserved && !isOccupied;
+      });
+
+      // We need to see if we can accommodate `numberOfGuests`
+      // Choice A: single table
+      const hasSingleTable = availableTablesForSlot.some(t => t.seatingCapacity >= numberOfGuests);
+      if (hasSingleTable) {
+        results[slot] = true;
+        continue;
+      }
+
+      // Choice B: combining tables
+      const bestCombo = this.findOptimalCombination(availableTablesForSlot, numberOfGuests);
+      results[slot] = !!(bestCombo && bestCombo.length > 0);
+    }
+
+    return results;
   }
 }
 

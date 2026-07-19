@@ -25,6 +25,17 @@ router.get('/', authMiddleware, requireRole('Owner', 'Admin', 'Staff'), async (r
   }
 });
 
+// ── Public payment status poll (guest checkout QR screen) ───────────────────
+router.get('/public/:id/status', async (req, res) => {
+  try {
+    const orderId = req.query.orderId as string | undefined;
+    const result = await paymentService.getPublicPaymentStatus(req.params.id, orderId);
+    return res.json({ success: true, data: result });
+  } catch (err: any) {
+    return res.status(404).json({ success: false, message: err.message || 'Payment not found' });
+  }
+});
+
 // ── Admin: List payments across ALL tenants ──────────────────────────────────
 router.get('/admin/list', authMiddleware, requireRole('Admin'), async (req, res) => {
   try {
@@ -54,16 +65,47 @@ router.get('/:id', authMiddleware, requireRole('Owner', 'Admin', 'Staff'), async
 
 // ── Cash payment ─────────────────────────────────────────────────────────────
 router.post('/cash', authMiddleware, requireRole('Owner', 'Admin', 'Staff'), async (req, res) => {
+  console.log('[Cash Payment API] Received request');
+  console.log('[Cash Payment API] Body:', req.body);
+  console.log('[Cash Payment API] User:', (req as any).user);
+  
   try {
     const { orderId, reservationId, cashReceive, purpose } = req.body;
     if (!cashReceive) return res.status(400).json({ success: false, message: 'cashReceive required' });
 
+    console.log('[Cash Payment API] Processing payment...');
     const payment = await paymentService.payCash({
       orderId,
       reservationId,
       cashReceive: Number(cashReceive),
       purpose: purpose ?? (reservationId ? PaymentPurpose.DEPOSIT : PaymentPurpose.ORDER),
     });
+    
+    console.log('[Cash Payment API] Payment created:', payment.id);
+
+    // Emit socket so checkout page (customer) can detect payment and show success screen
+    try {
+      const { getIO } = require('../../socket');
+      const { prismaStorage } = require('../../lib/prisma');
+      const io = getIO();
+      if (io && orderId) {
+        const activeClient = prismaStorage.getStore();
+        if (activeClient) {
+          const order = await activeClient.order.findUnique({ where: { id: orderId }, select: { restaurantId: true } });
+          if (order?.restaurantId) {
+            console.log('[Cash Payment API] Emitting PAYMENT_COMPLETED to room:', `restaurant_${order.restaurantId}`);
+            io.to(`restaurant_${order.restaurantId}`).emit('PAYMENT_COMPLETED', {
+              paymentId: payment.id,
+              orderId,
+              method: 'CASH',
+            });
+          }
+        }
+      }
+    } catch (socketErr: any) {
+      console.warn('[Cash Payment] Socket emit failed:', socketErr.message);
+    }
+
     return res.json({ success: true, data: payment });
   } catch (err: any) {
     return res.status(400).json({ success: false, message: err.message });
@@ -74,7 +116,7 @@ router.post('/cash', authMiddleware, requireRole('Owner', 'Admin', 'Staff'), asy
 router.post('/transfer-info', async (req, res) => {
   try {
     const { orderId, reservationId, amount, restaurantId } = req.body;
-    if (!amount || !restaurantId) {
+    if (amount == null || Number(amount) <= 0 || !restaurantId) {
       return res.status(400).json({ success: false, message: 'amount and restaurantId required' });
     }
 
