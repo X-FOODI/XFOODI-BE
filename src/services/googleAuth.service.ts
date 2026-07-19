@@ -9,11 +9,17 @@ import { ENV } from '../config/env';
 import { generateAccessAndRefreshTokens } from './authToken.service';
 import { assignDefaultRole } from './role.service';
 import { resolveRestaurantFromHeaders } from '../lib/tenant';
+import {
+  isUserAccountDisabled,
+  resolveUserDisableReason,
+  USER_DISABLED_MESSAGE,
+} from '../utils/accountStatus';
 
 export class GoogleAuthHttpError extends Error {
   constructor(
     public readonly statusCode: number,
-    message: string
+    message: string,
+    public readonly reason?: string
   ) {
     super(message);
     this.name = 'GoogleAuthHttpError';
@@ -226,6 +232,13 @@ export async function signInWithGoogle(googleToken: string, headers?: any): Prom
       console.error('[GoogleAuth] ❌ DB update user error:', (updateErr as Error).message);
       // Non-critical error, continue
     }
+  }
+
+  // Block disabled users
+  if (user && isUserAccountDisabled(user)) {
+    const reason = await resolveUserDisableReason(user.id, user.disabledReason);
+    console.warn(`[GoogleAuth] Google Login blocked for disabled user: ${user.email}`);
+    throw new GoogleAuthHttpError(403, USER_DISABLED_MESSAGE, reason);
   }
 
   // ─── Google Authenticator 2FA Security Block for Google Login ───

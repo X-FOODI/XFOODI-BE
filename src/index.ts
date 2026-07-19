@@ -32,6 +32,7 @@ import { API_ROUTES } from './constants/routes';
 import { ENV } from './config/env';
 import { UploadQueueService } from './services/uploadQueue.service';
 import { startReservationCronJobs } from './cron/reservationCron';
+import adminRoutes from './models/routes/admin';
 
 // Trigger restart after Prisma generate
 const app = express();
@@ -116,6 +117,10 @@ app.use(async (req: any, res: any, next) => {
       });
 
       if (restaurant) {
+        if (restaurant.status === 'DISABLED' && !req.path.startsWith('/api/tenants')) {
+          return res.status(403).json({ success: false, message: 'This restaurant has been disabled.', reason: restaurant.disabledReason });
+        }
+
         const tenantDbUrl = getTenantConnectionUrl(ENV.DATABASE_URL, restaurant.slug);
         activeClient = getTenantPrisma(tenantDbUrl);
         // Expose restaurant on request for route handlers
@@ -130,6 +135,8 @@ app.use(async (req: any, res: any, next) => {
               where: { id: restaurant.ownerId },
             });
             if (centralOwner) {
+              // Chỉ sync các fields cơ bản — tenant DB không có cột
+              // status/disabledAt/disabledBy/disabledReason (chỉ có trong Central DB)
               await activeClient.user.upsert({
                 where: { id: centralOwner.id },
                 update: {
@@ -270,6 +277,7 @@ app.use('/api/layouts', layoutsRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/vouchers', voucherRoutes);
 app.use('/api/ingredients', ingredientsRoutes);
+app.use('/api/admin', adminRoutes);
 
 // Health check endpoint
 app.get(API_ROUTES.HEALTH.BASE, (req, res) => {

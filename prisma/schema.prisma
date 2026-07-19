@@ -2,34 +2,42 @@ generator client {
   provider = "prisma-client-js"
 }
 
-
-
 datasource db {
   provider  = "postgresql"
   url       = env("DATABASE_URL")
   directUrl = env("DIRECT_URL")
 }
 
+// ─── Enums ──────────────────────────────────────────────────────────────────────
+enum AccountStatus {
+  ACTIVE
+  DISABLED
+}
+
 model Restaurant {
-  id           String   @id @default(uuid())
-  name         String
-  slug         String   @unique
-  ownerId      String
-  planType     String   @default("FREE")
-  logoUrl      String?
-  description  String?
-  address      String?
-  phone        String?
-  email        String?
-  primaryColor String?  @default("#FF380B")
-  isActive     Boolean  @default(true)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-  metadata     Json?
-  latitude     Float?
-  longitude    Float?
-  cuisineType  String?  @default("other") // e.g. "vietnamese", "japanese", "fastfood", "other"
-  loyaltyPointRate Int  @default(10000)
+  id               String         @id @default(uuid())
+  name             String
+  slug             String         @unique
+  ownerId          String
+  planType         String         @default("FREE")
+  logoUrl          String?
+  description      String?
+  address          String?
+  phone            String?
+  email            String?
+  primaryColor     String?        @default("#FF380B")
+  isActive         Boolean        @default(true)
+  status           AccountStatus  @default(ACTIVE)
+  disabledAt       DateTime?
+  disabledBy       String?
+  disabledReason   String?        @db.VarChar(500)
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+  metadata         Json?
+  latitude         Float?
+  longitude        Float?
+  cuisineType      String?        @default("other") // e.g. "vietnamese", "japanese", "fastfood", "other"
+  loyaltyPointRate Int            @default(10000)
 
   owner                User                 @relation("RestaurantOwner", fields: [ownerId], references: [id])
   userRoles            UserRole[]
@@ -77,15 +85,19 @@ model User {
   provider         String        @default("local")
   emailVerified    Boolean       @default(false)
   /// "MALE" | "FEMALE" | "OTHER"
-  gender        String?
-  dateOfBirth   DateTime?
-  address       String?   @db.VarChar(255)
-  isActive      Boolean   @default(true)
-  lastLoginAt   DateTime?
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
-  resetOtp      String?
-  resetOtpExpires DateTime?
+  gender           String?
+  dateOfBirth      DateTime?
+  address          String?       @db.VarChar(255)
+  isActive         Boolean       @default(true)
+  status           AccountStatus @default(ACTIVE)
+  disabledAt       DateTime?
+  disabledBy       String?
+  disabledReason   String?       @db.VarChar(500)
+  lastLoginAt      DateTime?
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+  resetOtp         String?
+  resetOtpExpires  DateTime?
 
   twoFactorEnabled     Boolean   @default(false)
   twoFactorSecret      String?
@@ -102,10 +114,10 @@ model User {
   socialShares     SocialShare[]
   savedPosts       SavedPost[]
   /// Social community extensions (additive)
-  bio                        String?              @db.VarChar(500)
-  coverImageUrl              String?
-  socialFollowers            SocialFollow[]       @relation("UserSocialFollowers")
-  socialFollowing            SocialFollow[]       @relation("UserSocialFollowing")
+  bio                         String?              @db.VarChar(500)
+  coverImageUrl               String?
+  socialFollowers             SocialFollow[]       @relation("UserSocialFollowers")
+  socialFollowing             SocialFollow[]       @relation("UserSocialFollowing")
   socialNotificationsReceived SocialNotification[] @relation("NotificationRecipient")
   socialNotificationsSent     SocialNotification[] @relation("NotificationActor")
   restaurantApplications RestaurantApplication[]

@@ -11,20 +11,25 @@ const FROM = {
   name: ENV.SENDGRID.EMAIL_FROM_NAME || 'XFoodi',
 };
 
+/** Strip tenant/staff scope prefix (e.g. "slug:staff:user@mail.com" → "user@mail.com"). */
+function cleanEmailAddress(email: string): string {
+  return email.includes(':') ? email.substring(email.lastIndexOf(':') + 1) : email;
+}
+
 async function sendEmail(msg: Parameters<typeof sgMail.send>[0]) {
   const cleanMsg = { ...msg } as any;
   try {
     if (cleanMsg.to) {
       if (typeof cleanMsg.to === 'string') {
-        cleanMsg.to = cleanMsg.to.includes(':') ? cleanMsg.to.substring(cleanMsg.to.indexOf(':') + 1) : cleanMsg.to;
+        cleanMsg.to = cleanEmailAddress(cleanMsg.to);
       } else if (Array.isArray(cleanMsg.to)) {
         cleanMsg.to = cleanMsg.to.map((item: any) => {
           if (typeof item === 'string') {
-            return item.includes(':') ? item.substring(item.indexOf(':') + 1) : item;
+            return cleanEmailAddress(item);
           } else if (item && typeof item === 'object' && item.email) {
             return {
               ...item,
-              email: item.email.includes(':') ? item.email.substring(item.email.indexOf(':') + 1) : item.email,
+              email: cleanEmailAddress(item.email),
             };
           }
           return item;
@@ -32,7 +37,7 @@ async function sendEmail(msg: Parameters<typeof sgMail.send>[0]) {
       } else if (typeof cleanMsg.to === 'object' && cleanMsg.to.email) {
         cleanMsg.to = {
           ...cleanMsg.to,
-          email: cleanMsg.to.email.includes(':') ? cleanMsg.to.email.substring(cleanMsg.to.email.indexOf(':') + 1) : cleanMsg.to.email,
+          email: cleanEmailAddress(cleanMsg.to.email),
         };
       }
     }
@@ -44,9 +49,9 @@ async function sendEmail(msg: Parameters<typeof sgMail.send>[0]) {
     await sgMail.send(cleanMsg as any);
     console.log(`[Email] Sent to ${cleanMsg.to}`);
   } catch (error: any) {
-    console.error(`[Email] Failed`, error?.response?.body || error);
-    if (error?.code !== 401) throw error;
-    console.log(`[MOCK EMAIL FALLBACK]`, JSON.stringify(cleanMsg, null, 2));
+    const sendGridErrors = error?.response?.body?.errors;
+    console.error(`[Email] Failed`, sendGridErrors || error?.message || error);
+    throw error;
   }
 }
 
@@ -567,4 +572,78 @@ export const sendReservationRejectedEmail = async (
     }),
     { email: to, reservationId }
   );
+};
+
+export const sendAccountDisabledEmail = async (email: string, fullName: string, reason: string, disabledAt: Date) => {
+  const formattedDate = disabledAt.toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' });
+  const supportEmail = ENV.SENDGRID.EMAIL_REPLY_TO || 'xfoodiprojects@gmail.com';
+
+  await sendEmail({
+    to: email,
+    from: FROM,
+    replyTo: ENV.SENDGRID.EMAIL_REPLY_TO,
+    subject: 'Tài khoản XFoodi của bạn đã bị khóa',
+    text: [
+      `Xin chào ${fullName},`,
+      '',
+      'Tài khoản XFoodi của bạn đã bị khóa bởi quản trị viên hệ thống.',
+      `Lý do: ${reason}`,
+      `Thời gian khóa: ${formattedDate}`,
+      '',
+      'Bạn sẽ không thể đăng nhập cho đến khi tài khoản được mở khóa lại.',
+      `Nếu bạn cho rằng đây là nhầm lẫn, vui lòng liên hệ: ${supportEmail}`,
+    ].join('\n'),
+    html: `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+        <h2 style="color: #ef4444;">Tài khoản đã bị khóa</h2>
+        <p>Xin chào <strong>${fullName}</strong>,</p>
+        <p>Tài khoản XFoodi của bạn đã bị <strong style="color:#ef4444;">khóa</strong> bởi quản trị viên hệ thống. Bạn sẽ không thể đăng nhập cho đến khi tài khoản được mở khóa lại.</p>
+        <div style="background: #fef2f2; border-left: 4px solid #ef4444; padding: 12px 16px; margin: 20px 0; border-radius: 4px;">
+          <p style="margin: 0 0 8px 0; color: #7f1d1d; font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px;">Lý do khóa tài khoản</p>
+          <p style="margin: 0; color: #991b1b; font-size: 15px; line-height: 1.5;">${reason}</p>
+        </div>
+        <p style="color: #4b5563; font-size: 14px;"><strong>Thời gian khóa:</strong> ${formattedDate}</p>
+        <p style="background-color: #fffbeb; border-left: 4px solid #f59e0b; padding: 12px 16px; border-radius: 4px; font-size: 14px; color: #78350f;">
+          Nếu bạn cho rằng đây là nhầm lẫn, vui lòng liên hệ đội ngũ hỗ trợ XFoodi tại <a href="mailto:${supportEmail}" style="color: #ff380b;">${supportEmail}</a>.
+        </p>
+        <p style="margin-top: 40px; font-size: 12px; color: #aaa;">XFoodi Team · ${supportEmail}</p>
+      </div>
+    `,
+  });
+};
+
+export const sendRestaurantDisabledEmail = async (email: string, restaurantName: string, reason: string, disabledAt: Date) => {
+  const formattedDate = disabledAt.toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' });
+  const supportEmail = ENV.SENDGRID.EMAIL_REPLY_TO || 'xfoodiprojects@gmail.com';
+
+  await sendEmail({
+    to: email,
+    from: FROM,
+    replyTo: ENV.SENDGRID.EMAIL_REPLY_TO,
+    subject: `Nhà hàng "${restaurantName}" đã bị khóa trên XFoodi`,
+    text: [
+      `Nhà hàng "${restaurantName}" của bạn đã bị khóa bởi quản trị viên hệ thống.`,
+      `Lý do: ${reason}`,
+      `Thời gian khóa: ${formattedDate}`,
+      '',
+      'Bạn và toàn bộ nhân viên sẽ không thể đăng nhập cho đến khi nhà hàng được mở khóa lại.',
+      `Nếu bạn cho rằng đây là nhầm lẫn, vui lòng liên hệ: ${supportEmail}`,
+    ].join('\n'),
+    html: `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+        <h2 style="color: #ef4444;">Nhà hàng đã bị khóa</h2>
+        <p>Xin chào chủ nhà hàng <strong>${restaurantName}</strong>,</p>
+        <p>Nhà hàng của bạn đã bị <strong style="color:#ef4444;">khóa</strong> trên nền tảng XFoodi. Bạn và toàn bộ nhân viên sẽ không thể đăng nhập cho đến khi nhà hàng được mở khóa lại.</p>
+        <div style="background: #fef2f2; border-left: 4px solid #ef4444; padding: 12px 16px; margin: 20px 0; border-radius: 4px;">
+          <p style="margin: 0 0 8px 0; color: #7f1d1d; font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px;">Lý do khóa nhà hàng</p>
+          <p style="margin: 0; color: #991b1b; font-size: 15px; line-height: 1.5;">${reason}</p>
+        </div>
+        <p style="color: #4b5563; font-size: 14px;"><strong>Thời gian khóa:</strong> ${formattedDate}</p>
+        <p style="background-color: #fffbeb; border-left: 4px solid #f59e0b; padding: 12px 16px; border-radius: 4px; font-size: 14px; color: #78350f;">
+          Nếu bạn cho rằng đây là nhầm lẫn, vui lòng liên hệ đội ngũ hỗ trợ XFoodi tại <a href="mailto:${supportEmail}" style="color: #ff380b;">${supportEmail}</a>.
+        </p>
+        <p style="margin-top: 40px; font-size: 12px; color: #aaa;">XFoodi Team · ${supportEmail}</p>
+      </div>
+    `,
+  });
 };
