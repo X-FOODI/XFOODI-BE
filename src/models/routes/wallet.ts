@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { walletService } from '../../services/wallet.service';
 import { requireRole } from '../../middlewares/requireRole';
 import { authMiddleware } from './auth';
+import { recordAudit } from '../../services/audit.service';
 
 const router: Router = Router();
 
@@ -109,6 +110,16 @@ router.post('/admin/withdrawals/:id/approve', requireRole('Admin'), async (req: 
   try {
     const { adminNote } = req.body;
     const result = await walletService.approveWithdrawal(req.params.id, adminNote);
+    recordAudit({
+      action: 'WITHDRAWAL_APPROVED',
+      adminId: req.user?.sub || req.user?.userId || 'unknown-admin',
+      actorEmail: req.user?.email ?? null,
+      actorName: req.user?.fullName || req.user?.name || null,
+      targetType: 'WITHDRAWAL',
+      targetId: req.params.id,
+      ipAddress: (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.ip || null,
+      reason: adminNote || null,
+    });
     return res.json({ success: true, data: result });
   } catch (err: any) {
     return res.status(400).json({ success: false, message: err.message });
@@ -123,6 +134,16 @@ router.post('/admin/withdrawals/:id/reject', requireRole('Admin'), async (req: a
       return res.status(400).json({ success: false, message: 'Lý do từ chối bắt buộc' });
     }
     await walletService.rejectWithdrawal(req.params.id, reason);
+    recordAudit({
+      action: 'WITHDRAWAL_REJECTED',
+      adminId: req.user?.sub || req.user?.userId || 'unknown-admin',
+      actorEmail: req.user?.email ?? null,
+      actorName: req.user?.fullName || req.user?.name || null,
+      targetType: 'WITHDRAWAL',
+      targetId: req.params.id,
+      ipAddress: (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.ip || null,
+      reason,
+    });
     return res.json({ success: true, message: 'Đã từ chối yêu cầu rút tiền' });
   } catch (err: any) {
     return res.status(400).json({ success: false, message: err.message });
