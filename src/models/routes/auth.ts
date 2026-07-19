@@ -146,21 +146,19 @@ export const authMiddleware = async (req: any, res: any, next: any) => {
       return res.status(403).json({ success: false, message: 'Your account has been disabled.', reason: dbUser.disabledReason });
     }
 
+    const restaurant = await resolveRestaurantFromHeaders(req.headers);
+
+    // Check Restaurant Status in DB for real-time ban enforcement
+    if (restaurant && restaurant.status === 'DISABLED') {
+      return res.status(403).json({ success: false, message: 'Restaurant has been disabled.', reason: restaurant.disabledReason });
+    }
+
     // Tenant check: if user token is bound to a specific restaurant, verify it matches the active tenant
     if (decoded.restaurantId) {
       const userRoles = Array.isArray(decoded.roles) ? decoded.roles : decoded.role ? [decoded.role] : [];
       const isSystemAdmin = userRoles.some((r: string) =>
         ['Admin', 'SuperAdmin', 'System Admin'].includes(r)
       );
-
-      const restaurant = await resolveRestaurantFromHeaders(req.headers);
-
-      // Check Restaurant Status in DB for real-time ban enforcement
-      if (restaurant) {
-        if (restaurant.status === 'DISABLED') {
-          return res.status(403).json({ success: false, message: 'Restaurant has been disabled.', reason: restaurant.disabledReason });
-        }
-      }
 
       if (!isSystemAdmin) {
         if (restaurant && restaurant.id !== decoded.restaurantId) {
