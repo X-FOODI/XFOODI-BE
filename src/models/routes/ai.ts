@@ -60,11 +60,18 @@ router.post('/kb/upload', authMiddleware, tenantGuard, upload.any(), async (req:
     // On the admin domain, tenantGuard doesn't resolve a tenant — system admins
     // instead pass the target restaurantId explicitly in body/query.
     let activeRestaurant = req.restaurant || req.tenant;
-    if (!activeRestaurant && isSystemAdmin) {
-      const targetRestaurantId = req.body.restaurantId || req.query.restaurantId;
-      if (targetRestaurantId) {
-        activeRestaurant = await prisma.restaurant.findUnique({ where: { id: targetRestaurantId } });
-      }
+    const targetRestaurantId = req.body?.restaurantId || req.query?.restaurantId;
+    if (!activeRestaurant && targetRestaurantId && targetRestaurantId !== 'all') {
+      activeRestaurant = await prisma.restaurant.findUnique({ where: { id: targetRestaurantId } });
+    }
+
+    if (!activeRestaurant && req.user?.restaurantId) {
+      activeRestaurant = await prisma.restaurant.findUnique({ where: { id: req.user.restaurantId } });
+    }
+
+    if (!activeRestaurant) {
+      // Fallback to first available restaurant in DB for uploads on admin domain
+      activeRestaurant = (await prisma.restaurant.findFirst({ where: { isActive: true } })) || (await prisma.restaurant.findFirst());
     }
 
     if (!activeRestaurant) {
@@ -130,13 +137,15 @@ router.post('/kb/upload', authMiddleware, tenantGuard, upload.any(), async (req:
 
         // Determine type based on extension
         const ext = originalName.split('.').pop()?.toUpperCase();
-        let fileType: 'PDF' | 'TXT' | 'MD' = 'TXT';
+        let fileType: 'PDF' | 'TXT' | 'MD' | 'DOCX' = 'TXT';
         if (ext === 'PDF') {
           fileType = 'PDF';
         } else if (ext === 'MD') {
           fileType = 'MD';
         } else if (ext === 'TXT') {
           fileType = 'TXT';
+        } else if (ext === 'DOCX' || ext === 'DOC') {
+          fileType = 'DOCX';
         } else {
           console.warn(`[KB API] Skipping unsupported file type: ${originalName}`);
           continue;
@@ -1177,10 +1186,14 @@ router.get('/config', async (req: any, res: any) => {
       return res.status(400).json({ success: false, message: 'Thiếu restaurantId.' });
     }
 
-    const restaurant = await prisma.restaurant.findUnique({
+    let restaurant = await prisma.restaurant.findUnique({
       where: { id: restaurantId },
       select: { metadata: true, name: true }
     });
+
+    if (!restaurant && restaurantId === 'system') {
+      restaurant = { metadata: null, name: 'XFoodi System' } as any;
+    }
 
     if (!restaurant) {
       return res.status(404).json({ success: false, message: 'Không tìm thấy nhà hàng.' });

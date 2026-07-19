@@ -290,10 +290,34 @@ initializeSocket(httpServer);
 // Initialize Social Realtime
 initSocialRealtime(httpServer);
 
+async function ensureSystemRestaurant() {
+  try {
+    const existing = await centralPrisma.restaurant.findUnique({ where: { id: 'system' } });
+    if (!existing) {
+      const adminUser = (await centralPrisma.user.findFirst({ where: { email: 'xfoodiprojects@gmail.com' } })) || (await centralPrisma.user.findFirst());
+      if (adminUser) {
+        await centralPrisma.restaurant.create({
+          data: {
+            id: 'system',
+            name: 'XFoodi System AI Knowledge Base',
+            slug: 'system',
+            ownerId: adminUser.id,
+            description: 'Hệ thống tri thức AI toàn cục XFoodi',
+          },
+        });
+        console.log('[SystemInit] Ensured System Restaurant record (id: "system").');
+      }
+    }
+  } catch (err) {
+    console.error('[SystemInit] Failed to ensure system restaurant:', err);
+  }
+}
+
 // Start server
-httpServer.listen(PORT, () => {
+httpServer.listen(PORT, async () => {
   console.log(`🚀 XFoodi API Server running on http://localhost:${PORT}`);
   
+  await ensureSystemRestaurant();
   // Initialize Background Upload Queue
   UploadQueueService.initialize();
   // Start reservation cron jobs (reminder + payment deadline enforcement)

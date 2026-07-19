@@ -1,6 +1,7 @@
 import { prisma, centralPrisma, getSchemaName } from '../lib/prisma';
 import { AIService } from './ai.service';
 import { PDFParse } from 'pdf-parse';
+import mammoth from 'mammoth';
 import { randomUUID } from 'crypto';
 import { spawn } from 'child_process';
 import path from 'path';
@@ -101,9 +102,19 @@ export class KnowledgeBaseService {
       // 2. Extract text from file buffer
       let text = '';
       if (fileType === 'PDF') {
-        const parser = new PDFParse({ data: fileBuffer });
-        const parsed = await parser.getText();
-        text = parsed.text;
+        try {
+          const parser = new PDFParse({ data: fileBuffer });
+          const parsed = await parser.getText();
+          text = parsed.text || '';
+        } catch (pdfErr) {
+          console.warn('[KBService] PDFParse constructor failed, using fallback pdf-parse:', pdfErr);
+          const pdfParse = require('pdf-parse');
+          const data = await pdfParse(fileBuffer);
+          text = data.text || '';
+        }
+      } else if (fileType === 'DOCX') {
+        const result = await mammoth.extractRawText({ buffer: fileBuffer });
+        text = result.value || '';
       } else if (fileType === 'TXT' || fileType === 'MD') {
         text = fileBuffer.toString('utf-8');
       } else {
