@@ -129,6 +129,8 @@ app.use(async (req: any, res: any, next) => {
               where: { id: restaurant.ownerId },
             });
             if (centralOwner) {
+              // Chỉ sync các fields cơ bản — tenant DB không có cột
+              // status/disabledAt/disabledBy/disabledReason (chỉ có trong Central DB)
               await activeClient.user.upsert({
                 where: { id: centralOwner.id },
                 update: {

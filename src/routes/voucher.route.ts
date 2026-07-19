@@ -22,6 +22,7 @@ router.get('/my', authMiddleware, getMyVouchers);
 router.post('/', authMiddleware, requireRole('Owner', 'Admin', 'SuperAdmin', 'System Admin'), createVoucher);
 router.get('/restaurant/:restaurantId', authMiddleware, requireRole('Owner', 'Admin', 'SuperAdmin', 'System Admin'), getVouchersByRestaurant);
 router.put('/:id', authMiddleware, requireRole('Owner', 'Admin', 'SuperAdmin', 'System Admin'), updateVoucher);
+router.patch('/:id', authMiddleware, requireRole('Owner', 'Admin', 'SuperAdmin', 'System Admin'), updateVoucher);
 router.delete('/:id', authMiddleware, requireRole('Owner', 'Admin', 'SuperAdmin', 'System Admin'), deleteVoucher);
 
 export default router;
