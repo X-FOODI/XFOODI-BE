@@ -28,6 +28,8 @@ async function ensureOrderStatuses(): Promise<Record<string, string>> {
   const defaultStatuses = [
     { code: 'PENDING', name: 'Chờ xác nhận', colorCode: '#f1c40f', isDefault: true },
     { code: 'CONFIRMED', name: 'Đã xác nhận', colorCode: '#3498db', isDefault: false },
+    { code: 'PREPARING', name: 'Đang chế biến', colorCode: '#e67e22', isDefault: false },
+    { code: 'READY', name: 'Sẵn sàng phục vụ', colorCode: '#9b59b6', isDefault: false },
     { code: 'COMPLETED', name: 'Hoàn thành', colorCode: '#2ecc71', isDefault: false },
     { code: 'CANCELLED', name: 'Đã hủy', colorCode: '#95a5a6', isDefault: false },
   ];
@@ -122,6 +124,16 @@ async function ensureTableOccupiedStatus(): Promise<string> {
   }
 
   return statusValue.id;
+}
+
+// Estimated prep time: base on order creation time so it stays stable across refresh.
+const PREP_MINUTES_PER_ITEM = 3;
+const MIN_PREP_MINUTES = 5;
+
+function computeEstimatedReadyAt(createdAt: Date, itemCount: number, statusCode: string): string | null {
+  if (statusCode !== 'CONFIRMED' && statusCode !== 'PREPARING') return null;
+  const minutes = Math.max(MIN_PREP_MINUTES, itemCount * PREP_MINUTES_PER_ITEM);
+  return new Date(new Date(createdAt).getTime() + minutes * 60_000).toISOString();
 }
 
 export class OrderService {
@@ -502,13 +514,15 @@ export class OrderService {
     }
 
     const activeSession = order.tableSessions.find((s) => s.isActive);
+    const currentStatus = statusIdToCode[order.orderStatusId] || 'PENDING';
     return {
       id: order.id,
       reference: order.reference,
       subTotal: Number(order.subTotal),
       totalAmount: Number(order.totalAmount),
       createdAt: order.createdAt,
-      status: statusIdToCode[order.orderStatusId] || 'PENDING',
+      status: currentStatus,
+      estimatedReadyAt: computeEstimatedReadyAt(order.createdAt, order.orderDetails.length, currentStatus),
       isPaid: order.payments.length > 0,
       table: activeSession?.table?.code || null,
       tableId: activeSession?.table?.id || null,
@@ -556,8 +570,10 @@ export class OrderService {
     // Sync order items status when order status changes
     const itemStatusMap = await ensureOrderDetailStatuses();
     let targetItemStatus: string | null = null;
-    if (status.toUpperCase() === 'CONFIRMED') {
+    if (status.toUpperCase() === 'CONFIRMED' || status.toUpperCase() === 'PREPARING') {
       targetItemStatus = 'COOKING';
+    } else if (status.toUpperCase() === 'READY') {
+      targetItemStatus = 'COMPLETED';
     } else if (status.toUpperCase() === 'COMPLETED') {
       targetItemStatus = 'COMPLETED';
     } else if (status.toUpperCase() === 'CANCELLED') {
@@ -614,12 +630,17 @@ export class OrderService {
     });
     const isPaid = !!payments;
 
+    // Estimated ready time (only meaningful while food is being prepared)
+    const itemCount = await prisma.orderDetail.count({ where: { orderId } });
+    const estimatedReadyAt = computeEstimatedReadyAt(order.createdAt, itemCount, status.toUpperCase());
+
     // Notify via Socket.io
     const io = getIO();
     io.to(`restaurant_${restaurantId}`).emit('ORDER_STATUS_CHANGED', {
       orderId,
       status: status.toUpperCase(),
       isPaid,
+      estimatedReadyAt,
     });
 
     // ── Loyalty Points: Award on COMPLETED status change ──
