@@ -330,7 +330,7 @@ export class ReservationService {
       // Guard: prevent a single small group from occupying a table that is way too large
       // Rule: a single table's capacity must not exceed guests + 2
       const maxAllowed = dto.numberOfGuests + 2;
-      if (dto.tableIds.length === 1) {
+      if (dto.tableIds.length === 1 && !isAuto) {
         const singleTable = dbTables[0];
         if (singleTable.seatingCapacity > maxAllowed) {
           throw Object.assign(
