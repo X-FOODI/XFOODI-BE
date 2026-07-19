@@ -25,6 +25,22 @@ router.get('/', authMiddleware, requireRole('Owner', 'Admin', 'Staff'), async (r
   }
 });
 
+// ── Admin: List payments across ALL tenants ──────────────────────────────────
+router.get('/admin/list', authMiddleware, requireRole('Admin'), async (req, res) => {
+  try {
+    const { page, limit, search } = req.query;
+    const result = await paymentService.listAllPlatformPayments({
+      page: page ? Number(page) : 1,
+      limit: limit ? Number(limit) : 15,
+      search: search as string,
+    });
+    return res.json({ success: true, data: result });
+  } catch (err: any) {
+    console.error('[Payments] admin/list error:', err.message);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
 // ── Get payment by ID ────────────────────────────────────────────────────────
 router.get('/:id', authMiddleware, requireRole('Owner', 'Admin', 'Staff'), async (req, res) => {
   try {
