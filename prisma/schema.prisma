@@ -1443,3 +1443,14 @@ model SystemSetting {
 
   @@map("SystemSettings")
 }
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  action    String
+  adminId   String
+  targetId  String
+  reason    String?  @db.VarChar
+  createdAt DateTime @default(now())
+
+  @@map("AuditLogs")
+}
