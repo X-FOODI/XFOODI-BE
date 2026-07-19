@@ -382,15 +382,19 @@ router.get('/admin/summary', authMiddleware, async (req: any, res: any) => {
     const usersNewThisMonth = await prisma.user.count({
       where: { createdAt: { gte: startOfMonth } }
     });
+    const restaurantsNewThisMonth = await prisma.restaurant.count({
+      where: { createdAt: { gte: startOfMonth } }
+    });
 
     const revenueChange = getChangePercent(currentRevenue, prevRevenue);
     const ordersChange = getChangePercent(currentOrders.length, prevOrders.length);
-    const usersChange = getChangePercent(totalUsersCount, totalUsersCount - usersNewThisMonth); // Mock change comparison
+    const usersChange = getChangePercent(totalUsersCount, totalUsersCount - usersNewThisMonth);
+    const restaurantsChange = getChangePercent(totalRestaurantsCount, totalRestaurantsCount - restaurantsNewThisMonth);
 
     return res.json({
       success: true,
       data: {
-        totalRestaurants: { total: totalRestaurantsCount, changePercent: 5.0, active: activeRestaurantsCount },
+        totalRestaurants: { total: totalRestaurantsCount, changePercent: restaurantsChange, active: activeRestaurantsCount },
         totalRevenue: { total: currentRevenue, changePercent: revenueChange },
         totalOrders: { total: currentOrders.length, changePercent: ordersChange },
         totalUsers: { total: totalUsersCount, changePercent: usersChange, newThisMonth: usersNewThisMonth },

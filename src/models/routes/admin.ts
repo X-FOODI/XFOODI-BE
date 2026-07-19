@@ -1,6 +1,9 @@
 import { Router, type Router as ExpressRouter } from 'express';
 import { disableRestaurant, enableRestaurant, disableUser, enableUser } from '../../controllers/admin.controller';
 import { authMiddleware, requireAdmin } from './auth';
+import { queryAuditLogs, listAuditActions, recordAudit } from '../../services/audit.service';
+import { createAnnouncement, listAnnouncements, setAnnouncementActive, deleteAnnouncement } from '../../services/announcement.service';
+import { centralPrisma } from '../../lib/prisma';
 
 const router: ExpressRouter = Router();
 
@@ -12,5 +15,183 @@ router.patch('/restaurants/:id/enable', enableRestaurant);
 
 router.patch('/users/:id/disable', disableUser);
 router.patch('/users/:id/enable', enableUser);
+
+// ─── RBAC: Cấp / thu hồi quyền Admin ──────────────────────────────────────
+router.patch('/users/:id/admin-role', async (req: any, res: any) => {
+  try {
+    const targetUserId = req.params.id;
+    const grant = !!req.body?.grant;
+    const actorId = req.user?.sub || req.user?.userId;
+
+    // Chống tự thu hồi quyền của chính mình (tránh khóa cứng hệ thống)
+    if (!grant && actorId === targetUserId) {
+      return res.status(400).json({ success: false, message: 'Không thể tự thu hồi quyền Admin của chính bạn' });
+    }
+
+    const adminRole = await centralPrisma.role.findUnique({ where: { name: 'Admin' } });
+    if (!adminRole) return res.status(500).json({ success: false, message: 'Vai trò Admin không tồn tại' });
+
+    const target = await centralPrisma.user.findUnique({ where: { id: targetUserId } });
+    if (!target) return res.status(404).json({ success: false, message: 'Không tìm thấy người dùng' });
+
+    if (grant) {
+      await centralPrisma.userRole.upsert({
+        where: { userId_roleId: { userId: targetUserId, roleId: adminRole.id } },
+        update: {},
+        create: { userId: targetUserId, roleId: adminRole.id },
+      });
+    } else {
+      await centralPrisma.userRole.deleteMany({ where: { userId: targetUserId, roleId: adminRole.id } });
+    }
+
+    recordAudit({
+      action: grant ? 'ROLE_ADMIN_GRANTED' : 'ROLE_ADMIN_REVOKED',
+      adminId: actorId || 'unknown-admin',
+      actorEmail: req.user?.email ?? null,
+      actorName: req.user?.fullName || req.user?.name || null,
+      targetType: 'USER',
+      targetId: targetUserId,
+      ipAddress: (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.ip || null,
+      metadata: { userEmail: target.email },
+    });
+
+    return res.json({ success: true, message: grant ? 'Đã cấp quyền Admin' : 'Đã thu hồi quyền Admin' });
+  } catch (err: any) {
+    console.error('[Admin] admin-role error:', err?.message);
+    return res.status(500).json({ success: false, message: 'Lỗi khi cập nhật quyền' });
+  }
+});
+
+// ─── Audit Logs ───────────────────────────────────────────────────────────
+router.get('/audit-logs', async (req: any, res: any) => {
+  try {
+    const result = await queryAuditLogs({
+      page: req.query.page,
+      limit: req.query.limit,
+      action: req.query.action,
+      adminId: req.query.adminId,
+      targetType: req.query.targetType,
+      targetId: req.query.targetId,
+      status: req.query.status,
+      search: req.query.search,
+      from: req.query.from,
+      to: req.query.to,
+    });
+    return res.json({ success: true, data: result });
+  } catch (err: any) {
+    console.error('[Admin] audit-logs error:', err?.message);
+    return res.status(500).json({ success: false, message: 'Lỗi khi lấy nhật ký hệ thống' });
+  }
+});
+
+router.get('/audit-logs/actions', async (_req: any, res: any) => {
+  try {
+    return res.json({ success: true, data: await listAuditActions() });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, message: 'Lỗi khi lấy danh sách hành động' });
+  }
+});
+
+router.get('/audit-logs/:id', async (req: any, res: any) => {
+  try {
+    const log = await centralPrisma.auditLog.findUnique({ where: { id: req.params.id } });
+    if (!log) return res.status(404).json({ success: false, message: 'Không tìm thấy bản ghi' });
+    return res.json({ success: true, data: log });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, message: 'Lỗi khi lấy chi tiết bản ghi' });
+  }
+});
+
+// ─── Broadcast Announcements ──────────────────────────────────────────────
+router.get('/announcements', async (req: any, res: any) => {
+  try {
+    const data = await listAnnouncements(Number(req.query.page) || 1, Number(req.query.limit) || 20);
+    return res.json({ success: true, data });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, message: 'Lỗi khi lấy thông báo' });
+  }
+});
+
+router.post('/announcements', async (req: any, res: any) => {
+  try {
+    const { title, content, level, expiresAt } = req.body || {};
+    if (!title?.trim() || !content?.trim()) {
+      return res.status(400).json({ success: false, message: 'Tiêu đề và nội dung là bắt buộc' });
+    }
+    const adminId = req.user?.sub || req.user?.userId || 'unknown-admin';
+    const actorName = req.user?.fullName || req.user?.name || null;
+    const created = await createAnnouncement({ title: title.trim(), content: content.trim(), level, expiresAt, createdBy: adminId, actorName });
+    recordAudit({
+      action: 'ANNOUNCEMENT_CREATED',
+      adminId,
+      actorEmail: req.user?.email ?? null,
+      actorName,
+      targetType: 'ANNOUNCEMENT',
+      targetId: created.id,
+      ipAddress: (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.ip || null,
+      metadata: { title: created.title, level: created.level },
+    });
+    return res.status(201).json({ success: true, data: created });
+  } catch (err: any) {
+    console.error('[Admin] create announcement error:', err?.message);
+    return res.status(500).json({ success: false, message: 'Lỗi khi tạo thông báo' });
+  }
+});
+
+router.patch('/announcements/:id', async (req: any, res: any) => {
+  try {
+    const { isActive } = req.body || {};
+    const updated = await setAnnouncementActive(req.params.id, !!isActive);
+    return res.json({ success: true, data: updated });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, message: 'Lỗi khi cập nhật thông báo' });
+  }
+});
+
+router.delete('/announcements/:id', async (req: any, res: any) => {
+  try {
+    await deleteAnnouncement(req.params.id);
+    return res.json({ success: true });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, message: 'Lỗi khi xóa thông báo' });
+  }
+});
+
+// ─── Security Overview ────────────────────────────────────────────────────
+router.get('/security/overview', async (_req: any, res: any) => {
+  try {
+    const now = Date.now();
+    const d1 = new Date(now - 24 * 3600 * 1000);
+    const d7 = new Date(now - 7 * 24 * 3600 * 1000);
+
+    const [failed24h, failed7d, totalUsers, twoFactorEnabled, recentFailed] = await Promise.all([
+      centralPrisma.auditLog.count({ where: { action: 'LOGIN_FAILED', createdAt: { gte: d1 } } }),
+      centralPrisma.auditLog.count({ where: { action: 'LOGIN_FAILED', createdAt: { gte: d7 } } }),
+      centralPrisma.user.count(),
+      centralPrisma.user.count({ where: { twoFactorEnabled: true } }),
+      centralPrisma.auditLog.findMany({
+        where: { action: 'LOGIN_FAILED' },
+        orderBy: { createdAt: 'desc' },
+        take: 20,
+        select: { id: true, actorEmail: true, ipAddress: true, reason: true, createdAt: true },
+      }),
+    ]);
+
+    return res.json({
+      success: true,
+      data: {
+        failedLogins24h: failed24h,
+        failedLogins7d: failed7d,
+        totalUsers,
+        twoFactorEnabled,
+        twoFactorPercent: totalUsers > 0 ? Math.round((twoFactorEnabled / totalUsers) * 100) : 0,
+        recentFailed,
+      },
+    });
+  } catch (err: any) {
+    console.error('[Admin] security overview error:', err?.message);
+    return res.status(500).json({ success: false, message: 'Lỗi khi lấy tổng quan bảo mật' });
+  }
+});
 
 export default router;

@@ -33,6 +33,7 @@ import { ENV } from './config/env';
 import { UploadQueueService } from './services/uploadQueue.service';
 import { startReservationCronJobs } from './cron/reservationCron';
 import adminRoutes from './models/routes/admin';
+import announcementRoutes from './models/routes/announcements';
 
 // Trigger restart after Prisma generate
 const app = express();
@@ -278,6 +279,7 @@ app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/vouchers', voucherRoutes);
 app.use('/api/ingredients', ingredientsRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/announcements', announcementRoutes);
 
 // Health check endpoint
 app.get(API_ROUTES.HEALTH.BASE, (req, res) => {
