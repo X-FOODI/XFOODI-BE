@@ -1,8 +1,8 @@
-import { Router } from 'express';
+import { Router, type Router as ExpressRouter } from 'express';
 import { disableRestaurant, enableRestaurant, disableUser, enableUser } from '../../controllers/admin.controller';
 import { authMiddleware, requireAdmin } from './auth';
 
-const router = Router();
+const router: ExpressRouter = Router();
 
 // Apply auth middleware and requireAdmin for all admin routes
 router.use(authMiddleware, requireAdmin);
