@@ -21,6 +21,10 @@ model Restaurant {
   email                String?
   primaryColor         String?              @default("#FF380B")
   isActive             Boolean              @default(true)
+  status               AccountStatus        @default(ACTIVE)
+  disabledReason       String?              @db.VarChar(500)
+  disabledAt           DateTime?
+  disabledBy           String?
   createdAt            DateTime             @default(now())
   updatedAt            DateTime             @updatedAt
   metadata             Json?
@@ -70,6 +74,10 @@ model User {
   provider                    String                  @default("local")
   emailVerified               Boolean                 @default(false)
   isActive                    Boolean                 @default(true)
+  status                      AccountStatus           @default(ACTIVE)
+  disabledReason              String?                 @db.VarChar(500)
+  disabledAt                  DateTime?
+  disabledBy                  String?
   lastLoginAt                 DateTime?
   resetOtp                    String?
   resetOtpExpires             DateTime?
@@ -1318,4 +1326,22 @@ model SystemSetting {
   updatedAt   DateTime @updatedAt
 
   @@map("SystemSettings")
+}
+
+enum AccountStatus {
+  ACTIVE
+  DISABLED
+}
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  action    String
+  adminId   String
+  targetId  String
+  reason    String?  @db.VarChar(500)
+  createdAt DateTime @default(now())
+
+  @@index([adminId])
+  @@index([targetId])
+  @@map("AuditLogs")
 }

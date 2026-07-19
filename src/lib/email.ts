@@ -568,3 +568,53 @@ export const sendReservationRejectedEmail = async (
     { email: to, reservationId }
   );
 };
+
+export const sendAccountDisabledEmail = async (email: string, fullName: string, reason: string, disabledAt: Date) => {
+  await sendEmail({
+    to: email,
+    from: FROM,
+    replyTo: ENV.SENDGRID.EMAIL_REPLY_TO,
+    subject: 'Your Account Has Been Disabled',
+    text: `Your account has been disabled. Reason: ${reason}. Please contact support.`,
+    html: `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+        <h2 style="color: #dc2626;">Account Disabled</h2>
+        <p>Dear ${fullName},</p>
+        <p>Your account has been disabled by the system administrator.</p>
+        <div style="margin-top: 12px; padding: 12px 14px; background: #fff1f2; border-left: 4px solid #ef4444; border-radius: 4px;">
+          <p style="margin: 0; color: #991b1b;"><strong>Reason:</strong> ${reason}</p>
+        </div>
+        <p><strong>Disable Date:</strong> ${disabledAt.toLocaleString()}</p>
+        <p style="margin-top: 30px;">If you believe this is a mistake, please contact our support team immediately.</p>
+        <p style="margin-top: 32px; font-size: 13px; color: #6b7280; text-align: center; border-top: 1px solid #f3f4f6; padding-top: 16px;">
+          XFoodi Support
+        </p>
+      </div>
+    `,
+  });
+};
+
+export const sendRestaurantDisabledEmail = async (email: string, restaurantName: string, reason: string, disabledAt: Date) => {
+  await sendEmail({
+    to: email,
+    from: FROM,
+    replyTo: ENV.SENDGRID.EMAIL_REPLY_TO,
+    subject: 'Your Restaurant Has Been Disabled',
+    text: `Your restaurant ${restaurantName} has been disabled. Reason: ${reason}. Please contact support.`,
+    html: `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+        <h2 style="color: #dc2626;">Restaurant Disabled</h2>
+        <p>Dear owner of ${restaurantName},</p>
+        <p>Your restaurant has been disabled by the system administrator.</p>
+        <div style="margin-top: 12px; padding: 12px 14px; background: #fff1f2; border-left: 4px solid #ef4444; border-radius: 4px;">
+          <p style="margin: 0; color: #991b1b;"><strong>Reason:</strong> ${reason}</p>
+        </div>
+        <p><strong>Disable Date:</strong> ${disabledAt.toLocaleString()}</p>
+        <p style="margin-top: 30px;">If you believe this is a mistake, please contact our support team immediately.</p>
+        <p style="margin-top: 32px; font-size: 13px; color: #6b7280; text-align: center; border-top: 1px solid #f3f4f6; padding-top: 16px;">
+          XFoodi Support
+        </p>
+      </div>
+    `,
+  });
+};

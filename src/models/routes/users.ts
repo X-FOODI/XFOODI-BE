@@ -75,6 +75,8 @@ router.get('/admin/list', requireRole('Admin', 'SuperAdmin'), async (req: any, r
           phoneNumber: true,
           avatarUrl: true,
           isActive: true,
+          status: true,
+          disabledReason: true,
           createdAt: true,
           roles: {
             select: { role: { select: { name: true } }, restaurantId: true }
@@ -89,7 +91,8 @@ router.get('/admin/list', requireRole('Admin', 'SuperAdmin'), async (req: any, r
       data: {
         items: users.map(u => ({
           ...u,
-          status: u.isActive, // Keep status in response to match frontend interface
+          status: u.status, // Keep status as AccountStatus
+          disabledReason: u.disabledReason,
           roles: u.roles.map((r: any) => r.role.name)
         })),
         total,

@@ -135,6 +135,8 @@ router.get('/admin/list', authMiddleware, requireRole('Admin', 'SuperAdmin'), as
           email: true,
           logoUrl: true,
           isActive: true,
+          status: true,
+          disabledReason: true,
           createdAt: true,
           owner: {
             select: { id: true, fullName: true, email: true },
