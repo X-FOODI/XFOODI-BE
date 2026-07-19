@@ -1186,10 +1186,14 @@ router.get('/config', async (req: any, res: any) => {
       return res.status(400).json({ success: false, message: 'Thiếu restaurantId.' });
     }
 
-    const restaurant = await prisma.restaurant.findUnique({
+    let restaurant = await prisma.restaurant.findUnique({
       where: { id: restaurantId },
       select: { metadata: true, name: true }
     });
+
+    if (!restaurant && restaurantId === 'system') {
+      restaurant = { metadata: null, name: 'XFoodi System' } as any;
+    }
 
     if (!restaurant) {
       return res.status(404).json({ success: false, message: 'Không tìm thấy nhà hàng.' });
