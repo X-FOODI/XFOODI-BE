@@ -65,6 +65,10 @@ router.get('/:domain', async (req, res) => {
       });
     }
 
+    if (restaurant.status === 'DISABLED') {
+      return res.status(403).json({ success: false, message: 'Restaurant has been disabled.', reason: restaurant.disabledReason });
+    }
+
     res.json({
       id: restaurant.id,
       name: restaurant.name,
