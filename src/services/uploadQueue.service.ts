@@ -264,39 +264,45 @@ export class UploadQueueService {
   }
 
   public static async getFileBuffer(fileUrl: string): Promise<Buffer> {
-    // 1. Try local disk first if it's a local upload URL pattern or contains uploads/kb
-    if (fileUrl.includes('/uploads/kb/') || fileUrl.startsWith('file://local-storage/')) {
-      const cleanFilename = fileUrl.replace('file://local-storage/', '').split('/').pop() || '';
-      const localPath = path.resolve(process.cwd(), 'uploads/kb', cleanFilename);
-      if (fs.existsSync(localPath)) {
-        try {
-          return fs.readFileSync(localPath);
-        } catch (err) {
-          console.warn(`[UploadQueue] Failed to read local file: ${localPath}`, err);
-        }
+    const cleanFilename = fileUrl.replace('file://local-storage/', '').split('?')[0].split('/').pop() || '';
+    const localPath = path.resolve(process.cwd(), 'uploads/kb', cleanFilename);
+
+    // 1. Try local disk first if file exists locally
+    if (fs.existsSync(localPath)) {
+      try {
+        return fs.readFileSync(localPath);
+      } catch (err) {
+        console.warn(`[UploadQueue] Failed to read local file: ${localPath}`, err);
       }
     }
 
     // 2. Fetch via HTTP if it's a remote URL
     if (fileUrl.startsWith('http://') || fileUrl.startsWith('https://')) {
-      const response = await axios.get(fileUrl, { responseType: 'arraybuffer' });
-      return Buffer.from(response.data);
-    }
-
-    // 3. Fallback: try extracting filename and reading locally
-    try {
-      const cleanFilename = fileUrl.split('/').pop() || '';
-      const localPath = path.resolve(process.cwd(), 'uploads/kb', cleanFilename);
-      if (fs.existsSync(localPath)) {
-        return fs.readFileSync(localPath);
+      try {
+        const { ENV } = await import('../config/env');
+        const headers: Record<string, string> = {};
+        if (fileUrl.includes('supabase.co') && ENV.SUPABASE.KEY) {
+          headers['Authorization'] = `Bearer ${ENV.SUPABASE.KEY}`;
+          headers['apikey'] = ENV.SUPABASE.KEY;
+        }
+        const response = await axios.get(fileUrl, { responseType: 'arraybuffer', headers, timeout: 15000 });
+        return Buffer.from(response.data);
+      } catch (httpErr: any) {
+        console.warn(`[UploadQueue] HTTP fetch failed for ${fileUrl}: ${httpErr.message}`);
+        // Fallback to localPath if HTTP fetch failed or returned 401
+        if (fs.existsSync(localPath)) {
+          return fs.readFileSync(localPath);
+        }
+        throw httpErr;
       }
-    } catch (err) {
-      // ignore
     }
 
-    // Ultimate fallback: try HTTP request anyway
-    const response = await axios.get(fileUrl, { responseType: 'arraybuffer' });
-    return Buffer.from(response.data);
+    // 3. Fallback: try reading localPath
+    if (fs.existsSync(localPath)) {
+      return fs.readFileSync(localPath);
+    }
+
+    throw new Error(`File buffer not found for ${fileUrl}`);
   }
 
   private static async checkEvictionPolicy() {
