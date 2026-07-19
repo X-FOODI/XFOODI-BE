@@ -60,11 +60,9 @@ router.post('/kb/upload', authMiddleware, tenantGuard, upload.any(), async (req:
     // On the admin domain, tenantGuard doesn't resolve a tenant — system admins
     // instead pass the target restaurantId explicitly in body/query.
     let activeRestaurant = req.restaurant || req.tenant;
-    if (!activeRestaurant && isSystemAdmin) {
-      const targetRestaurantId = req.body?.restaurantId || req.query?.restaurantId;
-      if (targetRestaurantId && targetRestaurantId !== 'all') {
-        activeRestaurant = await prisma.restaurant.findUnique({ where: { id: targetRestaurantId } });
-      }
+    const targetRestaurantId = req.body?.restaurantId || req.query?.restaurantId;
+    if (!activeRestaurant && targetRestaurantId && targetRestaurantId !== 'all') {
+      activeRestaurant = await prisma.restaurant.findUnique({ where: { id: targetRestaurantId } });
     }
 
     if (!activeRestaurant && req.user?.restaurantId) {
@@ -72,8 +70,8 @@ router.post('/kb/upload', authMiddleware, tenantGuard, upload.any(), async (req:
     }
 
     if (!activeRestaurant) {
-      // Fallback to first available restaurant in DB for system admin uploads on admin domain
-      activeRestaurant = await prisma.restaurant.findFirst();
+      // Fallback to first available restaurant in DB for uploads on admin domain
+      activeRestaurant = (await prisma.restaurant.findFirst({ where: { isActive: true } })) || (await prisma.restaurant.findFirst());
     }
 
     if (!activeRestaurant) {
