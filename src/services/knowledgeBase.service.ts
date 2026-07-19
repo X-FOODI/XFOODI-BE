@@ -1,6 +1,7 @@
 import { prisma, centralPrisma, getSchemaName } from '../lib/prisma';
 import { AIService } from './ai.service';
 import { PDFParse } from 'pdf-parse';
+import mammoth from 'mammoth';
 import { randomUUID } from 'crypto';
 import { spawn } from 'child_process';
 import path from 'path';
@@ -104,6 +105,9 @@ export class KnowledgeBaseService {
         const parser = new PDFParse({ data: fileBuffer });
         const parsed = await parser.getText();
         text = parsed.text;
+      } else if (fileType === 'DOCX') {
+        const result = await mammoth.extractRawText({ buffer: fileBuffer });
+        text = result.value;
       } else if (fileType === 'TXT' || fileType === 'MD') {
         text = fileBuffer.toString('utf-8');
       } else {

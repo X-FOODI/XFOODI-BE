@@ -17,7 +17,7 @@ export class UploadQueueService {
     restaurantId: string;
     filename: string;
     fileUrl: string;
-    fileType: 'PDF' | 'TXT' | 'MD';
+    fileType: 'PDF' | 'TXT' | 'MD' | 'DOCX';
     chunkingStrategy?: string;
     chunkSize?: number;
     chunkOverlap?: number;
@@ -87,7 +87,7 @@ export class UploadQueueService {
     restaurantId: string;
     filename: string;
     fileUrl: string;
-    fileType: 'PDF' | 'TXT' | 'MD';
+    fileType: 'PDF' | 'TXT' | 'MD' | 'DOCX';
     chunkingStrategy?: string;
     chunkSize?: number;
     chunkOverlap?: number;
@@ -201,7 +201,7 @@ export class UploadQueueService {
     restaurantId: string,
     filename: string,
     fileUrl: string,
-    fileType: 'PDF' | 'TXT' | 'MD',
+    fileType: 'PDF' | 'TXT' | 'MD' | 'DOCX',
     chunkingStrategy?: string,
     chunkSize?: number,
     chunkOverlap?: number,

@@ -130,13 +130,15 @@ router.post('/kb/upload', authMiddleware, tenantGuard, upload.any(), async (req:
 
         // Determine type based on extension
         const ext = originalName.split('.').pop()?.toUpperCase();
-        let fileType: 'PDF' | 'TXT' | 'MD' = 'TXT';
+        let fileType: 'PDF' | 'TXT' | 'MD' | 'DOCX' = 'TXT';
         if (ext === 'PDF') {
           fileType = 'PDF';
         } else if (ext === 'MD') {
           fileType = 'MD';
         } else if (ext === 'TXT') {
           fileType = 'TXT';
+        } else if (ext === 'DOCX' || ext === 'DOC') {
+          fileType = 'DOCX';
         } else {
           console.warn(`[KB API] Skipping unsupported file type: ${originalName}`);
           continue;
