@@ -198,7 +198,11 @@ export class PaymentService {
       amount = Number(reservation.depositAmount);
     }
 
-    const cashback = Math.max(0, dto.cashReceive - amount);
+    if (dto.cashReceive < amount) {
+      throw new Error(`Số tiền nhận từ khách (${dto.cashReceive.toLocaleString('vi-VN')}đ) không đủ để thanh toán số tiền cần trả (${amount.toLocaleString('vi-VN')}đ)`);
+    }
+
+    const cashback = dto.cashReceive - amount;
 
     const payment = await prisma.payment.create({
       data: {

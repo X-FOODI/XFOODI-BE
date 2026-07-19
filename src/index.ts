@@ -27,6 +27,7 @@ import layoutsRoutes from './models/routes/layouts';
 import employeeRoutes from './models/routes/employees';
 import customerRoutes from './routes/customer.routes';
 import voucherRoutes from './routes/voucher.route';
+import ingredientsRoutes from './models/routes/ingredients';
 import { API_ROUTES } from './constants/routes';
 import { ENV } from './config/env';
 import { UploadQueueService } from './services/uploadQueue.service';
@@ -174,6 +175,7 @@ app.use(async (req: any, res: any, next) => {
                 latitude: restaurant.latitude,
                 longitude: restaurant.longitude,
                 cuisineType: restaurant.cuisineType,
+                loyaltyPointRate: (restaurant as any).loyaltyPointRate ?? 10000,
               },
               create: {
                 id: restaurant.id,
@@ -192,6 +194,7 @@ app.use(async (req: any, res: any, next) => {
                 latitude: restaurant.latitude,
                 longitude: restaurant.longitude,
                 cuisineType: restaurant.cuisineType,
+                loyaltyPointRate: (restaurant as any).loyaltyPointRate ?? 10000,
               },
             });
 
@@ -268,6 +271,7 @@ app.use('/api/wallet', walletRoutes);
 app.use('/api/layouts', layoutsRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/vouchers', voucherRoutes);
+app.use('/api/ingredients', ingredientsRoutes);
 
 // Health check endpoint
 app.get(API_ROUTES.HEALTH.BASE, (req, res) => {

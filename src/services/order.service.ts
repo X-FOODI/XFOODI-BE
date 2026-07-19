@@ -28,6 +28,8 @@ async function ensureOrderStatuses(): Promise<Record<string, string>> {
   const defaultStatuses = [
     { code: 'PENDING', name: 'Chờ xác nhận', colorCode: '#f1c40f', isDefault: true },
     { code: 'CONFIRMED', name: 'Đã xác nhận', colorCode: '#3498db', isDefault: false },
+    { code: 'PREPARING', name: 'Đang chế biến', colorCode: '#e67e22', isDefault: false },
+    { code: 'READY', name: 'Sẵn sàng phục vụ', colorCode: '#9b59b6', isDefault: false },
     { code: 'COMPLETED', name: 'Hoàn thành', colorCode: '#2ecc71', isDefault: false },
     { code: 'CANCELLED', name: 'Đã hủy', colorCode: '#95a5a6', isDefault: false },
   ];
@@ -124,6 +126,16 @@ async function ensureTableOccupiedStatus(): Promise<string> {
   return statusValue.id;
 }
 
+// Estimated prep time: base on order creation time so it stays stable across refresh.
+const PREP_MINUTES_PER_ITEM = 3;
+const MIN_PREP_MINUTES = 5;
+
+function computeEstimatedReadyAt(createdAt: Date, itemCount: number, statusCode: string): string | null {
+  if (statusCode !== 'CONFIRMED' && statusCode !== 'PREPARING') return null;
+  const minutes = Math.max(MIN_PREP_MINUTES, itemCount * PREP_MINUTES_PER_ITEM);
+  return new Date(new Date(createdAt).getTime() + minutes * 60_000).toISOString();
+}
+
 export class OrderService {
   /**
    * Hardcoded logic to replace the legacy trigger system.
@@ -148,8 +160,17 @@ export class OrderService {
       items: Array<{ dishId: string; quantity: number; note?: string }>;
     }
   ) {
-    if (data.items.length === 0) {
-      throw new OrderServiceError(400, 'Danh sách món ăn trống');
+    if (!data.items || !Array.isArray(data.items) || data.items.length === 0) {
+      throw new OrderServiceError(400, 'Danh sách món ăn trống hoặc không hợp lệ');
+    }
+
+    for (const item of data.items) {
+      if (!item.dishId) {
+        throw new OrderServiceError(400, 'Mã món ăn là bắt buộc');
+      }
+      if (typeof item.quantity !== 'number' || item.quantity <= 0 || !Number.isInteger(item.quantity)) {
+        throw new OrderServiceError(400, 'Số lượng món ăn phải là số nguyên dương');
+      }
     }
 
     const orderStatusMap = await ensureOrderStatuses();
@@ -166,10 +187,11 @@ export class OrderService {
 
     // 2. Fetch Dish Prices
     const dishIds = data.items.map((item) => item.dishId);
+    const uniqueDishIds = [...new Set(dishIds)];
     const dishes = await prisma.dish.findMany({
-      where: { id: { in: dishIds }, restaurantId, isActive: true },
+      where: { id: { in: uniqueDishIds }, restaurantId, isActive: true },
     });
-    if (dishes.length !== dishIds.length) {
+    if (dishes.length !== uniqueDishIds.length) {
       throw new OrderServiceError(400, 'Một số món ăn không hợp lệ hoặc đã dừng bán');
     }
 
@@ -492,13 +514,15 @@ export class OrderService {
     }
 
     const activeSession = order.tableSessions.find((s) => s.isActive);
+    const currentStatus = statusIdToCode[order.orderStatusId] || 'PENDING';
     return {
       id: order.id,
       reference: order.reference,
       subTotal: Number(order.subTotal),
       totalAmount: Number(order.totalAmount),
       createdAt: order.createdAt,
-      status: statusIdToCode[order.orderStatusId] || 'PENDING',
+      status: currentStatus,
+      estimatedReadyAt: computeEstimatedReadyAt(order.createdAt, order.orderDetails.length, currentStatus),
       isPaid: order.payments.length > 0,
       table: activeSession?.table?.code || null,
       tableId: activeSession?.table?.id || null,
@@ -546,8 +570,10 @@ export class OrderService {
     // Sync order items status when order status changes
     const itemStatusMap = await ensureOrderDetailStatuses();
     let targetItemStatus: string | null = null;
-    if (status.toUpperCase() === 'CONFIRMED') {
+    if (status.toUpperCase() === 'CONFIRMED' || status.toUpperCase() === 'PREPARING') {
       targetItemStatus = 'COOKING';
+    } else if (status.toUpperCase() === 'READY') {
+      targetItemStatus = 'COMPLETED';
     } else if (status.toUpperCase() === 'COMPLETED') {
       targetItemStatus = 'COMPLETED';
     } else if (status.toUpperCase() === 'CANCELLED') {
@@ -561,10 +587,52 @@ export class OrderService {
       });
     }
 
+    // Auto close table sessions and free tables when order is completed or cancelled
+    if (status.toUpperCase() === 'COMPLETED' || status.toUpperCase() === 'CANCELLED') {
+      const activeSessions = await prisma.tableSession.findMany({
+        where: { orderId, isActive: true },
+      });
+      const tableStatusType = await prisma.statusType.findUnique({ where: { code: 'TABLE' } });
+      let availableStatusId: string | undefined;
+      if (tableStatusType) {
+        const availableStatus = await prisma.statusValue.findFirst({
+          where: { statusTypeId: tableStatusType.id, code: 'AVAILABLE' },
+        });
+        availableStatusId = availableStatus?.id;
+      }
+      for (const session of activeSessions) {
+        await prisma.tableSession.update({
+          where: { id: session.id },
+          data: { isActive: false, endedAt: new Date() },
+        });
+        if (availableStatusId) {
+          await prisma.table.update({
+            where: { id: session.tableId },
+            data: { tableStatusId: availableStatusId },
+          });
+        }
+        // Notify via Socket.io
+        try {
+          const io = getIO();
+          io.to(`restaurant_${restaurantId}`).emit('TABLE_SESSION_CLOSED', {
+            tableId: session.tableId,
+            sessionId: session.id,
+            status: 'AVAILABLE',
+          });
+        } catch (e) {
+          console.warn('[OrderService] Failed to broadcast TABLE_SESSION_CLOSED:', e);
+        }
+      }
+    }
+
     const payments = await prisma.payment.findFirst({
       where: { orderId, status: 1 }, // COMPLETED payment status
     });
     const isPaid = !!payments;
+
+    // Estimated ready time (only meaningful while food is being prepared)
+    const itemCount = await prisma.orderDetail.count({ where: { orderId } });
+    const estimatedReadyAt = computeEstimatedReadyAt(order.createdAt, itemCount, status.toUpperCase());
 
     // Notify via Socket.io
     const io = getIO();
@@ -572,6 +640,7 @@ export class OrderService {
       orderId,
       status: status.toUpperCase(),
       isPaid,
+      estimatedReadyAt,
     });
 
     // ── Loyalty Points: Award on COMPLETED status change ──

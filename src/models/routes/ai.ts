@@ -8,9 +8,45 @@ import { RAGService, hybridSearchChunks } from '../../services/rag.service';
 import { StorageService } from '../../services/storage.service';
 import { ENV } from '../../config/env';
 import { AIService } from '../../services/ai.service';
+import { getFrequentlyBoughtTogether, getAIRecommendations } from '../../services/recommendation.service';
 
 const router: ExpressRouter = Router();
 const upload = multer({ limits: { fileSize: 10 * 1024 * 1024 } }); // Limit 10MB
+
+/**
+ * Menu recommendations (PUBLIC — khách quét QR không cần đăng nhập)
+ */
+// "Thường được gọi kèm" — data-driven
+router.get('/recommendations/frequently-bought', async (req: any, res: any) => {
+  try {
+    const restaurantId = (req.query.restaurantId as string) || '';
+    const dishId = (req.query.dishId as string) || '';
+    if (!restaurantId || !dishId) {
+      return res.status(400).json({ success: false, message: 'restaurantId và dishId là bắt buộc' });
+    }
+    const data = await getFrequentlyBoughtTogether(restaurantId, dishId);
+    return res.json({ success: true, data });
+  } catch (err: any) {
+    console.error('[AI] frequently-bought error:', err?.message);
+    return res.status(500).json({ success: false, message: 'Lỗi khi lấy gợi ý món ăn kèm' });
+  }
+});
+
+// "Gợi ý cho bạn" — AI dựa trên giỏ hàng, có fallback data-driven
+router.post('/recommendations/menu', async (req: any, res: any) => {
+  try {
+    const { restaurantId, cartDishIds } = req.body || {};
+    if (!restaurantId) {
+      return res.status(400).json({ success: false, message: 'restaurantId là bắt buộc' });
+    }
+    const ids: string[] = Array.isArray(cartDishIds) ? cartDishIds.filter((x: any) => typeof x === 'string') : [];
+    const data = await getAIRecommendations(restaurantId, ids);
+    return res.json({ success: true, data });
+  } catch (err: any) {
+    console.error('[AI] menu recommendation error:', err?.message);
+    return res.status(500).json({ success: false, message: 'Lỗi khi lấy gợi ý món ăn' });
+  }
+});
 
 /**
  * 1. POST /api/ai/kb/upload
