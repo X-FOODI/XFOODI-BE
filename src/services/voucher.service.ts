@@ -262,8 +262,11 @@ export class VoucherService {
       );
     }
 
-    return prisma.$transaction(async (tx) => {
-      const innerVoucher = await tx.voucher.findUnique({
+    // Thực hiện tất cả thao tác trong centralPrisma.$transaction vì Voucher,
+    // UserVoucher và UserLoyaltyPoint đều nằm trong Central DB (public schema).
+    // Customer và PointsTransaction nằm trong Tenant DB nên xử lý riêng.
+    const userVoucher = await centralPrisma.$transaction(async (ctx) => {
+      const innerVoucher = await ctx.voucher.findUnique({
         where: { id: voucherId },
       });
 
@@ -271,12 +274,12 @@ export class VoucherService {
         throw new Error('Voucher vừa hết số lượng hoặc đã bị vô hiệu hóa.');
       }
 
-      await tx.voucher.update({
+      await ctx.voucher.update({
         where: { id: voucherId },
         data: { quantity: { decrement: 1 } },
       });
 
-      await centralPrisma.userLoyaltyPoint.upsert({
+      await ctx.userLoyaltyPoint.upsert({
         where: {
           userId_restaurantId: { userId, restaurantId },
         },
@@ -293,23 +296,7 @@ export class VoucherService {
         },
       });
 
-      await tx.customer.update({
-        where: { id: customer!.id },
-        data: {
-          loyaltyPoints: { decrement: voucher.pointsRequired },
-        },
-      });
-
-      await tx.pointsTransaction.create({
-        data: {
-          customerId: customer.id,
-          points: -voucher.pointsRequired,
-          type: 'REDEEM',
-          description: `Đổi voucher ${voucher.code}`,
-        },
-      });
-
-      const userVoucher = await tx.userVoucher.create({
+      return ctx.userVoucher.create({
         data: {
           userId,
           voucherId,
@@ -319,9 +306,28 @@ export class VoucherService {
           voucher: true,
         },
       });
-
-      return userVoucher;
     });
+
+    // Cập nhật tenant DB (Customer loyalty cache + PointsTransaction log) riêng biệt
+    await prisma.$transaction(async (tx) => {
+      await tx.customer.update({
+        where: { id: customer!.id },
+        data: {
+          loyaltyPoints: { decrement: voucher.pointsRequired },
+        },
+      });
+
+      await tx.pointsTransaction.create({
+        data: {
+          customerId: customer!.id,
+          points: -voucher.pointsRequired,
+          type: 'REDEEM',
+          description: `Đổi voucher ${voucher.code}`,
+        },
+      });
+    });
+
+    return userVoucher;
   }
 
   /**
