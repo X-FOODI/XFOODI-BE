@@ -1,0 +1,66 @@
+{
+	"info": {
+		"_postman_id": "8f69b8dc-37ea-4bf0-b18c-7fbe8b5a03dc",
+		"name": "XFoodi - Quick PayOS Payout",
+		"description": "Collection to quickly test direct payouts via PayOS bypassing database status logic.",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"item": [
+		{
+			"name": "Direct PayOS Payout (Public Route)",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"amount\": 140000,\n  \"bankBin\": \"970422\",\n  \"accountNumber\": \"0949064234\",\n  \"description\": \"Rut tien nhanh\"\n}"
+				},
+				"url": {
+					"raw": "{{baseUrl}}/api/wallet/test-direct-payout",
+					"host": [
+						"{{baseUrl}}"
+					],
+					"path": [
+						"api",
+						"wallet",
+						"test-direct-payout"
+					]
+				},
+				"description": "Hỗ trợ rút tiền nhanh trực tiếp qua tài khoản ngân hàng của bạn bằng PayOS."
+			},
+			"response": []
+		}
+	],
+	"event": [
+		{
+			"listen": "prerequest",
+			"script": {
+				"type": "text/javascript",
+				"exec": [
+					""
+				]
+			}
+		},
+		{
+			"listen": "test",
+			"script": {
+				"type": "text/javascript",
+				"exec": [
+					""
+				]
+			}
+		}
+	],
+	"variable": [
+		{
+			"key": "baseUrl",
+			"value": "http://localhost:5000",
+			"type": "string"
+		}
+	]
+}
