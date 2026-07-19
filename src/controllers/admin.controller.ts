@@ -6,7 +6,7 @@ export const disableRestaurant = async (req: Request, res: Response) => {
   try {
     const id = req.params.id as string;
     const { reason } = req.body;
-    const adminId = (req as any).user?.userId || 'unknown-admin';
+    const adminId = (req as any).user?.sub || (req as any).user?.userId || 'unknown-admin';
 
     if (!reason || reason.length < 10 || reason.length > 500) {
       return res.status(400).json({ success: false, message: 'Reason must be between 10 and 500 characters' });
@@ -41,11 +41,31 @@ export const disableRestaurant = async (req: Request, res: Response) => {
 
     // Send email to owner
     const owner = await centralPrisma.user.findUnique({ where: { id: restaurant.ownerId } });
-    if (owner && owner.email) {
-      await sendRestaurantDisabledEmail(owner.email, restaurant.name, reason, disabledAt);
+    let emailSent = false;
+    let emailWarning: string | undefined;
+
+    if (owner?.email) {
+      try {
+        await sendRestaurantDisabledEmail(owner.email, restaurant.name, reason, disabledAt);
+        emailSent = true;
+        console.log(`[Admin] Restaurant disabled email sent to ${owner.email}`);
+      } catch (emailErr: any) {
+        const sendGridMsg = emailErr?.response?.body?.errors?.[0]?.message;
+        emailWarning = sendGridMsg?.includes('Maximum credits exceeded')
+          ? 'Tài khoản SendGrid đã hết credit — email thông báo chưa được gửi. Vui lòng nạp thêm credit SendGrid.'
+          : (sendGridMsg || 'Không thể gửi email thông báo cho chủ nhà hàng.');
+        console.error('Failed to send restaurant disabled email:', emailErr?.response?.body || emailErr);
+      }
+    } else {
+      emailWarning = 'Chủ nhà hàng không có email — bỏ qua gửi thông báo.';
+      console.warn(`[Admin] Restaurant ${id} disabled but owner has no email — notification skipped`);
     }
 
-    res.json({ success: true, message: 'Restaurant disabled successfully' });
+    res.json({
+      success: true,
+      message: 'Restaurant disabled successfully',
+      data: { emailSent, emailWarning },
+    });
   } catch (error) {
     console.error('Error disabling restaurant:', error);
     res.status(500).json({ success: false, message: 'Failed to disable restaurant' });
@@ -55,7 +75,7 @@ export const disableRestaurant = async (req: Request, res: Response) => {
 export const enableRestaurant = async (req: Request, res: Response) => {
   try {
     const id = req.params.id as string;
-    const adminId = (req as any).user?.userId || 'unknown-admin';
+    const adminId = (req as any).user?.sub || (req as any).user?.userId || 'unknown-admin';
 
     const restaurant = await centralPrisma.restaurant.findUnique({ where: { id } });
     if (!restaurant) {
@@ -92,7 +112,7 @@ export const disableUser = async (req: Request, res: Response) => {
   try {
     const id = req.params.id as string;
     const { reason } = req.body;
-    const adminId = (req as any).user?.userId || 'unknown-admin';
+    const adminId = (req as any).user?.sub || (req as any).user?.userId || 'unknown-admin';
 
     if (!reason || reason.length < 10 || reason.length > 500) {
       return res.status(400).json({ success: false, message: 'Reason must be between 10 and 500 characters' });
@@ -110,6 +130,7 @@ export const disableUser = async (req: Request, res: Response) => {
         where: { id },
         data: {
           status: 'DISABLED',
+          isActive: false,
           disabledReason: reason,
           disabledAt,
           disabledBy: adminId,
@@ -125,11 +146,32 @@ export const disableUser = async (req: Request, res: Response) => {
       }),
     ]);
 
+    let emailSent = false;
+    let emailWarning: string | undefined;
+
     if (user.email) {
-      await sendAccountDisabledEmail(user.email, user.fullName || user.userName || 'User', reason, disabledAt);
+      const recipientName = user.fullName || user.userName || 'Quý khách';
+      try {
+        await sendAccountDisabledEmail(user.email, recipientName, reason, disabledAt);
+        emailSent = true;
+        console.log(`[Admin] Account disabled email sent to ${user.email}`);
+      } catch (emailErr: any) {
+        const sendGridMsg = emailErr?.response?.body?.errors?.[0]?.message;
+        emailWarning = sendGridMsg?.includes('Maximum credits exceeded')
+          ? 'Tài khoản SendGrid đã hết credit — email thông báo chưa được gửi. Vui lòng nạp thêm credit SendGrid.'
+          : (sendGridMsg || 'Không thể gửi email thông báo cho người dùng.');
+        console.error('Failed to send account disabled email:', emailErr?.response?.body || emailErr);
+      }
+    } else {
+      emailWarning = 'Người dùng không có email — bỏ qua gửi thông báo.';
+      console.warn(`[Admin] User ${id} disabled but has no email — notification skipped`);
     }
 
-    res.json({ success: true, message: 'User disabled successfully' });
+    res.json({
+      success: true,
+      message: 'User disabled successfully',
+      data: { emailSent, emailWarning },
+    });
   } catch (error) {
     console.error('Error disabling user:', error);
     res.status(500).json({ success: false, message: 'Failed to disable user' });
@@ -139,7 +181,7 @@ export const disableUser = async (req: Request, res: Response) => {
 export const enableUser = async (req: Request, res: Response) => {
   try {
     const id = req.params.id as string;
-    const adminId = (req as any).user?.userId || 'unknown-admin';
+    const adminId = (req as any).user?.sub || (req as any).user?.userId || 'unknown-admin';
 
     const user = await centralPrisma.user.findUnique({ where: { id } });
     if (!user) {
@@ -151,6 +193,7 @@ export const enableUser = async (req: Request, res: Response) => {
         where: { id },
         data: {
           status: 'ACTIVE',
+          isActive: true,
           disabledReason: null,
           disabledAt: null,
           disabledBy: null,

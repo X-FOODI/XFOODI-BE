@@ -9,6 +9,13 @@ import { sendConfirmationEmail, sendResetPasswordEmail } from '../../lib/email';
 import { generateAccessAndRefreshTokens } from '../../services/authToken.service';
 import { assignDefaultRole } from '../../services/role.service';
 import { verifyTurnstileToken } from '../../utils/turnstile';
+import {
+  isUserAccountDisabled,
+  resolveUserDisableReason,
+  resolveRestaurantDisableReason,
+  USER_DISABLED_MESSAGE,
+  RESTAURANT_DISABLED_MESSAGE,
+} from '../../utils/accountStatus';
 import { postGoogleAuth } from '../../controllers/googleAuth.controller';
 import totpService from '../../services/totp.service';
 import smsService from '../../services/sms.service';
@@ -135,22 +142,24 @@ export const authMiddleware = async (req: any, res: any, next: any) => {
 
     const dbUser = await prisma.user.findUnique({
       where: { id: userId },
-      select: { status: true, disabledReason: true }
+      select: { status: true, disabledReason: true, isActive: true },
     });
 
     if (!dbUser) {
       return res.status(401).json({ success: false, message: 'User not found' });
     }
 
-    if (dbUser.status === 'DISABLED') {
-      return res.status(403).json({ success: false, message: 'Your account has been disabled.', reason: dbUser.disabledReason });
+    if (isUserAccountDisabled(dbUser)) {
+      const reason = await resolveUserDisableReason(userId, dbUser.disabledReason);
+      return res.status(403).json({ success: false, message: USER_DISABLED_MESSAGE, reason });
     }
 
     const restaurant = await resolveRestaurantFromHeaders(req.headers);
 
     // Check Restaurant Status in DB for real-time ban enforcement
     if (restaurant && restaurant.status === 'DISABLED') {
-      return res.status(403).json({ success: false, message: 'Restaurant has been disabled.', reason: restaurant.disabledReason });
+      const reason = await resolveRestaurantDisableReason(restaurant.id, restaurant.disabledReason);
+      return res.status(403).json({ success: false, message: RESTAURANT_DISABLED_MESSAGE, reason });
     }
 
     // Tenant check: if user token is bound to a specific restaurant, verify it matches the active tenant
@@ -346,13 +355,15 @@ router.post(API_ROUTES.AUTH.LOGIN, async (req, res) => {
     }
 
     // Check for disabled user
-    if (user.status === 'DISABLED') {
-      return res.status(403).json({ success: false, message: 'Your account has been disabled.', reason: user.disabledReason });
+    if (isUserAccountDisabled(user)) {
+      const reason = await resolveUserDisableReason(user.id, user.disabledReason);
+      return res.status(403).json({ success: false, message: USER_DISABLED_MESSAGE, reason });
     }
 
     // Check for disabled restaurant (if tenant is resolved)
     if (restaurant && restaurant.status === 'DISABLED') {
-      return res.status(403).json({ success: false, message: 'Restaurant has been disabled.', reason: restaurant.disabledReason });
+      const reason = await resolveRestaurantDisableReason(restaurant.id, restaurant.disabledReason);
+      return res.status(403).json({ success: false, message: RESTAURANT_DISABLED_MESSAGE, reason });
     }
 
     // Extract roles
@@ -573,8 +584,9 @@ router.post(API_ROUTES.AUTH.REFRESH_TOKEN, async (req, res) => {
       return res.status(401).json({ success: false, message: 'User not found' });
     }
 
-    if (user.status === 'DISABLED') {
-      return res.status(403).json({ success: false, message: 'Your account has been disabled.', reason: user.disabledReason });
+    if (isUserAccountDisabled(user)) {
+      const reason = await resolveUserDisableReason(user.id, user.disabledReason);
+      return res.status(403).json({ success: false, message: USER_DISABLED_MESSAGE, reason });
     }
 
     const { roles, ownerRestaurantId } = await getFilteredRolesForUser(user.id, req.headers);
@@ -1444,12 +1456,9 @@ router.post('/phone-login/verify', async (req: any, res: any) => {
       return res.status(500).json({ success: false, message: 'Không thể tạo tài khoản.' });
     }
 
-    if (user.status === 'DISABLED') {
-      return res.status(403).json({ success: false, message: 'Your account has been disabled.', reason: user.disabledReason });
-    }
-
-    if (!user.isActive) {
-      return res.status(403).json({ success: false, message: 'Tài khoản của bạn đã bị khóa.' });
+    if (isUserAccountDisabled(user)) {
+      const reason = await resolveUserDisableReason(user.id, user.disabledReason);
+      return res.status(403).json({ success: false, message: USER_DISABLED_MESSAGE, reason });
     }
 
     // Update last login
