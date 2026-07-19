@@ -1,10 +1,10 @@
-import { Router } from 'express';
+import { Router, type Router as ExpressRouter } from 'express';
 import { authMiddleware } from './auth';
 import { tenantGuard } from '../../middlewares/tenantGuard';
 import { prismaStorage } from '../../lib/prisma';
 import type { PrismaClient } from '@prisma/client';
 
-const router = Router();
+const router: ExpressRouter = Router();
 
 router.use(authMiddleware);
 router.use(tenantGuard);
