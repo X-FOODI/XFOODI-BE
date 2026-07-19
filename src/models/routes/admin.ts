@@ -16,6 +16,52 @@ router.patch('/restaurants/:id/enable', enableRestaurant);
 router.patch('/users/:id/disable', disableUser);
 router.patch('/users/:id/enable', enableUser);
 
+// ─── RBAC: Cấp / thu hồi quyền Admin ──────────────────────────────────────
+router.patch('/users/:id/admin-role', async (req: any, res: any) => {
+  try {
+    const targetUserId = req.params.id;
+    const grant = !!req.body?.grant;
+    const actorId = req.user?.sub || req.user?.userId;
+
+    // Chống tự thu hồi quyền của chính mình (tránh khóa cứng hệ thống)
+    if (!grant && actorId === targetUserId) {
+      return res.status(400).json({ success: false, message: 'Không thể tự thu hồi quyền Admin của chính bạn' });
+    }
+
+    const adminRole = await centralPrisma.role.findUnique({ where: { name: 'Admin' } });
+    if (!adminRole) return res.status(500).json({ success: false, message: 'Vai trò Admin không tồn tại' });
+
+    const target = await centralPrisma.user.findUnique({ where: { id: targetUserId } });
+    if (!target) return res.status(404).json({ success: false, message: 'Không tìm thấy người dùng' });
+
+    if (grant) {
+      await centralPrisma.userRole.upsert({
+        where: { userId_roleId: { userId: targetUserId, roleId: adminRole.id } },
+        update: {},
+        create: { userId: targetUserId, roleId: adminRole.id },
+      });
+    } else {
+      await centralPrisma.userRole.deleteMany({ where: { userId: targetUserId, roleId: adminRole.id } });
+    }
+
+    recordAudit({
+      action: grant ? 'ROLE_ADMIN_GRANTED' : 'ROLE_ADMIN_REVOKED',
+      adminId: actorId || 'unknown-admin',
+      actorEmail: req.user?.email ?? null,
+      actorName: req.user?.fullName || req.user?.name || null,
+      targetType: 'USER',
+      targetId: targetUserId,
+      ipAddress: (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.ip || null,
+      metadata: { userEmail: target.email },
+    });
+
+    return res.json({ success: true, message: grant ? 'Đã cấp quyền Admin' : 'Đã thu hồi quyền Admin' });
+  } catch (err: any) {
+    console.error('[Admin] admin-role error:', err?.message);
+    return res.status(500).json({ success: false, message: 'Lỗi khi cập nhật quyền' });
+  }
+});
+
 // ─── Audit Logs ───────────────────────────────────────────────────────────
 router.get('/audit-logs', async (req: any, res: any) => {
   try {
