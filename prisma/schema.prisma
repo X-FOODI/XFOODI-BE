@@ -2,8 +2,6 @@ generator client {
   provider = "prisma-client-js"
 }
 
-
-
 datasource db {
   provider  = "postgresql"
   url       = env("DATABASE_URL")
@@ -11,33 +9,34 @@ datasource db {
 }
 
 model Restaurant {
-  id           String   @id @default(uuid())
-  name         String
-  slug         String   @unique
-  ownerId      String
-  planType     String   @default("FREE")
-  logoUrl      String?
-  description  String?
-  address      String?
-  phone        String?
-  email        String?
-  primaryColor String?  @default("#FF380B")
-  isActive     Boolean  @default(true)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-  metadata     Json?
-  latitude     Float?
-  longitude    Float?
-  cuisineType  String?  @default("other") // e.g. "vietnamese", "japanese", "fastfood", "other"
-  loyaltyPointRate Int  @default(10000)
-
-  owner                User                 @relation("RestaurantOwner", fields: [ownerId], references: [id])
-  userRoles            UserRole[]
-  employees            Employee[]
-  floors               Floor[]
-  tables               Table[]
+  id                   String               @id @default(uuid())
+  name                 String
+  slug                 String               @unique
+  ownerId              String
+  planType             String               @default("FREE")
+  logoUrl              String?
+  description          String?
+  address              String?
+  phone                String?
+  email                String?
+  primaryColor         String?              @default("#FF380B")
+  isActive             Boolean              @default(true)
+  createdAt            DateTime             @default(now())
+  updatedAt            DateTime             @updatedAt
+  metadata             Json?
+  latitude             Float?
+  longitude            Float?
+  cuisineType          String?              @default("other")
+  disabledAt           DateTime?
+  disabledBy           String?
+  disabledReason       String?              @db.VarChar(500)
+  status               AccountStatus        @default(ACTIVE)
+  loyaltyPointRate     Int                  @default(10000)
+  aiChatSessions       AIChatSession[]
   categories           Category[]
   dishes               Dish[]
+  employees            Employee[]
+  floors               Floor[]
   ingredientCategories IngredientCategory[]
   ingredients          Ingredient[]
   mealCombos           MealCombo[]
@@ -45,18 +44,19 @@ model Restaurant {
   orders               Order[]
   promotions           Promotion[]
   reservations         Reservation[]
-  suppliers            Supplier[]
-  aiChatSessions       AIChatSession[]
-  documents            RestaurantDocument[]
   buckets              RestaurantBucket[]
+  documents            RestaurantDocument[]
   wallet               RestaurantWallet?
-  vouchers             Voucher[]
+  owner                User                 @relation("RestaurantOwner", fields: [ownerId], references: [id])
+  suppliers            Supplier[]
+  tables               Table[]
   userLoyaltyPoints    UserLoyaltyPoint[]
+  userRoles            UserRole[]
+  vouchers             Voucher[]
 
   @@map("Restaurants")
 }
 
-// ─── Identity & Auth ───────────────────────────────────────────────────────────
 model Role {
   id        String     @id @default(uuid())
   name      String     @unique
@@ -66,52 +66,54 @@ model Role {
 }
 
 model User {
-  id               String        @id @default(uuid())
-  userName         String?       @unique
-  email            String?       @unique
-  passwordHash     String?
-  phoneNumber      String?
-  avatarUrl        String?
-  fullName         String?
+  id                          String                  @id @default(uuid())
+  userName                    String?                 @unique
+  email                       String?                 @unique
+  passwordHash                String?
+  phoneNumber                 String?
+  avatarUrl                   String?
+  fullName                    String?
   /// "local" | "google" — how the account was created / primary auth
-  provider         String        @default("local")
-  emailVerified    Boolean       @default(false)
+  provider                    String                  @default("local")
+  emailVerified               Boolean                 @default(false)
+  isActive                    Boolean                 @default(true)
+  lastLoginAt                 DateTime?
+  resetOtp                    String?
+  resetOtpExpires             DateTime?
   /// "MALE" | "FEMALE" | "OTHER"
-  gender        String?
-  dateOfBirth   DateTime?
-  address       String?   @db.VarChar(255)
-  isActive      Boolean   @default(true)
-  lastLoginAt   DateTime?
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
-  resetOtp      String?
-  resetOtpExpires DateTime?
-
-  twoFactorEnabled     Boolean   @default(false)
-  twoFactorSecret      String?
-  twoFactorBackupCodes String[]  @default([])
-
-  customer         Customer?
-  employee         Employee?
-  ownedRestaurants Restaurant[]  @relation("RestaurantOwner")
-  roles            UserRole[]
-  sessions         UserSession[]
-  socialPosts      SocialPost[]
-  socialComments   SocialComment[]
-  socialReactions  SocialReaction[]
-  socialShares     SocialShare[]
-  savedPosts       SavedPost[]
+  gender                      String?
+  dateOfBirth                 DateTime?
+  address                     String?                 @db.VarChar(255)
+  twoFactorEnabled            Boolean                 @default(false)
+  twoFactorSecret             String?
+  twoFactorBackupCodes        String[]                @default([])
+  updatedAt                   DateTime                @updatedAt
+  createdAt                   DateTime                @default(now())
   /// Social community extensions (additive)
-  bio                        String?              @db.VarChar(500)
-  coverImageUrl              String?
-  socialFollowers            SocialFollow[]       @relation("UserSocialFollowers")
-  socialFollowing            SocialFollow[]       @relation("UserSocialFollowing")
-  socialNotificationsReceived SocialNotification[] @relation("NotificationRecipient")
-  socialNotificationsSent     SocialNotification[] @relation("NotificationActor")
-  restaurantApplications RestaurantApplication[]
-  reviewedApplications   RestaurantApplication[] @relation("ApplicationReviewer")
-  userLoyaltyPoints      UserLoyaltyPoint[]
-  userVouchers           UserVoucher[]
+  bio                         String?                 @db.VarChar(500)
+  coverImageUrl               String?
+  disabledAt                  DateTime?
+  disabledBy                  String?
+  disabledReason              String?                 @db.VarChar(500)
+  status                      AccountStatus           @default(ACTIVE)
+  customer                    Customer?
+  employee                    Employee?
+  reviewedApplications        RestaurantApplication[] @relation("ApplicationReviewer")
+  restaurantApplications      RestaurantApplication[]
+  ownedRestaurants            Restaurant[]            @relation("RestaurantOwner")
+  savedPosts                  SavedPost[]
+  socialComments              SocialComment[]
+  socialFollowers             SocialFollow[]          @relation("UserSocialFollowers")
+  socialFollowing             SocialFollow[]          @relation("UserSocialFollowing")
+  socialNotificationsSent     SocialNotification[]    @relation("NotificationActor")
+  socialNotificationsReceived SocialNotification[]    @relation("NotificationRecipient")
+  socialPosts                 SocialPost[]
+  socialReactions             SocialReaction[]
+  socialShares                SocialShare[]
+  userLoyaltyPoints           UserLoyaltyPoint[]
+  roles                       UserRole[]
+  sessions                    UserSession[]
+  userVouchers                UserVoucher[]
 
   @@map("Users")
 }
@@ -156,11 +158,11 @@ model Employee {
   isActive          Boolean            @default(true)
   createdBy         String?
   modifiedBy        String?
+  userId            String?            @unique
   createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
   metadata          Json?
   restaurantId      String
-  updatedAt         DateTime           @updatedAt
-  userId            String?            @unique
   schedules         EmployeeSchedule[]
   restaurant        Restaurant         @relation(fields: [restaurantId], references: [id])
   user              User?              @relation(fields: [userId], references: [id])
@@ -229,7 +231,6 @@ model Table {
   isActive           Boolean            @default(true)
   createdBy          String?
   modifiedBy         String?
-  tableStatusId      String
   qrCodeUrl          String?
   floorId            String             @default("00000000-0000-0000-0000-000000000000")
   cubeBackImageUrl   String?
@@ -238,6 +239,7 @@ model Table {
   cubeLeftImageUrl   String?
   cubeRightImageUrl  String?
   cubeTopImageUrl    String?
+  tableStatusId      String
   createdAt          DateTime           @default(now())
   metadata           Json?
   restaurantId       String
@@ -310,7 +312,6 @@ model Dish {
   description        String
   price              Decimal                   @db.Decimal(18, 2)
   unit               String
-  imageUrl           String?
   isVegetarian       Boolean                   @default(false)
   isSpicy            Boolean                   @default(false)
   isBestSeller       Boolean                   @default(false)
@@ -319,6 +320,7 @@ model Dish {
   createdBy          String?
   modifiedBy         String?
   createdAt          DateTime                  @default(now())
+  imageUrl           String?
   metadata           Json?
   restaurantId       String?
   updatedAt          DateTime                  @default(now()) @updatedAt
@@ -326,7 +328,7 @@ model Dish {
   images             DishImage[]
   recipes            DishRecipe[]
   category           Category                  @relation(fields: [categoryId], references: [id])
-  restaurant         Restaurant?                @relation(fields: [restaurantId], references: [id])
+  restaurant         Restaurant?               @relation(fields: [restaurantId], references: [id])
   orderDetails       OrderDetail[]
   promotions         PromotionApplicableItem[]
 
@@ -614,10 +616,10 @@ model PromotionApplicableItem {
 }
 
 model StatusType {
-  id           String        @id @default(uuid())
   code         String        @unique
   createdBy    String?
   modifiedBy   String?
+  id           String        @id @default(uuid())
   createdAt    DateTime      @default(now())
   metadata     Json?
   updatedAt    DateTime      @updatedAt
@@ -627,8 +629,6 @@ model StatusType {
 }
 
 model StatusValue {
-  id                String             @id @default(uuid())
-  statusTypeId      String
   code              String
   name              String
   colorCode         String?
@@ -637,6 +637,8 @@ model StatusValue {
   modifiedBy        String?
   displayOrder      Int                @default(1)
   isSystem          Boolean            @default(true)
+  id                String             @id @default(uuid())
+  statusTypeId      String
   createdAt         DateTime           @default(now())
   metadata          Json?
   updatedAt         DateTime           @updatedAt
@@ -690,30 +692,29 @@ model ReservationTable {
 model Reservation {
   id                  String             @id @default(uuid())
   customerId          String
-  restaurantId        String
   numberOfGuests      Int
   time                DateTime
   specialRequests     String?
   depositAmount       Decimal            @db.Decimal(18, 2)
   checkedInAt         DateTime?
-  completedAt         DateTime?
-  reminderSentAt      DateTime?
-  createdAt           DateTime           @default(now())
-  updatedAt           DateTime           @updatedAt
   createdBy           String?
   modifiedBy          String?
-  reservationStatusId String
   confirmationCode    String?            @unique
-  metadata            Json?
   paymentDeadline     DateTime?
-
-  restaurant  Restaurant         @relation(fields: [restaurantId], references: [id])
-  customer    Customer           @relation(fields: [customerId], references: [id])
-  statusValue StatusValue        @relation("ReservationStatus", fields: [reservationStatusId], references: [id])
-  orders      Order[]
-  payments    Payment[]
-  tables      ReservationTable[]
-  refunds     Refund[]
+  reservationStatusId String
+  createdAt           DateTime           @default(now())
+  metadata            Json?
+  restaurantId        String
+  updatedAt           DateTime           @updatedAt
+  completedAt         DateTime?
+  reminderSentAt      DateTime?
+  orders              Order[]
+  payments            Payment[]
+  refunds             Refund[]
+  tables              ReservationTable[]
+  customer            Customer           @relation(fields: [customerId], references: [id])
+  statusValue         StatusValue        @relation("ReservationStatus", fields: [reservationStatusId], references: [id])
+  restaurant          Restaurant         @relation(fields: [restaurantId], references: [id])
 
   @@index([restaurantId])
   @@index([customerId])
@@ -722,25 +723,20 @@ model Reservation {
   @@map("Reservations")
 }
 
-// ─── Refunds ──────────────────────────────────────────────────────────────────
-
 model Refund {
-  id            String   @id @default(uuid())
+  id            String      @id @default(uuid())
   reservationId String
-  amount        Decimal  @db.Decimal(18, 2)
-  status        String   @default("PENDING")  // PENDING | PROCESSING | COMPLETED | FAILED
+  amount        Decimal     @db.Decimal(18, 2)
+  status        String      @default("PENDING")
   metadata      Json?
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
-
-  reservation Reservation @relation(fields: [reservationId], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  payments    Payment[]
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+  payments      Payment[]
+  reservation   Reservation @relation(fields: [reservationId], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   @@index([reservationId])
   @@map("Refunds")
 }
-
-// ─── Orders & Payments ─────────────────────────────────────────────────────────
 
 model Order {
   id                 String              @id @default(uuid())
@@ -767,7 +763,7 @@ model Order {
   customer           Customer?           @relation(fields: [customerId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   employee           Employee?           @relation(fields: [handledBy], references: [id], onDelete: NoAction, onUpdate: NoAction)
   reservation        Reservation?        @relation(fields: [reservationId], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  restaurant         Restaurant?          @relation(fields: [restaurantId], references: [id])
+  restaurant         Restaurant?         @relation(fields: [restaurantId], references: [id])
   payments           Payment[]
   pointsTransactions PointsTransaction[]
   promotionHistories PromotionHistory[]
@@ -790,12 +786,12 @@ model OrderDetail {
   note         String?
   createdBy    String?
   modifiedBy   String?
-  itemStatusId String
   unitPrice    Decimal       @default(0.0) @db.Decimal(18, 2)
   comboId      String?
   parentId     String?
   comboName    String?
   comboPrice   Decimal?      @db.Decimal(18, 2)
+  itemStatusId String
   createdAt    DateTime      @default(now())
   metadata     Json?
   updatedAt    DateTime      @updatedAt
@@ -842,16 +838,16 @@ model Payment {
   payOSOrderCode  BigInt?       @unique
   status          Int           @default(0)
   purpose         Int           @default(0)
-  refundId        String?
   createdAt       DateTime      @default(now())
-  updatedAt       DateTime      @updatedAt
   metadata        Json?
-
-  order         Order?        @relation(fields: [orderId], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  paymentMethod PaymentMethod @relation(fields: [paymentMethodId], references: [id])
-  employee      Employee?     @relation(fields: [processedBy], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  reservation   Reservation?  @relation(fields: [reservationId], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  refund        Refund?       @relation(fields: [refundId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  updatedAt       DateTime      @updatedAt
+  refundId        String?
+  order           Order?        @relation(fields: [orderId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  paymentMethod   PaymentMethod @relation(fields: [paymentMethodId], references: [id])
+  employee        Employee?     @relation(fields: [processedBy], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  refund          Refund?       @relation(fields: [refundId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  reservation        Reservation?         @relation(fields: [reservationId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  vatInvoiceRequests VatInvoiceRequest[]
 
   @@index([orderId])
   @@index([reservationId])
@@ -870,9 +866,9 @@ model PointsTransaction {
   description String?
   createdBy   String?
   modifiedBy  String?
+  sourceType  String?
   createdAt   DateTime @default(now())
   metadata    Json?
-  sourceType  String?
   updatedAt   DateTime @updatedAt
   customer    Customer @relation(fields: [customerId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   order       Order?   @relation(fields: [orderId], references: [id], onDelete: NoAction, onUpdate: NoAction)
@@ -993,24 +989,23 @@ model AIChatMessage {
 }
 
 model SocialPost {
-  id          String   @id @default(uuid())
-  authorId    String
-  content     String   @db.Text
+  id           String              @id @default(uuid())
+  authorId     String
+  content      String
   /// public | followers | private
-  visibility  String   @default("public")
-  repostOfId  String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  author       User                @relation(fields: [authorId], references: [id])
-  repostOf     SocialPost?         @relation("PostReposts", fields: [repostOfId], references: [id], onDelete: SetNull)
-  reposts      SocialPost[]        @relation("PostReposts")
-  images       SocialImage[]
+  visibility   String              @default("public")
+  repostOfId   String?
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+  savedBy      SavedPost[]
   comments     SocialComment[]
+  images       SocialImage[]
+  postHashtags SocialPostHashtag[]
+  author       User                @relation(fields: [authorId], references: [id])
+  repostOf     SocialPost?         @relation("PostReposts", fields: [repostOfId], references: [id])
+  reposts      SocialPost[]        @relation("PostReposts")
   reactions    SocialReaction[]
   shares       SocialShare[]
-  savedBy      SavedPost[]
-  postHashtags SocialPostHashtag[]
 
   @@index([authorId])
   @@index([createdAt])
@@ -1020,29 +1015,27 @@ model SocialPost {
 }
 
 model SocialImage {
-  id       String @id @default(uuid())
+  id       String     @id @default(uuid())
   postId   String
   imageUrl String
-
-  post SocialPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+  post     SocialPost @relation(fields: [postId], references: [id], onDelete: Cascade)
 
   @@index([postId])
   @@map("SocialImages")
 }
 
 model SocialComment {
-  id        String   @id @default(uuid())
+  id        String          @id @default(uuid())
   postId    String
   userId    String
   parentId  String?
-  content   String   @db.Text
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  post   SocialPost      @relation(fields: [postId], references: [id], onDelete: Cascade)
-  user   User            @relation(fields: [userId], references: [id])
-  parent SocialComment?  @relation("CommentReplies", fields: [parentId], references: [id])
-  replies SocialComment[] @relation("CommentReplies")
+  content   String
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
+  parent    SocialComment?  @relation("CommentReplies", fields: [parentId], references: [id])
+  replies   SocialComment[] @relation("CommentReplies")
+  post      SocialPost      @relation(fields: [postId], references: [id], onDelete: Cascade)
+  user      User            @relation(fields: [userId], references: [id])
 
   @@index([postId])
   @@index([userId])
@@ -1051,14 +1044,13 @@ model SocialComment {
 }
 
 model SocialReaction {
-  id        String   @id @default(uuid())
+  id        String     @id @default(uuid())
   postId    String
   userId    String
   type      String
-  createdAt DateTime @default(now())
-
-  post SocialPost @relation(fields: [postId], references: [id], onDelete: Cascade)
-  user User       @relation(fields: [userId], references: [id])
+  createdAt DateTime   @default(now())
+  post      SocialPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+  user      User       @relation(fields: [userId], references: [id])
 
   @@unique([postId, userId])
   @@index([postId])
@@ -1066,13 +1058,12 @@ model SocialReaction {
 }
 
 model SocialShare {
-  id        String   @id @default(uuid())
+  id        String     @id @default(uuid())
   postId    String
   userId    String
-  createdAt DateTime @default(now())
-
-  post SocialPost @relation(fields: [postId], references: [id], onDelete: Cascade)
-  user User       @relation(fields: [userId], references: [id])
+  createdAt DateTime   @default(now())
+  post      SocialPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+  user      User       @relation(fields: [userId], references: [id])
 
   @@index([postId])
   @@index([userId])
@@ -1080,13 +1071,12 @@ model SocialShare {
 }
 
 model SavedPost {
-  id        String   @id @default(uuid())
+  id        String     @id @default(uuid())
   postId    String
   userId    String
-  createdAt DateTime @default(now())
-
-  post SocialPost @relation(fields: [postId], references: [id], onDelete: Cascade)
-  user User       @relation(fields: [userId], references: [id])
+  createdAt DateTime   @default(now())
+  post      SocialPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+  user      User       @relation(fields: [userId], references: [id])
 
   @@unique([postId, userId])
   @@index([userId])
@@ -1099,9 +1089,8 @@ model SocialFollow {
   followerId  String
   followingId String
   createdAt   DateTime @default(now())
-
-  follower  User @relation("UserSocialFollowers", fields: [followerId], references: [id], onDelete: Cascade)
-  following User @relation("UserSocialFollowing", fields: [followingId], references: [id], onDelete: Cascade)
+  follower    User     @relation("UserSocialFollowers", fields: [followerId], references: [id], onDelete: Cascade)
+  following   User     @relation("UserSocialFollowing", fields: [followingId], references: [id], onDelete: Cascade)
 
   @@unique([followerId, followingId])
   @@index([followerId])
@@ -1110,13 +1099,12 @@ model SocialFollow {
 }
 
 model SocialHashtag {
-  id        String   @id @default(uuid())
-  tag       String   @unique
-  postCount Int      @default(0)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  posts SocialPostHashtag[]
+  id        String              @id @default(uuid())
+  tag       String              @unique
+  postCount Int                 @default(0)
+  createdAt DateTime            @default(now())
+  updatedAt DateTime            @updatedAt
+  posts     SocialPostHashtag[]
 
   @@index([postCount])
   @@map("SocialHashtags")
@@ -1125,10 +1113,9 @@ model SocialHashtag {
 model SocialPostHashtag {
   postId    String
   hashtagId String
-  createdAt DateTime @default(now())
-
-  post    SocialPost    @relation(fields: [postId], references: [id], onDelete: Cascade)
-  hashtag SocialHashtag @relation(fields: [hashtagId], references: [id], onDelete: Cascade)
+  createdAt DateTime      @default(now())
+  hashtag   SocialHashtag @relation(fields: [hashtagId], references: [id], onDelete: Cascade)
+  post      SocialPost    @relation(fields: [postId], references: [id], onDelete: Cascade)
 
   @@id([postId, hashtagId])
   @@index([hashtagId])
@@ -1146,51 +1133,39 @@ model SocialNotification {
   message   String?  @db.VarChar(500)
   read      Boolean  @default(false)
   createdAt DateTime @default(now())
-
-  recipient User @relation("NotificationRecipient", fields: [userId], references: [id], onDelete: Cascade)
-  actor     User @relation("NotificationActor", fields: [actorId], references: [id], onDelete: Cascade)
+  actor     User     @relation("NotificationActor", fields: [actorId], references: [id], onDelete: Cascade)
+  recipient User     @relation("NotificationRecipient", fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, read, createdAt])
   @@index([actorId])
   @@map("SocialNotifications")
 }
 
-// ─── Restaurant Registration Applications ──────────────────────────────────────
-
 model RestaurantApplication {
-  id              String    @id @default(uuid())
-  userId          String
-
-  // Step 1 — Restaurant info
-  restaurantName  String
-  slug            String
-  description     String?
-  address         String
-  phone           String
-  email           String
-  logoUrl         String?
-  latitude        Float?
-  longitude       Float?
-  cuisineType     String?  @default("other") // "vietnamese"|"japanese"|"fastfood"|"other"
-
-  // Step 2 — Legal documents (AES-256 encrypted Cloudinary URLs)
-  // Format: "base64(iv):base64(ciphertext)"
-  businessLicenseEnc  String?   // Giấy phép kinh doanh
-  ownershipProofEnc   String?   // Giấy sở hữu / hợp đồng thuê mặt bằng
-  nationalIdEnc       String?   // CCCD mặt trước
-  nationalIdBackEnc   String?   // CCCD mặt sau
-
-  // Review
-  status          String    @default("PENDING")  // PENDING | APPROVED | REJECTED
-  reviewedBy      String?
-  reviewNote      String?
-  reviewedAt      DateTime?
-
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
-
-  user     User  @relation(fields: [userId], references: [id], onDelete: Cascade)
-  reviewer User? @relation("ApplicationReviewer", fields: [reviewedBy], references: [id])
+  id                 String    @id @default(uuid())
+  restaurantName     String
+  email              String
+  phone              String
+  description        String?
+  status             String    @default("PENDING")
+  reviewedBy         String?
+  reviewedAt         DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+  address            String
+  businessLicenseEnc String?
+  cuisineType        String?   @default("other")
+  latitude           Float?
+  logoUrl            String?
+  longitude          Float?
+  nationalIdBackEnc  String?
+  nationalIdEnc      String?
+  ownershipProofEnc  String?
+  reviewNote         String?
+  slug               String
+  userId             String
+  reviewer           User?     @relation("ApplicationReviewer", fields: [reviewedBy], references: [id])
+  user               User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
   @@index([status])
@@ -1198,21 +1173,20 @@ model RestaurantApplication {
 }
 
 model RestaurantDocument {
-  id           String   @id @default(uuid())
+  id           String            @id @default(uuid())
   restaurantId String
   bucketId     String?
   filename     String
   fileUrl      String
-  fileType     String   // "PDF" | "DOCX" | "TXT" | "URL"
-  versionId    String?  // S3 object version ID
-  status       String   @default("PENDING") // "PENDING" | "PROCESSING" | "INDEXED" | "FAILED"
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  fileType     String
+  status       String            @default("PENDING")
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+  versionId    String?
   errorLog     String?
-
-  restaurant   Restaurant        @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
-  bucket       RestaurantBucket? @relation(fields: [bucketId], references: [id], onDelete: Cascade)
   chunks       DocumentChunk[]
+  bucket       RestaurantBucket? @relation(fields: [bucketId], references: [id], onDelete: Cascade)
+  restaurant   Restaurant        @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
 
   @@index([restaurantId])
   @@index([bucketId])
@@ -1220,37 +1194,33 @@ model RestaurantDocument {
 }
 
 model DocumentChunk {
-  id         String   @id @default(uuid())
+  id         String                @id @default(uuid())
   documentId String
-  content    String   @db.Text
-  embedding  Unsupported("public.vector(768)")
+  content    String
+  embedding  Unsupported("vector")
   metadata   Json?
-  createdAt  DateTime @default(now())
-
-  document   RestaurantDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  createdAt  DateTime              @default(now())
+  document   RestaurantDocument    @relation(fields: [documentId], references: [id], onDelete: Cascade)
 
   @@index([documentId])
   @@map("DocumentChunks")
 }
 
 model RestaurantBucket {
-  id           String   @id @default(uuid())
-  restaurantId String
-  name         String
-  url          String
-  description  String?
-  isChatEnabled Boolean  @default(true)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-
-  // Knowledge Base config
-  isMounted        Boolean  @default(false)
-  chunkingStrategy String   @default("FIXED") // "FIXED" | "SEMANTIC" | "NONE" | "ADAPTIVE"
-  chunkSize        Int      @default(800)
-  chunkOverlap     Int      @default(100)
-
-  restaurant   Restaurant           @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
-  documents    RestaurantDocument[]
+  id               String               @id @default(uuid())
+  restaurantId     String
+  name             String
+  url              String
+  description      String?
+  isChatEnabled    Boolean              @default(true)
+  createdAt        DateTime             @default(now())
+  updatedAt        DateTime             @updatedAt
+  isMounted        Boolean              @default(false)
+  chunkingStrategy String               @default("FIXED")
+  chunkSize        Int                  @default(800)
+  chunkOverlap     Int                  @default(100)
+  restaurant       Restaurant           @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  documents        RestaurantDocument[]
 
   @@unique([restaurantId, name])
   @@map("RestaurantBuckets")
@@ -1263,67 +1233,61 @@ model RestaurantKBSnapshot {
   versionName  String
   description  String?
   createdAt    DateTime @default(now())
-  documents    Json     // Array of { filename, fileUrl, fileType, versionId }
+  documents    Json
 
   @@index([restaurantId])
   @@map("RestaurantKBSnapshots")
 }
 
-// ─── AI Builder (layout editor) ────────────────────────────────────────────────
-
 model RestaurantLayout {
-  id              String    @id @default(uuid())
-  tenantId        String
-  tenantHostname  String
-  name            String
-  status          String    @default("draft") // "draft" | "published"
-  version         Int       @default(1)
-  theme           Json
-  sections        Json
-  seo             Json
-  publishedAt     DateTime?
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
+  id             String    @id @default(uuid())
+  tenantId       String
+  tenantHostname String
+  name           String
+  status         String    @default("draft")
+  version        Int       @default(1)
+  theme          Json
+  sections       Json
+  seo            Json
+  publishedAt    DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
 
   @@index([tenantId])
   @@index([tenantHostname, status])
   @@map("RestaurantLayouts")
 }
 
-// ─── Restaurant Wallet (Revenue) ───────────────────────────────────────────────
-
 /// Tracks each restaurant owner's accumulated revenue.
 /// Money physically sits in admin's bank account; this is a ledger balance.
 model RestaurantWallet {
-  id             String   @id @default(uuid())
-  restaurantId   String   @unique
-  balance        Decimal  @default(0) @db.Decimal(18, 2) // Available to withdraw (Online Transfer)
-  cashBalance    Decimal  @default(0) @db.Decimal(18, 2) // Directly collected cash
-  lifetimeEarned Decimal  @default(0) @db.Decimal(18, 2) // Total ever earned (Cash + Online Transfer)
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
-
-  restaurant    Restaurant           @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
-  transactions  WalletTransaction[]
-  withdrawals   WithdrawalRequest[]
+  id             String              @id @default(uuid())
+  restaurantId   String              @unique
+  balance        Decimal             @default(0) @db.Decimal(18, 2)
+  lifetimeEarned Decimal             @default(0) @db.Decimal(18, 2)
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+  cashBalance    Decimal             @default(0) @db.Decimal(18, 2)
+  restaurant     Restaurant          @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  transactions   WalletTransaction[]
+  withdrawals    WithdrawalRequest[]
 
   @@map("RestaurantWallets")
 }
 
 model WalletTransaction {
-  id           String   @id @default(uuid())
-  walletId     String
-  type         String   // "ORDER_REVENUE" | "WITHDRAWAL_DEBIT" | "ADJUSTMENT"
-  amount       Decimal  @db.Decimal(18, 2)
-  balanceBefore Decimal @db.Decimal(18, 2)
-  balanceAfter Decimal  @db.Decimal(18, 2)
-  orderId      String?
-  paymentId    String?
-  description  String?
-  metadata     Json?
-  createdAt    DateTime @default(now())
-
-  wallet RestaurantWallet @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  id            String           @id @default(uuid())
+  walletId      String
+  type          String
+  amount        Decimal          @db.Decimal(18, 2)
+  balanceBefore Decimal          @db.Decimal(18, 2)
+  balanceAfter  Decimal          @db.Decimal(18, 2)
+  description   String?
+  orderId       String?
+  paymentId     String?
+  metadata      Json?
+  createdAt     DateTime         @default(now())
+  wallet        RestaurantWallet @relation(fields: [walletId], references: [id], onDelete: Cascade)
 
   @@index([walletId])
   @@index([type])
@@ -1334,24 +1298,23 @@ model WalletTransaction {
 /// Withdrawal request from restaurant owner.
 /// Admin approves → PayOS disburses → balance deducted.
 model WithdrawalRequest {
-  id             String    @id @default(uuid())
-  walletId       String
-  restaurantId   String
-  amount         Decimal   @db.Decimal(18, 2)
-  status         String    @default("PENDING") // PENDING | PROCESSING | COMPLETED | FAILED | CANCELLED
-  bankCode       String    // e.g. "MB", "VCB"
-  bankBin        String    // e.g. "970422" for MBBank
-  accountNumber  String
-  accountName    String
-  adminNote      String?
+  id              String           @id @default(uuid())
+  walletId        String
+  restaurantId    String
+  amount          Decimal          @db.Decimal(18, 2)
+  status          String           @default("PENDING")
+  bankCode        String
+  bankBin         String
+  accountNumber   String
+  accountName     String
+  adminNote       String?
   rejectionReason String?
-  externalTxId   String?   // PayOS transaction ID
-  processedBy    String?   // Admin userId
-  processedAt    DateTime?
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
-
-  wallet     RestaurantWallet @relation(fields: [walletId], references: [id])
+  externalTxId    String?
+  processedBy     String?
+  processedAt     DateTime?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  wallet          RestaurantWallet @relation(fields: [walletId], references: [id])
 
   @@index([walletId])
   @@index([restaurantId])
@@ -1366,9 +1329,8 @@ model UserLoyaltyPoint {
   points       Int        @default(0)
   createdAt    DateTime   @default(now())
   updatedAt    DateTime   @updatedAt
-
-  user         User       @relation(fields: [userId], references: [id], onDelete: Cascade)
   restaurant   Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  user         User       @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([userId, restaurantId])
   @@index([userId])
@@ -1383,19 +1345,18 @@ model Voucher {
   title             String
   description       String?
   discountValue     Decimal       @db.Decimal(18, 2)
-  discountType      String        // "fixed" or "percentage"
+  discountType      String
   pointsRequired    Int
   expiryDate        DateTime
   quantity          Int
-  applicableService String        @default("all") // "booking" | "shop" | "all"
-  distributionMode  String        @default("public") // "public" | "private"
-  status            String        @default("active") // "active" | "inactive"
+  applicableService String        @default("all")
+  distributionMode  String        @default("public")
+  status            String        @default("active")
   isActive          Boolean       @default(true)
   createdAt         DateTime      @default(now())
   updatedAt         DateTime      @updatedAt
-
-  restaurant     Restaurant?   @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
-  userVouchers   UserVoucher[]
+  userVouchers      UserVoucher[]
+  restaurant        Restaurant?   @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
 
   @@unique([code, restaurantId])
   @@index([restaurantId])
@@ -1403,17 +1364,16 @@ model Voucher {
 }
 
 model UserVoucher {
-  id           String    @id @default(uuid())
-  userId       String
-  voucherId    String
-  isUsed       Boolean   @default(false)
-  usedAt       DateTime?
-  redeemedAt   DateTime  @default(now())
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
-
-  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  voucher      Voucher   @relation(fields: [voucherId], references: [id], onDelete: Cascade)
+  id         String    @id @default(uuid())
+  userId     String
+  voucherId  String
+  isUsed     Boolean   @default(false)
+  usedAt     DateTime?
+  redeemedAt DateTime  @default(now())
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  voucher    Voucher   @relation(fields: [voucherId], references: [id], onDelete: Cascade)
 
   @@index([userId])
   @@index([voucherId])
@@ -1423,11 +1383,50 @@ model UserVoucher {
 model SystemSetting {
   id          String   @id @default(uuid())
   key         String   @unique
-  value       String   @db.Text
+  value       String
   description String?
   isPublic    Boolean  @default(false)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
   @@map("SystemSettings")
+}
+
+model VatInvoiceRequest {
+  id             String   @id @default(uuid())
+  paymentId      String
+  restaurantId   String
+  companyName    String
+  taxId          String
+  address        String
+  email          String
+  /// "PENDING" | "COMPLETED" | "FAILED"
+  status         String   @default("PENDING")
+  misaRefId      String?
+  misaLookupCode String?
+  errorMessage   String?  @db.VarChar(1000)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  payment        Payment  @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+
+  @@index([paymentId])
+  @@index([restaurantId])
+  @@map("VatInvoiceRequests")
+}
+
+model AuditLogs {
+  id        String   @id
+  action    String
+  adminId   String
+  targetId  String
+  reason    String?  @db.VarChar(500)
+  createdAt DateTime @default(now())
+
+  @@index([adminId])
+  @@index([targetId])
+}
+
+enum AccountStatus {
+  ACTIVE
+  DISABLED
 }
