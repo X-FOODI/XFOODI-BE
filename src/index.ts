@@ -33,6 +33,8 @@ import { API_ROUTES } from './constants/routes';
 import { ENV } from './config/env';
 import { UploadQueueService } from './services/uploadQueue.service';
 import { startReservationCronJobs } from './cron/reservationCron';
+import adminRoutes from './models/routes/admin';
+import announcementRoutes from './models/routes/announcements';
 
 // Trigger restart after Prisma generate
 const app = express();
@@ -117,6 +119,10 @@ app.use(async (req: any, res: any, next) => {
       });
 
       if (restaurant) {
+        if (restaurant.status === 'DISABLED' && !req.path.startsWith('/api/tenants')) {
+          return res.status(403).json({ success: false, message: 'This restaurant has been disabled.', reason: restaurant.disabledReason });
+        }
+
         const tenantDbUrl = getTenantConnectionUrl(ENV.DATABASE_URL, restaurant.slug);
         activeClient = getTenantPrisma(tenantDbUrl);
         // Expose restaurant on request for route handlers
@@ -131,6 +137,8 @@ app.use(async (req: any, res: any, next) => {
               where: { id: restaurant.ownerId },
             });
             if (centralOwner) {
+              // Chỉ sync các fields cơ bản — tenant DB không có cột
+              // status/disabledAt/disabledBy/disabledReason (chỉ có trong Central DB)
               await activeClient.user.upsert({
                 where: { id: centralOwner.id },
                 update: {
@@ -272,6 +280,8 @@ app.use('/api/layouts', layoutsRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/vouchers', voucherRoutes);
 app.use('/api/ingredients', ingredientsRoutes);
+app.use('/api/admin', adminRoutes);
+app.use('/api/announcements', announcementRoutes);
 
 // Health check endpoint
 app.get(API_ROUTES.HEALTH.BASE, (req, res) => {
@@ -284,10 +294,34 @@ initializeSocket(httpServer);
 // Initialize Social Realtime
 initSocialRealtime(httpServer);
 
+async function ensureSystemRestaurant() {
+  try {
+    const existing = await centralPrisma.restaurant.findUnique({ where: { id: 'system' } });
+    if (!existing) {
+      const adminUser = (await centralPrisma.user.findFirst({ where: { email: 'xfoodiprojects@gmail.com' } })) || (await centralPrisma.user.findFirst());
+      if (adminUser) {
+        await centralPrisma.restaurant.create({
+          data: {
+            id: 'system',
+            name: 'XFoodi System AI Knowledge Base',
+            slug: 'system',
+            ownerId: adminUser.id,
+            description: 'Hệ thống tri thức AI toàn cục XFoodi',
+          },
+        });
+        console.log('[SystemInit] Ensured System Restaurant record (id: "system").');
+      }
+    }
+  } catch (err) {
+    console.error('[SystemInit] Failed to ensure system restaurant:', err);
+  }
+}
+
 // Start server
-httpServer.listen(PORT, () => {
+httpServer.listen(PORT, async () => {
   console.log(`🚀 XFoodi API Server running on http://localhost:${PORT}`);
   
+  await ensureSystemRestaurant();
   // Initialize Background Upload Queue
   UploadQueueService.initialize();
   // Start reservation cron jobs (reminder + payment deadline enforcement)

@@ -30,6 +30,14 @@ export function initializeSocket(httpServer: HttpServer) {
       }
     });
 
+    // Join a room specific to a reservation (for customer real-time status updates)
+    socket.on('join_reservation', (reservationId: string) => {
+      if (reservationId) {
+        socket.join(`reservation_${reservationId}`);
+        console.log(`[Socket] Socket ${socket.id} joined room: reservation_${reservationId}`);
+      }
+    });
+
     // Handle staff calls (e.g., call staff for cash checkout) and broadcast to the restaurant's room
     socket.on('CALL_STAFF', (data: any) => {
       if (data && data.restaurantId) {

@@ -67,6 +67,10 @@ export const prisma = new Proxy({} as PrismaClient, {
       'userSession',
       'restaurantApplication',
       'userLoyaltyPoint',
+      // Voucher & UserVoucher live in the central (public) schema
+      // because they FK-reference Restaurant which is a central model.
+      'voucher',
+      'userVoucher',
       // Social community lives in the central (public) schema only
       'socialPost',
       'socialImage',

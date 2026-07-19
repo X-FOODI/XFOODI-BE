@@ -822,6 +822,25 @@ export class ReservationService {
       },
     });
 
+    // Broadcast status change to all listeners (restaurant staff + customer page)
+    try {
+      const { getIO } = require('../socket');
+      const io = getIO();
+      const payload = {
+        reservationId: id,
+        status: targetCode,
+        statusName: updated.statusValue?.name ?? targetCode,
+        colorCode: updated.statusValue?.colorCode ?? null,
+        updatedAt: now.toISOString(),
+      };
+      // Notify restaurant room (staff/admin panel)
+      io.to(`restaurant_${(current as any).restaurantId}`).emit('RESERVATION_STATUS_CHANGED', payload);
+      // Notify customer-specific reservation room
+      io.to(`reservation_${id}`).emit('RESERVATION_STATUS_CHANGED', payload);
+    } catch (socketErr: any) {
+      console.warn('[UpdateStatus] Socket broadcast failed:', socketErr?.message);
+    }
+
     if (targetCode === 'CANCELLED') {
       // Send rejection email with reason — non-blocking
       import('../lib/email').then(({ sendReservationRejectedEmail }) => {
@@ -868,6 +887,7 @@ export class ReservationService {
           });
 
           if (order) {
+            // eslint-disable-next-line @typescript-eslint/no-var-requires
             const { getIO } = require('../socket');
             const io = getIO();
 
@@ -1087,6 +1107,7 @@ export class ReservationService {
 
           // Broadcast TABLE_SESSION_STARTED via socket
           try {
+            // eslint-disable-next-line @typescript-eslint/no-var-requires
             const { getIO } = require('../socket');
             const io = getIO();
             io.to(`restaurant_${reservation.restaurantId}`).emit('TABLE_SESSION_STARTED', {
@@ -1147,7 +1168,7 @@ export class ReservationService {
       by: actorId ?? 'SYSTEM',
     });
 
-    return prisma.reservation.update({
+    const completed = await prisma.reservation.update({
       where: { id },
       data: {
         completedAt: now,
@@ -1163,7 +1184,27 @@ export class ReservationService {
         },
       },
     });
+
+    // Broadcast COMPLETED status to customer page (real-time)
+    try {
+      const { getIO } = require('../socket');
+      const io = getIO();
+      const payload = {
+        reservationId: id,
+        status: 'COMPLETED',
+        statusName: completed.statusValue?.name ?? 'Hoàn thành',
+        colorCode: completed.statusValue?.colorCode ?? null,
+        updatedAt: now.toISOString(),
+      };
+      io.to(`restaurant_${(current as any).restaurantId}`).emit('RESERVATION_STATUS_CHANGED', payload);
+      io.to(`reservation_${id}`).emit('RESERVATION_STATUS_CHANGED', payload);
+    } catch (socketErr: any) {
+      console.warn('[Complete] Socket broadcast failed:', socketErr?.message);
+    }
+
+    return completed;
   }
+
 
   // ── Update Reservation ───────────────────────────────────────────────────────
   async updateReservation(id: string, dto: UpdateReservationDto, actorId?: string) {
@@ -1623,6 +1664,7 @@ export class ReservationService {
 
             // Broadcast status change to kitchen
             try {
+              // eslint-disable-next-line @typescript-eslint/no-var-requires
               const { getIO } = require('../socket');
               const io = getIO();
               io.to(`restaurant_${reservation.restaurantId}`).emit('ORDER_STATUS_CHANGED', {

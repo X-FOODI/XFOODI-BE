@@ -9,6 +9,13 @@ import { sendConfirmationEmail, sendResetPasswordEmail } from '../../lib/email';
 import { generateAccessAndRefreshTokens } from '../../services/authToken.service';
 import { assignDefaultRole } from '../../services/role.service';
 import { verifyTurnstileToken } from '../../utils/turnstile';
+import {
+  isUserAccountDisabled,
+  resolveUserDisableReason,
+  resolveRestaurantDisableReason,
+  USER_DISABLED_MESSAGE,
+  RESTAURANT_DISABLED_MESSAGE,
+} from '../../utils/accountStatus';
 import { postGoogleAuth } from '../../controllers/googleAuth.controller';
 import totpService from '../../services/totp.service';
 import smsService from '../../services/sms.service';
@@ -22,6 +29,7 @@ const REFRESH_SECRET = ENV.JWT.REFRESH_SECRET;
 
 
 import { resolveRestaurantFromHeaders } from '../../lib/tenant';
+import { recordAudit } from '../../services/audit.service';
 
 async function getTenantScopedEmail(email: string, headers: any): Promise<string> {
   const restaurant = await resolveRestaurantFromHeaders(headers);
@@ -127,6 +135,34 @@ export const authMiddleware = async (req: any, res: any, next: any) => {
 
     req.user = decoded;
 
+    // Check User Status in DB for real-time ban enforcement
+    const userId = decoded.sub || decoded.userId || (decoded as any).id;
+    if (!userId) {
+      return res.status(401).json({ success: false, message: 'Invalid token payload: missing user ID' });
+    }
+
+    const dbUser = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { status: true, disabledReason: true, isActive: true },
+    });
+
+    if (!dbUser) {
+      return res.status(401).json({ success: false, message: 'User not found' });
+    }
+
+    if (isUserAccountDisabled(dbUser)) {
+      const reason = await resolveUserDisableReason(userId, dbUser.disabledReason);
+      return res.status(403).json({ success: false, message: USER_DISABLED_MESSAGE, reason });
+    }
+
+    const restaurant = await resolveRestaurantFromHeaders(req.headers);
+
+    // Check Restaurant Status in DB for real-time ban enforcement
+    if (restaurant && restaurant.status === 'DISABLED') {
+      const reason = await resolveRestaurantDisableReason(restaurant.id, restaurant.disabledReason);
+      return res.status(403).json({ success: false, message: RESTAURANT_DISABLED_MESSAGE, reason });
+    }
+
     // Tenant check: if user token is bound to a specific restaurant, verify it matches the active tenant
     if (decoded.restaurantId) {
       const userRoles = Array.isArray(decoded.roles) ? decoded.roles : decoded.role ? [decoded.role] : [];
@@ -135,7 +171,6 @@ export const authMiddleware = async (req: any, res: any, next: any) => {
       );
 
       if (!isSystemAdmin) {
-        const restaurant = await resolveRestaurantFromHeaders(req.headers);
         if (restaurant && restaurant.id !== decoded.restaurantId) {
           return res.status(403).json({
             success: false,
@@ -147,8 +182,21 @@ export const authMiddleware = async (req: any, res: any, next: any) => {
 
     next();
   } catch (error) {
+    console.error('AuthMiddleware Error:', error);
     res.status(401).json({ success: false, message: 'Invalid or expired token' });
   }
+};
+
+export const requireAdmin = (req: any, res: any, next: any) => {
+  if (!req.user) {
+    return res.status(401).json({ success: false, message: 'Unauthorized' });
+  }
+  const userRoles = Array.isArray(req.user.roles) ? req.user.roles : req.user.role ? [req.user.role] : [];
+  const isAdminUser = userRoles.some((r: string) => ['Admin', 'SuperAdmin', 'System Admin'].includes(r));
+  if (!isAdminUser) {
+    return res.status(403).json({ success: false, message: 'Admin access required.' });
+  }
+  next();
 };
 
 // 1. POST /api/auth/register
@@ -287,6 +335,16 @@ router.post(API_ROUTES.AUTH.LOGIN, async (req, res) => {
     });
 
     if (users.length === 0) {
+      recordAudit({
+        action: 'LOGIN_FAILED',
+        adminId: 'anonymous',
+        actorEmail: unscopedEmail,
+        targetType: 'AUTH',
+        targetId: unscopedEmail,
+        status: 'FAILED',
+        reason: 'Email không tồn tại',
+        ipAddress: (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.ip || null,
+      });
       return res.status(401).json({ success: false, message: 'Invalid email or password' });
     }
 
@@ -318,7 +376,29 @@ router.post(API_ROUTES.AUTH.LOGIN, async (req, res) => {
           }
         }
       }
+      recordAudit({
+        action: 'LOGIN_FAILED',
+        adminId: 'anonymous',
+        actorEmail: unscopedEmail,
+        targetType: 'AUTH',
+        targetId: unscopedEmail,
+        status: 'FAILED',
+        reason: 'Sai mật khẩu',
+        ipAddress: (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.ip || null,
+      });
       return res.status(401).json({ success: false, message: 'Invalid email or password' });
+    }
+
+    // Check for disabled user
+    if (isUserAccountDisabled(user)) {
+      const reason = await resolveUserDisableReason(user.id, user.disabledReason);
+      return res.status(403).json({ success: false, message: USER_DISABLED_MESSAGE, reason });
+    }
+
+    // Check for disabled restaurant (if tenant is resolved)
+    if (restaurant && restaurant.status === 'DISABLED') {
+      const reason = await resolveRestaurantDisableReason(restaurant.id, restaurant.disabledReason);
+      return res.status(403).json({ success: false, message: RESTAURANT_DISABLED_MESSAGE, reason });
     }
 
     // Extract roles
@@ -537,6 +617,11 @@ router.post(API_ROUTES.AUTH.REFRESH_TOKEN, async (req, res) => {
 
     if (!user) {
       return res.status(401).json({ success: false, message: 'User not found' });
+    }
+
+    if (isUserAccountDisabled(user)) {
+      const reason = await resolveUserDisableReason(user.id, user.disabledReason);
+      return res.status(403).json({ success: false, message: USER_DISABLED_MESSAGE, reason });
     }
 
     const { roles, ownerRestaurantId } = await getFilteredRolesForUser(user.id, req.headers);
@@ -926,7 +1011,7 @@ router.post('/2fa/validate', async (req: any, res: any) => {
     }
 
     const user = await prisma.user.findUnique({
-      where: { id: decoded.userId }
+      where: { id: decoded.sub || decoded.userId || decoded.id }
     });
 
     if (!user || !user.twoFactorEnabled || !user.twoFactorSecret) {
@@ -1406,8 +1491,9 @@ router.post('/phone-login/verify', async (req: any, res: any) => {
       return res.status(500).json({ success: false, message: 'Không thể tạo tài khoản.' });
     }
 
-    if (!user.isActive) {
-      return res.status(403).json({ success: false, message: 'Tài khoản của bạn đã bị khóa.' });
+    if (isUserAccountDisabled(user)) {
+      const reason = await resolveUserDisableReason(user.id, user.disabledReason);
+      return res.status(403).json({ success: false, message: USER_DISABLED_MESSAGE, reason });
     }
 
     // Update last login

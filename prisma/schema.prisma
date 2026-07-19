@@ -8,30 +8,39 @@ datasource db {
   directUrl = env("DIRECT_URL")
 }
 
+// ─── Enums ──────────────────────────────────────────────────────────────────────
+enum AccountStatus {
+  ACTIVE
+  DISABLED
+}
+
 model Restaurant {
-  id                   String               @id @default(uuid())
-  name                 String
-  slug                 String               @unique
-  ownerId              String
-  planType             String               @default("FREE")
-  logoUrl              String?
-  description          String?
-  address              String?
-  phone                String?
-  email                String?
-  primaryColor         String?              @default("#FF380B")
-  isActive             Boolean              @default(true)
-  createdAt            DateTime             @default(now())
-  updatedAt            DateTime             @updatedAt
-  metadata             Json?
-  latitude             Float?
-  longitude            Float?
-  cuisineType          String?              @default("other")
-  disabledAt           DateTime?
-  disabledBy           String?
-  disabledReason       String?              @db.VarChar(500)
-  status               AccountStatus        @default(ACTIVE)
-  loyaltyPointRate     Int                  @default(10000)
+  id               String         @id @default(uuid())
+  name             String
+  slug             String         @unique
+  ownerId          String
+  planType         String         @default("FREE")
+  logoUrl          String?
+  description      String?
+  address          String?
+  phone            String?
+  email            String?
+  primaryColor     String?        @default("#FF380B")
+  isActive         Boolean        @default(true)
+  status           AccountStatus  @default(ACTIVE)
+  disabledAt       DateTime?
+  disabledBy       String?
+  disabledReason   String?        @db.VarChar(500)
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+  metadata         Json?
+  latitude         Float?
+  longitude        Float?
+  cuisineType      String?        @default("other") // e.g. "vietnamese", "japanese", "fastfood", "other"
+  loyaltyPointRate Int            @default(10000)
+
+  owner                User                 @relation("RestaurantOwner", fields: [ownerId], references: [id])
+  userRoles            UserRole[]
   aiChatSessions       AIChatSession[]
   categories           Category[]
   dishes               Dish[]
@@ -1414,19 +1423,40 @@ model VatInvoiceRequest {
   @@map("VatInvoiceRequests")
 }
 
-model AuditLogs {
-  id        String   @id
-  action    String
-  adminId   String
-  targetId  String
-  reason    String?  @db.VarChar(500)
-  createdAt DateTime @default(now())
+model AuditLog {
+  id         String   @id @default(uuid())
+  action     String
+  adminId    String
+  actorEmail String?
+  actorName  String?
+  targetType String?
+  targetId   String
+  method     String?
+  path       String?
+  ipAddress  String?
+  status     String   @default("SUCCESS")
+  reason     String?  @db.VarChar
+  metadata   Json?
+  createdAt  DateTime @default(now())
 
-  @@index([adminId])
+  @@index([action])
   @@index([targetId])
+  @@index([createdAt])
+  @@map("AuditLogs")
 }
 
-enum AccountStatus {
-  ACTIVE
-  DISABLED
+model Announcement {
+  id        String    @id @default(uuid())
+  title     String
+  content   String    @db.Text
+  level     String    @default("INFO")
+  isActive  Boolean   @default(true)
+  createdBy String?
+  actorName String?
+  expiresAt DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @default(now()) @updatedAt
+
+  @@index([isActive])
+  @@map("Announcements")
 }

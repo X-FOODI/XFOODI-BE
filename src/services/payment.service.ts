@@ -6,6 +6,7 @@ import { getIO } from '../socket';
 import { walletService } from './wallet.service';
 import { reservationService } from './reservation.service';
 import { loyaltyService } from './loyalty.service';
+import { ENV } from '../config/env';
 
 function getPrisma(): PrismaClient {
   return prismaStorage.getStore() as PrismaClient;
@@ -804,6 +805,74 @@ export class PaymentService {
       }),
       prisma.payment.count({ where }),
     ]);
+
+    return { items, total, page, limit, totalPages: Math.ceil(total / limit) };
+  }
+
+  /**
+   * Gộp giao dịch từ TẤT CẢ tenant schema cho admin nền tảng.
+   * Payment là dữ liệu tenant nên phải lặp qua từng schema, gắn tên nhà hàng
+   * (central) rồi trộn/lọc/phân trang trong bộ nhớ.
+   */
+  async listAllPlatformPayments(filter: { page?: number; limit?: number; search?: string }) {
+    const page = filter.page ?? 1;
+    const limit = filter.limit ?? 15;
+    const search = (filter.search || '').trim().toLowerCase();
+
+    const restaurants = await centralPrisma.restaurant.findMany({ select: { id: true, name: true, slug: true } });
+
+    const all: any[] = [];
+    for (const r of restaurants) {
+      if (r.slug === 'system') continue;
+      try {
+        const tp = getTenantPrisma(getTenantConnectionUrl(ENV.DATABASE_URL, r.slug));
+        const rows = await tp.payment.findMany({
+          orderBy: { paymentDate: 'desc' },
+          take: 500,
+          include: {
+            paymentMethod: { select: { code: true, name: true } },
+            order: { select: { reference: true, totalAmount: true } },
+            reservation: { select: { confirmationCode: true, depositAmount: true } },
+          },
+        });
+        for (const p of rows) {
+          const rest = { name: r.name, slug: r.slug };
+          all.push({
+            id: p.id,
+            amount: Number(p.amount),
+            status: p.status,
+            paymentDate: p.paymentDate,
+            transactionId: p.transactionId,
+            paymentMethod: p.paymentMethod,
+            order: p.order ? { ...p.order, totalAmount: Number(p.order.totalAmount), restaurant: rest } : undefined,
+            reservation: p.reservation
+              ? { ...p.reservation, depositAmount: Number(p.reservation.depositAmount), restaurant: rest }
+              : undefined,
+          });
+        }
+      } catch (e: any) {
+        console.warn(`[Payments] Bỏ qua tenant ${r.slug}: ${e.message}`);
+      }
+    }
+
+    let filtered = all;
+    if (search) {
+      filtered = all.filter((p) => {
+        const ref = p.order?.reference || p.reservation?.confirmationCode || '';
+        const restName = p.order?.restaurant?.name || p.reservation?.restaurant?.name || '';
+        return (
+          (p.transactionId || '').toLowerCase().includes(search) ||
+          ref.toLowerCase().includes(search) ||
+          restName.toLowerCase().includes(search)
+        );
+      });
+    }
+
+    filtered.sort((a, b) => new Date(b.paymentDate).getTime() - new Date(a.paymentDate).getTime());
+
+    const total = filtered.length;
+    const start = (page - 1) * limit;
+    const items = filtered.slice(start, start + limit);
 
     return { items, total, page, limit, totalPages: Math.ceil(total / limit) };
   }
