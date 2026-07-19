@@ -14,6 +14,7 @@ import { assignDefaultRole } from '../../services/role.service';
 import { ENV } from '../../config/env';
 import { runMigrationsForTenant, seedTenantDatabase } from '../../services/tenantDb.service';
 import { auditLogMiddleware } from '../../middlewares/auditLog';
+import { recordAudit } from '../../services/audit.service';
 
 const router: ExpressRouter = Router();
 
@@ -499,6 +500,17 @@ router.post('/:id/approve', authMiddleware, requireRole('Admin', 'SuperAdmin'), 
       application.restaurantName
     ).catch((e) => console.error('[Email] Approval email failed:', e));
 
+    recordAudit({
+      action: 'APPLICATION_APPROVED',
+      adminId,
+      actorEmail: req.user?.email ?? null,
+      actorName: req.user?.fullName || req.user?.name || null,
+      targetType: 'APPLICATION',
+      targetId: id,
+      ipAddress: (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.ip || null,
+      metadata: { restaurantName: result.restaurant.name, restaurantSlug: result.restaurant.slug },
+    });
+
     return res.json({
       success: true,
       message: 'Đã duyệt đơn. Nhà hàng đã được tạo và email thông báo đã được gửi.',
@@ -563,6 +575,18 @@ router.post('/:id/reject', authMiddleware, requireRole('Admin', 'SuperAdmin'), a
       application.restaurantName,
       reason.trim()
     ).catch((e) => console.error('[Email] Rejection email failed:', e));
+
+    recordAudit({
+      action: 'APPLICATION_REJECTED',
+      adminId,
+      actorEmail: req.user?.email ?? null,
+      actorName: req.user?.fullName || req.user?.name || null,
+      targetType: 'APPLICATION',
+      targetId: id,
+      ipAddress: (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.ip || null,
+      reason: reason.trim(),
+      metadata: { restaurantName: application.restaurantName },
+    });
 
     return res.json({
       success: true,

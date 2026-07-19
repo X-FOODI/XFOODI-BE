@@ -29,6 +29,7 @@ const REFRESH_SECRET = ENV.JWT.REFRESH_SECRET;
 
 
 import { resolveRestaurantFromHeaders } from '../../lib/tenant';
+import { recordAudit } from '../../services/audit.service';
 
 async function getTenantScopedEmail(email: string, headers: any): Promise<string> {
   const restaurant = await resolveRestaurantFromHeaders(headers);
@@ -334,6 +335,16 @@ router.post(API_ROUTES.AUTH.LOGIN, async (req, res) => {
     });
 
     if (users.length === 0) {
+      recordAudit({
+        action: 'LOGIN_FAILED',
+        adminId: 'anonymous',
+        actorEmail: unscopedEmail,
+        targetType: 'AUTH',
+        targetId: unscopedEmail,
+        status: 'FAILED',
+        reason: 'Email không tồn tại',
+        ipAddress: (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.ip || null,
+      });
       return res.status(401).json({ success: false, message: 'Invalid email or password' });
     }
 
@@ -365,6 +376,16 @@ router.post(API_ROUTES.AUTH.LOGIN, async (req, res) => {
           }
         }
       }
+      recordAudit({
+        action: 'LOGIN_FAILED',
+        adminId: 'anonymous',
+        actorEmail: unscopedEmail,
+        targetType: 'AUTH',
+        targetId: unscopedEmail,
+        status: 'FAILED',
+        reason: 'Sai mật khẩu',
+        ipAddress: (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.ip || null,
+      });
       return res.status(401).json({ success: false, message: 'Invalid email or password' });
     }
 

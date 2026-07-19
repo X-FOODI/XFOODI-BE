@@ -7,6 +7,9 @@ export const disableRestaurant = async (req: Request, res: Response) => {
     const id = req.params.id as string;
     const { reason } = req.body;
     const adminId = (req as any).user?.sub || (req as any).user?.userId || 'unknown-admin';
+    const actorEmail = (req as any).user?.email ?? null;
+    const actorName = (req as any).user?.fullName || (req as any).user?.name || null;
+    const ipAddress = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.ip || null;
 
     if (!reason || reason.length < 10 || reason.length > 500) {
       return res.status(400).json({ success: false, message: 'Reason must be between 10 and 500 characters' });
@@ -33,8 +36,13 @@ export const disableRestaurant = async (req: Request, res: Response) => {
         data: {
           action: 'RESTAURANT_DISABLED',
           adminId,
+          actorEmail,
+          actorName,
+          targetType: 'RESTAURANT',
           targetId: id,
+          ipAddress,
           reason,
+          metadata: { restaurantName: restaurant.name },
         },
       }),
     ]);
@@ -76,6 +84,9 @@ export const enableRestaurant = async (req: Request, res: Response) => {
   try {
     const id = req.params.id as string;
     const adminId = (req as any).user?.sub || (req as any).user?.userId || 'unknown-admin';
+    const actorEmail = (req as any).user?.email ?? null;
+    const actorName = (req as any).user?.fullName || (req as any).user?.name || null;
+    const ipAddress = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.ip || null;
 
     const restaurant = await centralPrisma.restaurant.findUnique({ where: { id } });
     if (!restaurant) {
@@ -96,7 +107,12 @@ export const enableRestaurant = async (req: Request, res: Response) => {
         data: {
           action: 'RESTAURANT_ENABLED',
           adminId,
+          actorEmail,
+          actorName,
+          targetType: 'RESTAURANT',
           targetId: id,
+          ipAddress,
+          metadata: { restaurantName: restaurant.name },
         },
       }),
     ]);
@@ -113,6 +129,9 @@ export const disableUser = async (req: Request, res: Response) => {
     const id = req.params.id as string;
     const { reason } = req.body;
     const adminId = (req as any).user?.sub || (req as any).user?.userId || 'unknown-admin';
+    const actorEmail = (req as any).user?.email ?? null;
+    const actorName = (req as any).user?.fullName || (req as any).user?.name || null;
+    const ipAddress = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.ip || null;
 
     if (!reason || reason.length < 10 || reason.length > 500) {
       return res.status(400).json({ success: false, message: 'Reason must be between 10 and 500 characters' });
@@ -140,8 +159,13 @@ export const disableUser = async (req: Request, res: Response) => {
         data: {
           action: 'USER_DISABLED',
           adminId,
+          actorEmail,
+          actorName,
+          targetType: 'USER',
           targetId: id,
+          ipAddress,
           reason,
+          metadata: { userEmail: user.email, userName: user.fullName || user.userName },
         },
       }),
     ]);
@@ -182,6 +206,9 @@ export const enableUser = async (req: Request, res: Response) => {
   try {
     const id = req.params.id as string;
     const adminId = (req as any).user?.sub || (req as any).user?.userId || 'unknown-admin';
+    const actorEmail = (req as any).user?.email ?? null;
+    const actorName = (req as any).user?.fullName || (req as any).user?.name || null;
+    const ipAddress = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.ip || null;
 
     const user = await centralPrisma.user.findUnique({ where: { id } });
     if (!user) {
@@ -203,7 +230,12 @@ export const enableUser = async (req: Request, res: Response) => {
         data: {
           action: 'USER_ENABLED',
           adminId,
+          actorEmail,
+          actorName,
+          targetType: 'USER',
           targetId: id,
+          ipAddress,
+          metadata: { userEmail: user.email, userName: user.fullName || user.userName },
         },
       }),
     ]);

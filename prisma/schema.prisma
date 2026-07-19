@@ -1445,12 +1445,39 @@ model SystemSetting {
 }
 
 model AuditLog {
-  id        String   @id @default(uuid())
-  action    String
-  adminId   String
-  targetId  String
-  reason    String?  @db.VarChar
-  createdAt DateTime @default(now())
+  id         String   @id @default(uuid())
+  action     String
+  adminId    String
+  actorEmail String?
+  actorName  String?
+  targetType String?
+  targetId   String
+  method     String?
+  path       String?
+  ipAddress  String?
+  status     String   @default("SUCCESS")
+  reason     String?  @db.VarChar
+  metadata   Json?
+  createdAt  DateTime @default(now())
 
+  @@index([action])
+  @@index([targetId])
+  @@index([createdAt])
   @@map("AuditLogs")
+}
+
+model Announcement {
+  id        String    @id @default(uuid())
+  title     String
+  content   String    @db.Text
+  level     String    @default("INFO")
+  isActive  Boolean   @default(true)
+  createdBy String?
+  actorName String?
+  expiresAt DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @default(now()) @updatedAt
+
+  @@index([isActive])
+  @@map("Announcements")
 }
