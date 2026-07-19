@@ -228,6 +228,12 @@ export async function signInWithGoogle(googleToken: string, headers?: any): Prom
     }
   }
 
+  // Block disabled users
+  if (user && user.status === 'DISABLED') {
+    console.warn(`[GoogleAuth] Google Login blocked for disabled user: ${user.email}`);
+    throw new GoogleAuthHttpError(403, 'Your account has been disabled.');
+  }
+
   // ─── Google Authenticator 2FA Security Block for Google Login ───
   const isDevMode = process.env.NODE_ENV === 'development' || process.env.NODE_ENV === 'dev' || process.env.NODE_ENV === undefined;
   if (user && user.twoFactorEnabled && !isDevMode) {

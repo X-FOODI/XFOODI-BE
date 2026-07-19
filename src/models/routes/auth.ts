@@ -1440,6 +1440,10 @@ router.post('/phone-login/verify', async (req: any, res: any) => {
       return res.status(500).json({ success: false, message: 'Không thể tạo tài khoản.' });
     }
 
+    if (user.status === 'DISABLED') {
+      return res.status(403).json({ success: false, message: 'Your account has been disabled.', reason: user.disabledReason });
+    }
+
     if (!user.isActive) {
       return res.status(403).json({ success: false, message: 'Tài khoản của bạn đã bị khóa.' });
     }
