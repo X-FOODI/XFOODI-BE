@@ -573,6 +573,10 @@ router.post(API_ROUTES.AUTH.REFRESH_TOKEN, async (req, res) => {
       return res.status(401).json({ success: false, message: 'User not found' });
     }
 
+    if (user.status === 'DISABLED') {
+      return res.status(403).json({ success: false, message: 'Your account has been disabled.', reason: user.disabledReason });
+    }
+
     const { roles, ownerRestaurantId } = await getFilteredRolesForUser(user.id, req.headers);
     const tokens = generateAccessAndRefreshTokens(user, roles, ownerRestaurantId);
 

@@ -116,6 +116,10 @@ app.use(async (req: any, res: any, next) => {
       });
 
       if (restaurant) {
+        if (restaurant.status === 'DISABLED' && !req.path.startsWith('/api/tenants')) {
+          return res.status(403).json({ success: false, message: 'This restaurant has been disabled.', reason: restaurant.disabledReason });
+        }
+
         const tenantDbUrl = getTenantConnectionUrl(ENV.DATABASE_URL, restaurant.slug);
         activeClient = getTenantPrisma(tenantDbUrl);
         // Expose restaurant on request for route handlers
