@@ -15,6 +15,12 @@ export interface RecommendedDish {
   categoryName?: string | null;
   reason?: string;
   coOccurrenceCount?: number;
+  flavors?: {
+    sweet: number;
+    spicy: number;
+    savory: number;
+    alcohol: number;
+  };
 }
 
 // ─── Cache helpers (best-effort; Redis lỗi không được làm hỏng luồng chính) ───
@@ -135,6 +141,29 @@ function stripJsonFences(text: string): string {
  * Gợi ý món dựa trên giỏ hàng hiện tại, dùng Gemini.
  * Có fallback data-driven để không bao giờ trả về rỗng khi có lịch sử đơn.
  */
+function populateFallbackFlavors(dish: RecommendedDish): RecommendedDish {
+  const nameLower = dish.name.toLowerCase();
+  const isAlcohol = nameLower.includes('bia') || nameLower.includes('rượu') || nameLower.includes('wine') || nameLower.includes('beer');
+  const isDrink = isAlcohol || nameLower.includes('nước') || nameLower.includes('trà') || nameLower.includes('sinh tố') || nameLower.includes('juice') || nameLower.includes('sữa');
+  const isSpicy = nameLower.includes('cay') || nameLower.includes('lẩu thái') || nameLower.includes('ớt') || nameLower.includes('kim chi') || nameLower.includes('tứ xuyên');
+  const isSweet = nameLower.includes('chè') || nameLower.includes('kem') || nameLower.includes('sinh tố') || nameLower.includes('ngọt') || nameLower.includes('bánh') || nameLower.includes('juice');
+
+  return {
+    ...dish,
+    reason: `Món ngon chuẩn vị được nhiều khách hàng ưu chuộng đặt nhiều tại nhà hàng.`,
+    flavors: {
+      sweet: isSweet ? 4 : (isDrink ? 3 : 1),
+      spicy: isSpicy ? 4 : 1,
+      savory: isDrink ? 1 : 4,
+      alcohol: isAlcohol ? 5 : 1,
+    }
+  };
+}
+
+/**
+ * Gợi ý món dựa trên giỏ hàng hiện tại, dùng Gemini.
+ * Có fallback data-driven để không bao giờ trả về rỗng khi có lịch sử đơn.
+ */
 export async function getAIRecommendations(
   restaurantId: string,
   cartDishIds: string[]
@@ -145,11 +174,15 @@ export async function getAIRecommendations(
   if (cached) return cached;
 
   const fallback = async (): Promise<RecommendedDish[]> => {
+    let dishesList: RecommendedDish[] = [];
     if (cartDishIds.length > 0) {
       const fbt = await getFrequentlyBoughtTogether(restaurantId, cartDishIds[0]);
-      if (fbt.length > 0) return fbt;
+      if (fbt.length > 0) dishesList = fbt;
     }
-    return getTopSellingDishes(restaurantId);
+    if (dishesList.length === 0) {
+      dishesList = await getTopSellingDishes(restaurantId);
+    }
+    return dishesList.map(populateFallbackFlavors);
   };
 
   try {
@@ -173,8 +206,8 @@ ${menuLines}
 Khách đang có trong giỏ: ${cartNames.length > 0 ? cartNames.join(', ') : '(giỏ trống)'}.
 
 Hãy gợi ý tối đa ${MAX_RESULTS} món phù hợp để ăn kèm hoặc gọi thêm (KHÔNG trùng món đã có trong giỏ).
-Chỉ trả về JSON hợp lệ, KHÔNG kèm giải thích, đúng định dạng:
-[{"dishId":"<id trong thực đơn>","reason":"lý do ngắn tối đa 12 từ"}]`;
+Chỉ trả về JSON hợp lệ, KHÔNG kèm bất kỳ giải thích nào ngoài khối JSON, đúng định dạng:
+[{"dishId":"<id trong thực đơn>","reason":"giải thích sự hòa hợp hương vị lý thú tối đa 25 từ","flavors":{"sweet":1..5,"spicy":1..5,"savory":1..5,"alcohol":1..5}}]`;
 
     const response = await AIService.generateContent({
       model: ENV.AI.DEFAULT_MODEL,
@@ -185,7 +218,11 @@ Chỉ trả về JSON hợp lệ, KHÔNG kèm giải thích, đúng định dạ
     const text = (response as any)?.text;
     if (!text) return await fallback();
 
-    const parsed = JSON.parse(stripJsonFences(text)) as Array<{ dishId?: string; reason?: string }>;
+    const parsed = JSON.parse(stripJsonFences(text)) as Array<{ 
+      dishId?: string; 
+      reason?: string;
+      flavors?: { sweet?: number; spicy?: number; savory?: number; alcohol?: number };
+    }>;
     if (!Array.isArray(parsed)) return await fallback();
 
     const cartSet = new Set(cartDishIds);
@@ -202,7 +239,16 @@ Chỉ trả về JSON hợp lệ, KHÔNG kèm giải thích, đúng định dạ
       if (!p.dishId) continue;
       const dish = dishMap.get(p.dishId);
       if (dish && !result.find((r) => r.id === dish.id)) {
-        result.push({ ...dish, reason: p.reason });
+        result.push({ 
+          ...dish, 
+          reason: p.reason,
+          flavors: p.flavors ? {
+            sweet: Math.min(5, Math.max(1, p.flavors.sweet ?? 1)),
+            spicy: Math.min(5, Math.max(1, p.flavors.spicy ?? 1)),
+            savory: Math.min(5, Math.max(1, p.flavors.savory ?? 1)),
+            alcohol: Math.min(5, Math.max(1, p.flavors.alcohol ?? 1)),
+          } : { sweet: 1, spicy: 1, savory: 3, alcohol: 1 }
+        });
       }
     }
 
