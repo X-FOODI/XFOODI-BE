@@ -157,4 +157,41 @@ router.delete('/announcements/:id', async (req: any, res: any) => {
   }
 });
 
+// ─── Security Overview ────────────────────────────────────────────────────
+router.get('/security/overview', async (_req: any, res: any) => {
+  try {
+    const now = Date.now();
+    const d1 = new Date(now - 24 * 3600 * 1000);
+    const d7 = new Date(now - 7 * 24 * 3600 * 1000);
+
+    const [failed24h, failed7d, totalUsers, twoFactorEnabled, recentFailed] = await Promise.all([
+      centralPrisma.auditLog.count({ where: { action: 'LOGIN_FAILED', createdAt: { gte: d1 } } }),
+      centralPrisma.auditLog.count({ where: { action: 'LOGIN_FAILED', createdAt: { gte: d7 } } }),
+      centralPrisma.user.count(),
+      centralPrisma.user.count({ where: { twoFactorEnabled: true } }),
+      centralPrisma.auditLog.findMany({
+        where: { action: 'LOGIN_FAILED' },
+        orderBy: { createdAt: 'desc' },
+        take: 20,
+        select: { id: true, actorEmail: true, ipAddress: true, reason: true, createdAt: true },
+      }),
+    ]);
+
+    return res.json({
+      success: true,
+      data: {
+        failedLogins24h: failed24h,
+        failedLogins7d: failed7d,
+        totalUsers,
+        twoFactorEnabled,
+        twoFactorPercent: totalUsers > 0 ? Math.round((twoFactorEnabled / totalUsers) * 100) : 0,
+        recentFailed,
+      },
+    });
+  } catch (err: any) {
+    console.error('[Admin] security overview error:', err?.message);
+    return res.status(500).json({ success: false, message: 'Lỗi khi lấy tổng quan bảo mật' });
+  }
+});
+
 export default router;
