@@ -179,29 +179,43 @@ router.post(API_ROUTES.AUTH.REGISTER, async (req, res) => {
       where: { email: scopedEmail }
     });
 
-    if (existingUser) {
-      return res.status(400).json({ success: false, message: 'Email already in use' });
-    }
-
     // Hash the password
     const salt = await bcrypt.genSalt(10);
     const passwordHash = await bcrypt.hash(password, salt);
 
-    // Create the user in database
-    const newUser = await prisma.user.create({
-      data: {
-        email: scopedEmail,
-        userName: scopedEmail,
-        passwordHash,
-        fullName,
-        phoneNumber,
-        emailVerified: false,
-        isActive: true
-      }
-    });
+    let newUser;
 
-    // Assign default "Customer" role
-    await assignDefaultRole(newUser.id);
+    if (existingUser) {
+      if (existingUser.emailVerified) {
+        return res.status(400).json({ success: false, message: 'Email already in use' });
+      }
+
+      // Update unverified user
+      newUser = await prisma.user.update({
+        where: { id: existingUser.id },
+        data: {
+          passwordHash,
+          fullName,
+          phoneNumber
+        }
+      });
+    } else {
+      // Create the user in database
+      newUser = await prisma.user.create({
+        data: {
+          email: scopedEmail,
+          userName: scopedEmail,
+          passwordHash,
+          fullName,
+          phoneNumber,
+          emailVerified: false,
+          isActive: true
+        }
+      });
+
+      // Assign default "Customer" role
+      await assignDefaultRole(newUser.id);
+    }
 
     // Generate confirmation token and save to Redis
     const token = crypto.randomUUID();

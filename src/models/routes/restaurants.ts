@@ -39,9 +39,9 @@ router.get('/', async (_req: any, res: any) => {
       success: true,
       data: restaurants,
     });
-  } catch (err) {
+  } catch (err: any) {
     console.error('[RestaurantRoute] GET / error:', err);
-    return res.status(500).json({ success: false, message: 'Lỗi server.' });
+    return res.status(500).json({ success: false, message: err.message || 'Lỗi server.' });
   }
 });
 

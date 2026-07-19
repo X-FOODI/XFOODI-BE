@@ -5,6 +5,25 @@ import { authMiddleware } from './auth';
 
 const router: Router = Router();
 
+// ── Public Test Endpoint: Direct PayOS Payout (For Postman testing) ──────────
+router.post('/test-direct-payout', async (req: any, res) => {
+  try {
+    const { amount, bankBin, accountNumber, description } = req.body;
+    if (!amount || !bankBin || !accountNumber) {
+      return res.status(400).json({ success: false, message: 'Thiếu amount, bankBin, hoặc accountNumber trong body.' });
+    }
+    const data = await walletService.directPayout({
+      amount: Number(amount),
+      bankBin,
+      accountNumber,
+      description,
+    });
+    return res.json({ success: true, message: 'Yêu cầu chuyển tiền qua PayOS thành công!', data });
+  } catch (err: any) {
+    return res.status(400).json({ success: false, message: err.message });
+  }
+});
+
 router.use(authMiddleware);
 
 // ── Owner: Get wallet info ─────────────────────────────────────────────────────
