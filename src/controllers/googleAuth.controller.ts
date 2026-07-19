@@ -50,6 +50,7 @@ export const postGoogleAuth: RequestHandler = async (req, res) => {
       return res.status(err.statusCode).json({
         success: false,
         message: err.message,
+        ...(err.reason ? { reason: err.reason } : {}),
       });
     }
 

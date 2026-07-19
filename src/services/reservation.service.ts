@@ -832,6 +832,7 @@ export class ReservationService {
           });
 
           if (order) {
+            // eslint-disable-next-line @typescript-eslint/no-var-requires
             const { getIO } = require('../socket');
             const io = getIO();
 
@@ -1051,6 +1052,7 @@ export class ReservationService {
 
           // Broadcast TABLE_SESSION_STARTED via socket
           try {
+            // eslint-disable-next-line @typescript-eslint/no-var-requires
             const { getIO } = require('../socket');
             const io = getIO();
             io.to(`restaurant_${reservation.restaurantId}`).emit('TABLE_SESSION_STARTED', {
@@ -1587,6 +1589,7 @@ export class ReservationService {
 
             // Broadcast status change to kitchen
             try {
+              // eslint-disable-next-line @typescript-eslint/no-var-requires
               const { getIO } = require('../socket');
               const io = getIO();
               io.to(`restaurant_${reservation.restaurantId}`).emit('ORDER_STATUS_CHANGED', {

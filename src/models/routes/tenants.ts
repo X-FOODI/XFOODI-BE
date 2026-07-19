@@ -1,5 +1,7 @@
 import { Router, type Router as ExpressRouter } from 'express';
 import { prisma } from '../../lib/prisma';
+import { authMiddleware } from './auth';
+import { requireRole } from '../../middlewares/requireRole';
 
 const router: ExpressRouter = Router();
 
@@ -21,6 +23,65 @@ router.get('/', async (req, res) => {
   } catch (error) {
     console.error('Error fetching restaurants:', error);
     res.status(500).json({ success: false, message: 'Internal server error' });
+  }
+});
+
+// ─── ADMIN ENDPOINTS (must be before /:domain) ───────────────────────────────
+
+// GET /api/tenants/admin/list - List all restaurants (Active & Inactive) with pagination
+router.get('/admin/list', authMiddleware, requireRole('Admin', 'SuperAdmin'), async (req: any, res: any) => {
+  try {
+    const { page = '1', limit = '10', search = '' } = req.query;
+    const skip = (parseInt(page as string) - 1) * parseInt(limit as string);
+
+    const where: any = {};
+    if (search) {
+      where.OR = [
+        { name: { contains: search, mode: 'insensitive' } },
+        { slug: { contains: search, mode: 'insensitive' } },
+      ];
+    }
+
+    const [restaurants, total] = await Promise.all([
+      prisma.restaurant.findMany({
+        where,
+        skip,
+        take: parseInt(limit as string),
+        orderBy: { createdAt: 'desc' },
+        select: {
+          id: true,
+          name: true,
+          slug: true,
+          description: true,
+          address: true,
+          phone: true,
+          email: true,
+          logoUrl: true,
+          isActive: true,
+          status: true,
+          disabledReason: true,
+          createdAt: true,
+          owner: {
+            select: { id: true, fullName: true, email: true },
+          },
+        },
+      }),
+      prisma.restaurant.count({ where }),
+    ]);
+
+    return res.json({
+      success: true,
+      data: {
+        items: restaurants,
+        total,
+        page: parseInt(page as string),
+        limit: parseInt(limit as string),
+        totalPages: Math.ceil(total / parseInt(limit as string)),
+      },
+    });
+  } catch (error) {
+    console.error('[TenantsRoute] Admin List error:', error);
+    return res.status(500).json({ success: false, message: 'Internal server error' });
   }
 });
 
@@ -63,6 +124,10 @@ router.get('/:domain', async (req, res) => {
       });
     }
 
+    if (restaurant.status === 'DISABLED') {
+      return res.status(403).json({ success: false, message: 'Restaurant has been disabled.', reason: restaurant.disabledReason });
+    }
+
     res.json({
       id: restaurant.id,
       name: restaurant.name,
@@ -99,6 +164,40 @@ router.get('/:id/business-hours', (req, res) => {
 // GET /api/tenants/:id/payment-settings
 router.get('/:id/payment-settings', (req, res) => {
   res.status(404).json({ success: false, message: 'Payment settings not configured' });
+});
+
+// PATCH /api/tenants/:id/status - Toggle active/inactive status
+router.patch('/:id/status', authMiddleware, requireRole('Admin', 'SuperAdmin'), async (req: any, res: any) => {
+  try {
+    const { id } = req.params;
+    const { isActive } = req.body;
+
+    if (typeof isActive !== 'boolean') {
+      return res.status(400).json({ success: false, message: 'isActive must be a boolean' });
+    }
+
+    const restaurant = await prisma.restaurant.findUnique({ where: { id } });
+    if (!restaurant) {
+      return res.status(404).json({ success: false, message: 'Restaurant not found' });
+    }
+
+    const updated = await prisma.restaurant.update({
+      where: { id },
+      data: { isActive },
+    });
+
+    return res.json({
+      success: true,
+      message: isActive ? 'Nhà hàng đã được kích hoạt' : 'Nhà hàng đã bị khóa',
+      data: {
+        id: updated.id,
+        isActive: updated.isActive,
+      }
+    });
+  } catch (error) {
+    console.error('[TenantsRoute] Patch status error:', error);
+    return res.status(500).json({ success: false, message: 'Internal server error' });
+  }
 });
 
 export default router;

@@ -39,11 +39,16 @@ export const tenantGuard = async (req: any, res: Response, next: NextFunction) =
       if (jwtRestaurantId) {
         // Primary path: restaurantId is directly in the JWT payload
         const restaurant = await prisma.restaurant.findFirst({
-          where: { id: jwtRestaurantId, isActive: true },
+          where: { id: jwtRestaurantId },
         });
         if (restaurant) {
-          req.tenant = restaurant;
-          req.tenantId = restaurant.id;
+          if (restaurant.status === 'DISABLED') {
+            return res.status(403).json({ success: false, message: 'This restaurant has been disabled.' });
+          }
+          if (restaurant.isActive) {
+            req.tenant = restaurant;
+            req.tenantId = restaurant.id;
+          }
         }
       } else if (req.user?.sub) {
         // Fallback path (localhost dev): JWT has no restaurantId (e.g. Customer role or token
@@ -61,13 +66,18 @@ export const tenantGuard = async (req: any, res: Response, next: NextFunction) =
 
         if (resolvedRestaurantId) {
           const restaurant = await prisma.restaurant.findFirst({
-            where: { id: resolvedRestaurantId, isActive: true },
+            where: { id: resolvedRestaurantId },
           });
           if (restaurant) {
-            req.tenant = restaurant;
-            req.tenantId = restaurant.id;
-            // Patch req.user so that getRestaurantId() in controllers also works
-            req.user.restaurantId = restaurant.id;
+            if (restaurant.status === 'DISABLED') {
+              return res.status(403).json({ success: false, message: 'This restaurant has been disabled.' });
+            }
+            if (restaurant.isActive) {
+              req.tenant = restaurant;
+              req.tenantId = restaurant.id;
+              // Patch req.user so that getRestaurantId() in controllers also works
+              req.user.restaurantId = restaurant.id;
+            }
           }
         }
       }
@@ -89,11 +99,18 @@ export const tenantGuard = async (req: any, res: Response, next: NextFunction) =
           { slug: slug },
           { slug: hostname },
         ],
-        isActive: true,
       },
     });
 
     if (!restaurant) {
+      return res.status(404).json({ success: false, message: 'Restaurant not found' });
+    }
+
+    if (restaurant.status === 'DISABLED') {
+      return res.status(403).json({ success: false, message: 'This restaurant has been disabled.' });
+    }
+
+    if (!restaurant.isActive) {
       return res.status(404).json({ success: false, message: 'Restaurant not found or inactive.' });
     }
 

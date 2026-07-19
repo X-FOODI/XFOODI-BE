@@ -13,6 +13,8 @@ import { authMiddleware } from './auth';
 import { getMyProfile, updateMyProfile, changePassword } from '../../controllers/user.controller';
 import { getMyLoyaltyPoints } from '../../controllers/loyalty.controller';
 import { API_ROUTES } from '../../constants/routes';
+import { requireRole } from '../../middlewares/requireRole';
+import { prisma } from '../../lib/prisma';
 import { auditLogMiddleware } from '../../middlewares/auditLog';
 import multer from 'multer';
 
@@ -47,5 +49,95 @@ router.put(API_ROUTES.USERS.CHANGE_PASSWORD, changePassword);
 
 // GET /api/users/loyalty-points
 router.get('/loyalty-points', getMyLoyaltyPoints);
+
+// ─── ADMIN ENDPOINTS ─────────────────────────────────────────────────────────
+
+// GET /api/users/admin/list
+router.get('/admin/list', requireRole('Admin', 'SuperAdmin'), async (req: any, res: any) => {
+  try {
+    const { page = '1', limit = '15', search = '' } = req.query;
+    const skip = (parseInt(page as string) - 1) * parseInt(limit as string);
+
+    const where: any = {};
+    if (search) {
+      where.OR = [
+        { fullName: { contains: search, mode: 'insensitive' } },
+        { email: { contains: search, mode: 'insensitive' } },
+      ];
+    }
+
+    const [users, total] = await Promise.all([
+      prisma.user.findMany({
+        where,
+        skip,
+        take: parseInt(limit as string),
+        orderBy: { createdAt: 'desc' },
+        select: {
+          id: true,
+          email: true,
+          fullName: true,
+          phoneNumber: true,
+          avatarUrl: true,
+          isActive: true,
+          status: true,
+          disabledReason: true,
+          createdAt: true,
+          roles: {
+            select: { role: { select: { name: true } }, restaurantId: true }
+          }
+        }
+      }),
+      prisma.user.count({ where }),
+    ]);
+
+    res.json({
+      success: true,
+      data: {
+        items: users.map(u => ({
+          ...u,
+          status: u.status,
+          disabledReason: u.disabledReason,
+          roles: u.roles.map((r: any) => r.role.name)
+        })),
+        total,
+        page: parseInt(page as string),
+        limit: parseInt(limit as string),
+        totalPages: Math.ceil(total / parseInt(limit as string)),
+      }
+    });
+  } catch (error) {
+    console.error('Error in GET /api/users/admin/list:', error);
+    res.status(500).json({ success: false, message: 'Lỗi server' });
+  }
+});
+
+// PATCH /api/users/admin/:id/status
+router.patch('/admin/:id/status', requireRole('Admin', 'SuperAdmin'), async (req: any, res: any) => {
+  try {
+    const { id } = req.params;
+    const { isActive } = req.body;
+
+    const user = await prisma.user.findUnique({ where: { id } });
+    if (!user) return res.status(404).json({ success: false, message: 'Người dùng không tồn tại' });
+
+    if (user.id === req.user.sub) {
+      return res.status(400).json({ success: false, message: 'Không thể khóa chính mình' });
+    }
+
+    const updated = await prisma.user.update({
+      where: { id },
+      data: { isActive: isActive }
+    });
+
+    res.json({
+      success: true,
+      message: isActive ? 'Đã kích hoạt người dùng' : 'Đã khóa người dùng',
+      data: { id: updated.id, status: updated.isActive }
+    });
+  } catch (error) {
+    console.error('Error in PATCH /api/users/admin/:id/status:', error);
+    res.status(500).json({ success: false, message: 'Lỗi server' });
+  }
+});
 
 export default router;
