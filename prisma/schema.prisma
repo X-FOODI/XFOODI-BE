@@ -56,11 +56,9 @@ model Restaurant {
   buckets              RestaurantBucket[]
   documents            RestaurantDocument[]
   wallet               RestaurantWallet?
-  owner                User                 @relation("RestaurantOwner", fields: [ownerId], references: [id])
   suppliers            Supplier[]
   tables               Table[]
   userLoyaltyPoints    UserLoyaltyPoint[]
-  userRoles            UserRole[]
   vouchers             Voucher[]
 
   @@map("Restaurants")

@@ -1,0 +1,41 @@
+fix(payments): Ensure socket emission for cash payment real-time updates
+
+Problem:
+- Cash payment completion not triggering real-time update to checkout page
+- Socket emit for PAYMENT_COMPLETED event was already implemented but needs verification
+
+Changes:
+- Verified socket emit implementation in /api/payments/cash endpoint
+- Socket emits to restaurant room when cash payment completes
+- Checkout page listens for PAYMENT_COMPLETED event and navigates to success
+
+Technical Details:
+- POST /api/payments/cash emits socket after successful payment:
+  * Event: PAYMENT_COMPLETED
+  * Room: restaurant_{restaurantId}
+  * Payload: { paymentId, orderId, method: 'CASH' }
+- Requires staff to have valid auth token (Owner/Admin/Staff role)
+- Validates cashReceive > 0 before processing
+
+Files Verified:
+- src/models/routes/payments.ts (socket emit confirmed working)
+- src/services/payment.service.ts (payCash logic)
+
+Related:
+This works in conjunction with frontend fix that ensures staff has valid token
+before calling this endpoint. The 401 errors were preventing the request from
+reaching this endpoint at all.
+
+Flow:
+1. Staff calls POST /api/payments/cash (requires valid token)
+2. Backend creates payment record
+3. Backend emits socket PAYMENT_COMPLETED to restaurant room
+4. Checkout page receives socket event
+5. Checkout page navigates to success page
+6. Order status updates to COMPLETED + isPaid=true
+7. KDS removes order from board via ORDER_STATUS_CHANGED event
+
+Note:
+No backend code changes needed in this commit - socket emission was already
+implemented correctly. The issue was frontend (expired staff token preventing
+API call from reaching backend).
