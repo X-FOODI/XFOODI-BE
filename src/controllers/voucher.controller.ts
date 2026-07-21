@@ -224,8 +224,12 @@ export async function getMyVouchers(req: any, res: Response) {
       return res.status(401).json({ success: false, message: 'Unauthorized' });
     }
 
-    const { restaurantId } = req.query;
-    const userVouchers = await voucherService.getUserVouchers(userId, restaurantId as string);
+    const { restaurantId, onlyUnused } = req.query;
+    const userVouchers = await voucherService.getUserVouchers(
+      userId,
+      restaurantId as string,
+      onlyUnused === 'true'
+    );
 
     return res.json({
       success: true,

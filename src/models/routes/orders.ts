@@ -7,6 +7,7 @@ import {
   getMyOrders,
   updateOrderStatus,
   updateOrderDetailStatus,
+  applyVoucher,
 } from '../../controllers/order.controller';
 import { calculatePoints } from '../../controllers/loyalty.controller';
 import { getIO } from '../../socket';
@@ -79,7 +80,10 @@ router.patch('/:id/status', authMiddleware, updateOrderStatus);
 // 6. Update individual dish item status (Protected - kitchen cooking update)
 router.patch('/items/:detailId/status', authMiddleware, updateOrderDetailStatus);
 
-// 7. Manually calculate loyalty points for a specific order (Protected - staff/admin)
+// 7. Apply a voucher to an order (Protected - customer applies it)
+router.post('/:id/apply-voucher', authMiddleware, applyVoucher);
+
+// 8. Manually calculate loyalty points for a specific order (Protected - staff/admin)
 router.post('/calculate-points', authMiddleware, calculatePoints);
 
 export default router;

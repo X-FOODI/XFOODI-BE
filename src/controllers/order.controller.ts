@@ -284,3 +284,39 @@ export async function updateOrderDetailStatus(req: any, res: Response) {
     });
   }
 }
+
+export async function applyVoucher(req: any, res: Response) {
+  try {
+    const userId = req.user?.sub || req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ success: false, message: 'Unauthorized' });
+    }
+
+    const { id: orderId } = req.params;
+    const { userVoucherId } = req.body;
+
+    const order = await prisma.order.findUnique({
+      where: { id: orderId },
+    });
+
+    if (!order) {
+      return res.status(404).json({ success: false, message: 'Đơn hàng không tồn tại' });
+    }
+
+    const voucherIdParam: string | null = typeof userVoucherId === 'string' ? userVoucherId : null;
+    const updated = await orderService.applyVoucher(order.restaurantId as string, orderId, userId as string, voucherIdParam);
+
+    return res.json({
+      success: true,
+      message: userVoucherId ? 'Áp dụng voucher thành công' : 'Đã hủy áp dụng voucher',
+      data: updated,
+    });
+  } catch (error: any) {
+    console.error('[OrderController] applyVoucher error:', error);
+    const statusCode = error.statusCode || 500;
+    return res.status(statusCode).json({
+      success: false,
+      message: error.message || 'Lỗi hệ thống khi áp dụng voucher',
+    });
+  }
+}
