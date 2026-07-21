@@ -330,13 +330,30 @@ export class VoucherService {
     return userVoucher;
   }
 
-  /**
-   * Get user's redeemed vouchers.
-   */
-  async getUserVouchers(userId: string, restaurantId?: string) {
+  async getUserVouchers(userId: string, restaurantId?: string, onlyUnused: boolean = false) {
     const whereClause: any = { userId };
+    if (onlyUnused) {
+      whereClause.isUsed = false;
+    }
+
+    const voucherFilters: any = {};
+    if (onlyUnused) {
+      voucherFilters.isActive = true;
+      voucherFilters.status = 'active';
+      voucherFilters.expiryDate = {
+        gt: new Date(),
+      };
+    }
+
     if (restaurantId) {
-      whereClause.voucher = { restaurantId };
+      voucherFilters.OR = [
+        { restaurantId: restaurantId },
+        { restaurantId: null },
+      ];
+    }
+
+    if (Object.keys(voucherFilters).length > 0) {
+      whereClause.voucher = voucherFilters;
     }
 
     return prisma.userVoucher.findMany({

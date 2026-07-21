@@ -1,5 +1,5 @@
 import { PrismaClient, Prisma } from '@prisma/client';
-import { prismaStorage } from '../lib/prisma';
+import { prismaStorage, centralPrisma } from '../lib/prisma';
 import { randomBytes } from 'crypto';
 import { sendReservationReminderEmail } from '../lib/email';
 import { generateReservationQR } from './qr.service';
@@ -56,6 +56,7 @@ export interface CreateReservationDto {
     quantity: number;
     note?: string;
   }>;
+  userVoucherId?: string;
 }
 
 export interface UpdateReservationDto {
@@ -535,8 +536,61 @@ export class ReservationService {
       const reference = `ORD-${todayStr}-${reservation.id.slice(-6).toUpperCase()}`;
 
       const subTotal = dto.dishes.reduce((sum, item) => sum + item.quantity * (dishPriceMap[item.dishId] || 0), 0);
-      const taxAmount = subTotal * 0.1;
-      const totalAmount = subTotal + taxAmount;
+
+      // ── Validate voucher if provided ────────────────────────────────────────
+      let discountAmount = 0;
+      let appliedVoucherMeta: Record<string, any> | null = null;
+
+      if (dto.userVoucherId) {
+        // UserVoucher lives in the Central DB (public schema)
+        const userVoucher = await centralPrisma.userVoucher.findUnique({
+          where: { id: dto.userVoucherId },
+          include: { voucher: true },
+        });
+
+        if (!userVoucher) {
+          throw Object.assign(new Error('Voucher không tồn tại trong ví của bạn'), { statusCode: 400 });
+        }
+        if (userVoucher.isUsed) {
+          throw Object.assign(new Error('Voucher này đã được sử dụng'), { statusCode: 400 });
+        }
+        const v = userVoucher.voucher;
+        if (!v || !v.isActive || v.status !== 'active') {
+          throw Object.assign(new Error('Voucher hiện tại đang không hoạt động'), { statusCode: 400 });
+        }
+        if (new Date(v.expiryDate) < new Date()) {
+          throw Object.assign(new Error('Voucher đã hết hạn sử dụng'), { statusCode: 400 });
+        }
+        if (v.restaurantId && v.restaurantId !== dto.restaurantId) {
+          throw Object.assign(new Error('Voucher này không áp dụng cho nhà hàng hiện tại'), { statusCode: 400 });
+        }
+
+        // Calculate discount
+        if (v.discountType === 'percentage') {
+          discountAmount = subTotal * (Number(v.discountValue) / 100);
+        } else {
+          discountAmount = Number(v.discountValue);
+        }
+        discountAmount = Math.min(discountAmount, subTotal); // cap at subtotal
+
+        appliedVoucherMeta = {
+          userVoucherId: userVoucher.id,
+          voucherId: v.id,
+          code: v.code,
+          discountType: v.discountType,
+          discountValue: Number(v.discountValue),
+          discountAmount,
+        };
+      }
+
+      const taxableAmount = Math.max(0, subTotal - discountAmount);
+      const taxAmount = taxableAmount * 0.1;
+      const totalAmount = taxableAmount + taxAmount;
+
+      const orderMetadata: Record<string, any> = {};
+      if (appliedVoucherMeta) {
+        orderMetadata.appliedVoucher = appliedVoucherMeta;
+      }
 
       await prisma.order.create({
         data: {
@@ -546,10 +600,11 @@ export class ReservationService {
           reservationId: reservation.id,
           orderStatusId: orderStatusPending.id,
           subTotal: new Prisma.Decimal(subTotal),
-          discountAmount: 0,
+          discountAmount: new Prisma.Decimal(discountAmount),
           taxAmount: new Prisma.Decimal(taxAmount),
           serviceCharge: 0,
           totalAmount: new Prisma.Decimal(totalAmount),
+          ...(Object.keys(orderMetadata).length > 0 ? { metadata: orderMetadata } : {}),
           orderDetails: {
             create: dto.dishes.map((item) => ({
               dishId: item.dishId,

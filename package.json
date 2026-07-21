@@ -13,6 +13,7 @@
     "test": "jest",
     "test:watch": "jest --watch",
     "test:loyalty": "ts-node --skip-project --compiler-options \"{\\\"module\\\":\\\"commonjs\\\",\\\"esModuleInterop\\\":true,\\\"strict\\\":false}\" src/scripts/test-loyalty-flow.ts",
+    "check:voucher-demo": "ts-node --skip-project --compiler-options \"{\\\"module\\\":\\\"commonjs\\\",\\\"esModuleInterop\\\":true,\\\"strict\\\":false}\" src/scripts/check-voucher-demo.ts",
     "lint": "eslint src --ext .ts",
     "format": "prettier --write \"src/**/*.ts\"",
     "check": "pnpm lint && tsc --noEmit"
