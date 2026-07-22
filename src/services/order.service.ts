@@ -401,9 +401,45 @@ export class OrderService {
       }
     }
     if (filters.tableId) {
-      whereClause.tableSessions = {
-        some: { tableId: filters.tableId, isActive: true },
-      };
+      const completedStatusId = statusMap['COMPLETED'];
+      const cancelledStatusId = statusMap['CANCELLED'];
+
+      whereClause.AND = [
+        ...(whereClause.AND || []),
+        // Exclude cancelled orders from customer table view
+        ...(cancelledStatusId ? [{ orderStatusId: { not: cancelledStatusId } }] : []),
+        // Exclude already-paid completed orders
+        {
+          NOT: {
+            AND: [
+              ...(completedStatusId ? [{ orderStatusId: completedStatusId }] : []),
+              { payments: { some: { status: 1 } } },
+            ],
+          },
+        },
+        {
+          OR: [
+            // Active session at this table
+            {
+              tableSessions: {
+                some: { tableId: filters.tableId, isActive: true },
+              },
+            },
+            // Unpaid completed orders linked to this table (backward compat if session was closed early)
+            {
+              AND: [
+                ...(completedStatusId ? [{ orderStatusId: completedStatusId }] : []),
+                { payments: { none: { status: 1 } } },
+                {
+                  tableSessions: {
+                    some: { tableId: filters.tableId },
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      ];
     }
 
     const [orders, total] = await Promise.all([
@@ -417,8 +453,11 @@ export class OrderService {
             },
           },
           tableSessions: {
-            where: { isActive: true },
+            where: filters.tableId
+              ? { tableId: filters.tableId }
+              : { isActive: true },
             include: { table: true },
+            orderBy: [{ isActive: 'desc' }, { createdAt: 'desc' }],
           },
           customer: {
             include: {
@@ -626,8 +665,10 @@ export class OrderService {
       }
     }
 
-    // Auto close table sessions and free tables when order is completed or cancelled
-    if (status.toUpperCase() === 'COMPLETED' || status.toUpperCase() === 'CANCELLED') {
+    // Auto close table sessions only when order is cancelled.
+    // COMPLETED = chờ thanh toán — giữ session để khách vẫn xem đơn & thanh toán.
+    // Session sẽ được đóng khi thanh toán xong (payment.service).
+    if (status.toUpperCase() === 'CANCELLED') {
       const activeSessions = await prisma.tableSession.findMany({
         where: { orderId, isActive: true },
       });
