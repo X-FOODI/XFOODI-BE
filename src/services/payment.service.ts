@@ -216,7 +216,7 @@ export class PaymentService {
     // ── Gather everything we need up front (read-only) ──
     const order = await prisma.order.findUnique({
       where: { id: orderId },
-      select: { restaurantId: true },
+      select: { restaurantId: true, metadata: true },
     });
     if (!order) return;
 
@@ -275,6 +275,18 @@ export class PaymentService {
             data: { tableStatusId: availableStatusId },
           });
         }
+      }
+
+      // Mark voucher as used if there is one applied
+      const orderMeta = order?.metadata as any;
+      if (orderMeta?.appliedVoucher?.userVoucherId) {
+        await prisma.userVoucher.update({
+          where: { id: orderMeta.appliedVoucher.userVoucherId },
+          data: {
+            isUsed: true,
+            usedAt: new Date()
+          }
+        });
       }
     });
 

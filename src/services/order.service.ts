@@ -338,7 +338,9 @@ export class OrderService {
         table: table.code,
         tableId: table.id,
         subTotal,
+        discountAmount: Number(order.discountAmount || 0),
         totalAmount,
+        metadata: order.metadata,
         createdAt: order.createdAt,
         status: 'PENDING',
         customerName: order.customer?.user?.fullName || order.customer?.user?.userName || null,
@@ -480,7 +482,9 @@ export class OrderService {
         id: o.id,
         reference: o.reference,
         subTotal: Number(o.subTotal),
+        discountAmount: Number(o.discountAmount || 0),
         totalAmount: Number(o.totalAmount),
+        metadata: o.metadata,
         createdAt: o.createdAt,
         status: statusIdToCode[o.orderStatusId] || 'PENDING',
         isPaid: o.payments.length > 0,
@@ -558,7 +562,9 @@ export class OrderService {
       id: order.id,
       reference: order.reference,
       subTotal: Number(order.subTotal),
+      discountAmount: Number(order.discountAmount || 0),
       totalAmount: Number(order.totalAmount),
+      metadata: order.metadata,
       createdAt: order.createdAt,
       status: currentStatus,
       estimatedReadyAt: computeEstimatedReadyAt(order.createdAt, order.orderDetails.length, currentStatus),
@@ -624,6 +630,39 @@ export class OrderService {
         where: { orderId },
         data: { itemStatusId: itemStatusMap[targetItemStatus] },
       });
+    }
+
+    // Handle voucher usage/release on COMPLETED or CANCELLED status change
+    if (status.toUpperCase() === 'COMPLETED') {
+      const orderData = await prisma.order.findUnique({
+        where: { id: orderId },
+        select: { metadata: true }
+      });
+      const orderMeta = orderData?.metadata as any;
+      if (orderMeta?.appliedVoucher?.userVoucherId) {
+        await prisma.userVoucher.update({
+          where: { id: orderMeta.appliedVoucher.userVoucherId },
+          data: {
+            isUsed: true,
+            usedAt: new Date()
+          }
+        });
+      }
+    } else if (status.toUpperCase() === 'CANCELLED') {
+      const orderData = await prisma.order.findUnique({
+        where: { id: orderId },
+        select: { metadata: true }
+      });
+      const orderMeta = orderData?.metadata as any;
+      if (orderMeta?.appliedVoucher?.userVoucherId) {
+        await prisma.userVoucher.update({
+          where: { id: orderMeta.appliedVoucher.userVoucherId },
+          data: {
+            isUsed: false,
+            usedAt: null
+          }
+        });
+      }
     }
 
     // Auto close table sessions only when order is cancelled.
@@ -736,6 +775,151 @@ export class OrderService {
       status: updated.statusValue.code,
       statusName: updated.statusValue.name,
     });
+
+    return updated;
+  }
+
+  /**
+   * Apply a voucher to an order
+   */
+  async applyVoucher(
+    restaurantId: string,
+    orderId: string,
+    userId: string,
+    userVoucherId: string | null
+  ) {
+    const order = await prisma.order.findFirst({
+      where: { id: orderId, restaurantId },
+      include: { orderDetails: true }
+    });
+
+    if (!order) {
+      throw new OrderServiceError(404, 'Đơn hàng không tồn tại');
+    }
+
+    // Check order status
+    const statusValues = await prisma.statusValue.findMany({
+      where: { statusType: { code: 'ORDER' } }
+    });
+    const completedStatus = statusValues.find(s => s.code === 'COMPLETED');
+    const cancelledStatus = statusValues.find(s => s.code === 'CANCELLED');
+
+    if (completedStatus && order.orderStatusId === completedStatus.id) {
+      throw new OrderServiceError(400, 'Đơn hàng đã thanh toán, không thể áp dụng voucher');
+    }
+    if (cancelledStatus && order.orderStatusId === cancelledStatus.id) {
+      throw new OrderServiceError(400, 'Đơn hàng đã hủy, không thể áp dụng voucher');
+    }
+
+    const subTotal = Number(order.subTotal);
+
+    if (!userVoucherId) {
+      // Remove applied voucher
+      const taxAmount = subTotal * 0.1;
+      const totalAmount = subTotal + taxAmount;
+
+      const metadataObj = (order.metadata as any) || {};
+      delete metadataObj.appliedVoucher;
+
+      const updated = await prisma.order.update({
+        where: { id: orderId },
+        data: {
+          discountAmount: new Prisma.Decimal(0),
+          taxAmount: new Prisma.Decimal(taxAmount),
+          totalAmount: new Prisma.Decimal(totalAmount),
+          metadata: metadataObj
+        }
+      });
+
+      // Notify clients
+      try {
+        const io = getIO();
+        io.to(`restaurant_${restaurantId}`).emit('ORDER_STATUS_CHANGED', {
+          orderId,
+          status: 'PENDING',
+          isPaid: false,
+        });
+      } catch (e) {
+        console.warn('[OrderService] Failed to broadcast ORDER_STATUS_CHANGED on voucher removal:', e);
+      }
+
+      return updated;
+    }
+
+    // Validate user voucher
+    const userVoucher = await prisma.userVoucher.findUnique({
+      where: { id: userVoucherId },
+      include: { voucher: true }
+    });
+
+    if (!userVoucher || userVoucher.userId !== userId) {
+      throw new OrderServiceError(404, 'Voucher không tồn tại trong ví của bạn');
+    }
+
+    if (userVoucher.isUsed) {
+      throw new OrderServiceError(400, 'Voucher này đã được sử dụng');
+    }
+
+    const voucher = userVoucher.voucher;
+
+    if (!voucher.isActive || voucher.status !== 'active') {
+      throw new OrderServiceError(400, 'Voucher hiện tại đang không hoạt động');
+    }
+
+    if (new Date(voucher.expiryDate) < new Date()) {
+      throw new OrderServiceError(400, 'Voucher đã hết hạn sử dụng');
+    }
+
+    // Check restaurant compatibility
+    if (voucher.restaurantId && voucher.restaurantId !== restaurantId) {
+      throw new OrderServiceError(400, 'Voucher này không áp dụng cho nhà hàng hiện tại');
+    }
+
+    // Calculate discount
+    let discount = 0;
+    if (voucher.discountType === 'percentage') {
+      discount = subTotal * (Number(voucher.discountValue) / 100);
+    } else {
+      discount = Number(voucher.discountValue);
+    }
+
+    // Cap discount at subTotal
+    discount = Math.min(discount, subTotal);
+
+    const taxAmount = Math.max(0, subTotal - discount) * 0.1;
+    const totalAmount = Math.max(0, subTotal - discount) + taxAmount;
+
+    const metadataObj = (order.metadata as any) || {};
+    metadataObj.appliedVoucher = {
+      userVoucherId: userVoucher.id,
+      voucherId: voucher.id,
+      code: voucher.code,
+      discountType: voucher.discountType,
+      discountValue: Number(voucher.discountValue),
+      discountAmount: discount
+    };
+
+    const updated = await prisma.order.update({
+      where: { id: orderId },
+      data: {
+        discountAmount: new Prisma.Decimal(discount),
+        taxAmount: new Prisma.Decimal(taxAmount),
+        totalAmount: new Prisma.Decimal(totalAmount),
+        metadata: metadataObj
+      }
+    });
+
+    // Notify clients
+    try {
+      const io = getIO();
+      io.to(`restaurant_${restaurantId}`).emit('ORDER_STATUS_CHANGED', {
+        orderId,
+        status: 'PENDING',
+        isPaid: false,
+      });
+    } catch (e) {
+      console.warn('[OrderService] Failed to broadcast ORDER_STATUS_CHANGED on voucher application:', e);
+    }
 
     return updated;
   }
