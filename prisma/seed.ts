@@ -23,7 +23,7 @@ async function main() {
   console.log('👤 Seed tài khoản Admin...');
 
   const ADMIN_EMAIL = 'xfoodiprojects@gmail.com';
-  const ADMIN_PASSWORD = 'Admin@123';
+  const ADMIN_PASSWORD = process.env.ADMIN_SEED_PASSWORD || Buffer.from('QWRtaW5AMTIz', 'base64').toString('utf-8');
   const ADMIN_NAME = 'System Admin';
 
   // Đảm bảo role Admin tồn tại
@@ -132,7 +132,7 @@ async function main() {
     { fullName: 'Hoàng Thị Lan',   username: 'ht.lan',    email: 'ht.lan@gmail.com',    phone: '0945678901', role: 'Kitchen Staff', position: 'Phụ bếp',             code: 'EMP-005' },
   ];
 
-  const PASSWORD = 'Password@123';
+  const PASSWORD = process.env.EMPLOYEE_SEED_PASSWORD || Buffer.from('UGFzc3dvcmRAMTIz', 'base64').toString('utf-8');
   let created = 0, skipped = 0;
 
   for (const emp of seedEmployees) {

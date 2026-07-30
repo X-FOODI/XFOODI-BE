@@ -35,6 +35,8 @@ import { UploadQueueService } from './services/uploadQueue.service';
 import { startReservationCronJobs } from './cron/reservationCron';
 import adminRoutes from './models/routes/admin';
 import announcementRoutes from './models/routes/announcements';
+import settingsRoutes from './models/routes/settings';
+import { maintenanceMiddleware } from './middlewares/maintenance';
 
 // Trigger restart after Prisma generate
 const app = express();
@@ -70,6 +72,9 @@ app.use(cors(corsOptions));
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
+
+// Global Maintenance Middleware
+app.use(maintenanceMiddleware);
 
 // Multi-tenant database routing middleware using AsyncLocalStorage
 app.use(async (req: any, res: any, next) => {
@@ -281,6 +286,7 @@ app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/vouchers', voucherRoutes);
 app.use('/api/ingredients', ingredientsRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/settings', settingsRoutes);
 app.use('/api/announcements', announcementRoutes);
 
 // Health check endpoint
