@@ -1016,6 +1016,16 @@ export class ReservationService {
       throw err;
     }
 
+    // Guard: reservation must have at least one table assigned before check-in.
+    // If tables = [] (e.g. auto-assignment failed or tables were removed), check-in would
+    // succeed silently but no sessions/status updates would happen → system inconsistency.
+    if (reservation.tables.length === 0) {
+      throw Object.assign(
+        new Error('Đặt bàn này chưa được phân bàn. Vui lòng phân bàn trước khi check-in.'),
+        { statusCode: 400 }
+      );
+    }
+
     // Validate that all assigned tables are free from active sessions before checkin
     for (const rt of reservation.tables) {
       const existingSession = await prisma.tableSession.findFirst({
@@ -1384,7 +1394,72 @@ export class ReservationService {
       }
     });
 
-    // 9. Send modification email non-blocking
+    // 9. Sync pending DEPOSIT payment if deposit amount changed
+    // When staff reassigns tables, the deposit changes → the existing pending payment record must
+    // reflect the new amount so the customer's QR screen shows the correct transfer total.
+    if (newDepositAmount !== undefined) {
+      const { PaymentStatus: PS, PaymentPurpose: PP } = await import('../enums/payment.enum');
+      const pendingDeposit = await prisma.payment.findFirst({
+        where: {
+          reservationId: id,
+          status: PS.PENDING,
+          purpose: PP.DEPOSIT,
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+
+      if (pendingDeposit) {
+        if (newDepositAmount === 0) {
+          // No deposit required anymore → cancel the pending payment
+          await prisma.payment.update({
+            where: { id: pendingDeposit.id },
+            data: { status: PS.CANCELLED },
+          });
+          // Also clear paymentDeadline
+          await prisma.reservation.update({
+            where: { id },
+            data: { paymentDeadline: null },
+          });
+        } else {
+          // Update amount and wipe stale QR metadata so frontend regenerates it
+          await prisma.payment.update({
+            where: { id: pendingDeposit.id },
+            data: {
+              amount: newDepositAmount,
+              metadata: {
+                // Keep bankInfo if present, but clear QR so it gets regenerated on next /transfer-info call
+                ...(typeof (pendingDeposit.metadata as any)?.bankInfo !== 'undefined'
+                  ? { bankInfo: (pendingDeposit.metadata as any).bankInfo }
+                  : {}),
+                transferContent: (pendingDeposit.metadata as any)?.transferContent,
+                amountUpdatedAt: new Date().toISOString(),
+                staleQR: true,
+              },
+            },
+          });
+        }
+        console.log(`[UpdateReservation] Synced pending deposit payment ${pendingDeposit.id}: ${Number(pendingDeposit.amount)} → ${newDepositAmount}`);
+      }
+    }
+
+    // 10. Emit socket event so restaurant dashboard + customer page refresh in real-time
+    try {
+      const { getIO } = require('../socket');
+      const io = getIO();
+      const socketPayload = {
+        reservationId: id,
+        tables: updated.tables.map(t => ({ id: t.tableId, code: t.table.code, seatingCapacity: t.table.seatingCapacity })),
+        depositAmount: Number(updated.depositAmount),
+        numberOfGuests: updated.numberOfGuests,
+        updatedAt: new Date().toISOString(),
+      };
+      io.to(`restaurant_${reservation.restaurantId}`).emit('RESERVATION_UPDATED', socketPayload);
+      io.to(`reservation_${id}`).emit('RESERVATION_UPDATED', socketPayload);
+    } catch (socketErr: any) {
+      console.warn('[UpdateReservation] Socket broadcast failed:', socketErr?.message);
+    }
+
+    // 11. Send modification email non-blocking
     const email = updated.customer?.user?.email;
     if (email) {
       const restaurant = await prisma.restaurant.findUnique({ where: { id: reservation.restaurantId }, select: { name: true } }).catch(() => null);
@@ -2438,12 +2513,14 @@ export class ReservationService {
     const bufferAfter = new Date(targetTime.getTime() + diningDurationMs);
 
     // Find tables already reserved in that window with their reservation times
+    // NOTE: Must exclude NO_SHOW same as checkAvailability — a NO_SHOW means the guest
+    // never showed up so the table is physically free despite the reservation record.
     const reservationTables = await prisma.reservationTable.findMany({
       where: {
         reservation: {
           restaurantId,
           time: { gte: bufferBefore, lte: bufferAfter },
-          statusValue: { code: { notIn: ['CANCELLED'] } },
+          statusValue: { code: { notIn: ['CANCELLED', 'NO_SHOW'] } },
         },
       },
       select: {
