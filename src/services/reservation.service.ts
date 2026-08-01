@@ -655,8 +655,8 @@ export class ReservationService {
       }
 
       const taxableAmount = Math.max(0, subTotal - discountAmount);
-      const taxAmount = taxableAmount * 0.1;
-      const totalAmount = taxableAmount + taxAmount;
+      const taxAmount = 0;
+      const totalAmount = taxableAmount;
 
       const orderMetadata: Record<string, any> = {};
       if (appliedVoucherMeta) {
