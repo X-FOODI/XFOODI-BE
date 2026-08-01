@@ -1,10 +1,10 @@
-import { prisma } from '../../../lib/prisma';
+import { prisma, centralPrisma } from '../../../lib/prisma';
 import { postInclude } from '../dto/post.dto';
 import type { CursorPayload } from '../utils/pagination.util';
 
 export const postRepository = {
   create(authorId: string, content: string, imageUrls: string[]) {
-    return prisma.$transaction(async (tx) => {
+    return centralPrisma.$transaction(async (tx) => {
       const post = await tx.socialPost.create({
         data: {
           authorId,
@@ -56,7 +56,7 @@ export const postRepository = {
   },
 
   update(id: string, content: string, imageUrls?: string[]) {
-    return prisma.$transaction(async (tx) => {
+    return centralPrisma.$transaction(async (tx) => {
       if (imageUrls !== undefined) {
         await tx.socialImage.deleteMany({ where: { postId: id } });
         if (imageUrls.length > 0) {
