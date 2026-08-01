@@ -730,6 +730,27 @@ export class PaymentService {
           data: { paymentDeadline: null },
         });
 
+        // Notify customer waiting on QR screen + restaurant staff
+        try {
+          const io = getIO();
+          // To customer page (joined reservation_${id} room)
+          io.to(`reservation_${reservation.id}`).emit('DEPOSIT_PAID', {
+            reservationId: reservation.id,
+            paymentId: payment.id,
+            status: PaymentStatus.COMPLETED,
+          });
+          // To restaurant staff dashboard
+          if (params.restaurantId) {
+            io.to(`restaurant_${params.restaurantId}`).emit('DEPOSIT_PAID', {
+              reservationId: reservation.id,
+              paymentId: payment.id,
+              status: PaymentStatus.COMPLETED,
+            });
+          }
+        } catch (e) {
+          console.warn('[PaymentService] Failed to broadcast DEPOSIT_PAID:', e);
+        }
+
         return {
           matched: true,
           type: 'reservation',
