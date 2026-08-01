@@ -608,6 +608,9 @@ export class OrderService {
       throw new OrderServiceError(400, 'Trạng thái đơn hàng không hợp lệ');
     }
 
+    // Idempotency: đơn đã COMPLETED trước đó → tránh cộng điểm / trừ kho lần 2
+    const alreadyCompleted = order.orderStatusId === statusMap['COMPLETED'];
+
     const updated = await prisma.order.update({
       where: { id: orderId },
       data: { orderStatusId: statusId },
@@ -724,8 +727,8 @@ export class OrderService {
       estimatedReadyAt,
     });
 
-    // ── Loyalty Points: Award on COMPLETED status change ──
-    if (status.toUpperCase() === 'COMPLETED') {
+    // ── Loyalty Points + trừ kho: CHỈ khi lần đầu chuyển sang COMPLETED ──
+    if (status.toUpperCase() === 'COMPLETED' && !alreadyCompleted) {
       loyaltyService.calculateAndRewardPoints(orderId).catch((e) => {
         console.warn('[OrderService] Loyalty points reward failed for order', orderId, ':', e.message);
       });
