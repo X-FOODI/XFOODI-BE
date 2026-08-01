@@ -39,6 +39,7 @@ import adminRoutes from './models/routes/admin';
 import announcementRoutes from './models/routes/announcements';
 import settingsRoutes from './models/routes/settings';
 import { maintenanceMiddleware } from './middlewares/maintenance';
+import { moduleMaintenanceMiddleware } from './middlewares/moduleMaintenance';
 
 // Trigger restart after Prisma generate
 const app = express();
@@ -77,6 +78,8 @@ app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
 
 // Global Maintenance Middleware
 app.use(maintenanceMiddleware);
+// Per-module Maintenance Middleware (chặn customer-facing của module đang bảo trì)
+app.use(moduleMaintenanceMiddleware);
 
 // Multi-tenant database routing middleware using AsyncLocalStorage
 app.use(async (req: any, res: any, next) => {
