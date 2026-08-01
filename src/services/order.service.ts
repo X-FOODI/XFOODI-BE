@@ -310,8 +310,8 @@ export class OrderService {
       });
 
       const subTotal = allDetails.reduce((sum, item) => sum + item.quantity * Number(item.unitPrice), 0);
-      const taxAmount = subTotal * 0.1; // Standard 10% tax
-      const totalAmount = subTotal + taxAmount;
+      const taxAmount = 0; // Dish prices are inclusive of all taxes
+      const totalAmount = subTotal;
 
       order = await tx.order.update({
         where: { id: order.id },
@@ -838,8 +838,8 @@ export class OrderService {
 
     if (!userVoucherId) {
       // Remove applied voucher
-      const taxAmount = subTotal * 0.1;
-      const totalAmount = subTotal + taxAmount;
+      const taxAmount = 0;
+      const totalAmount = subTotal;
 
       const metadataObj = (order.metadata as any) || {};
       delete metadataObj.appliedVoucher;
@@ -909,8 +909,8 @@ export class OrderService {
     // Cap discount at subTotal
     discount = Math.min(discount, subTotal);
 
-    const taxAmount = Math.max(0, subTotal - discount) * 0.1;
-    const totalAmount = Math.max(0, subTotal - discount) + taxAmount;
+    const taxAmount = 0;
+    const totalAmount = Math.max(0, subTotal - discount);
 
     const metadataObj = (order.metadata as any) || {};
     metadataObj.appliedVoucher = {
