@@ -1,8 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { centralPrisma } from '../lib/prisma';
 import redisClient from '../lib/redis';
-import jwt from 'jsonwebtoken';
-import { ENV } from '../config/env';
+import { isPlatformAdmin } from './maintenanceHelpers';
 
 export const maintenanceMiddleware = async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -47,20 +46,9 @@ export const maintenanceMiddleware = async (req: Request, res: Response, next: N
     // 4. Maintenance mode is ON
     const path = req.path;
 
-    // Check if the user is an admin by decoding the JWT
-    const authHeader = req.headers.authorization;
-    if (authHeader && authHeader.startsWith('Bearer ')) {
-      const token = authHeader.split(' ')[1];
-      try {
-        const decoded = jwt.verify(token, ENV.JWT.ACCESS_SECRET) as any;
-        const roles = decoded.roles || (decoded.role ? [decoded.role] : []);
-        const isAdmin = roles.some((r: string) => ['Admin', 'SuperAdmin', 'System Admin'].includes(r));
-        if (isAdmin) {
-          return next();
-        }
-      } catch (e) {
-        // Ignore token errors, let it fall through
-      }
+    // Platform-admin bypass (dùng helper chung với module maintenance)
+    if (isPlatformAdmin(req)) {
+      return next();
     }
 
     // Always allow Admin Settings API so admin can turn it off
@@ -84,6 +72,7 @@ export const maintenanceMiddleware = async (req: Request, res: Response, next: N
     return res.status(503).json({
       success: false,
       isMaintenance: true,
+      scope: 'global',
       message: maintenanceMessage,
       estimatedFinish: estimatedFinish
     });
