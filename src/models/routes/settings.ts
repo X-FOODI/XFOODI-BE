@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { centralPrisma } from '../../lib/prisma';
 import redisClient from '../../lib/redis';
-import { authMiddleware, requireAdmin } from '../../middlewares/auth';
+import { authMiddleware, requireAdmin } from './auth';
 
 const router = Router();
 
