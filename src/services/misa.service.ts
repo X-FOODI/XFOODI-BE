@@ -1,6 +1,5 @@
 import axios from 'axios';
 import crypto from 'crypto';
-import { HttpsProxyAgent } from 'https-proxy-agent';
 
 interface MisaToken {
   access_token: string;
@@ -64,6 +63,8 @@ class MisaService {
     const proxyUrl = process.env.QUOTAGUARDSTATIC_URL?.trim() || process.env.FIXIE_URL?.trim();
     if (proxyUrl) {
       try {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const { HttpsProxyAgent } = require('https-proxy-agent');
         return new HttpsProxyAgent(proxyUrl);
       } catch (e: any) {
         console.warn('[MISA] Proxy agent creation failed:', e?.message);
