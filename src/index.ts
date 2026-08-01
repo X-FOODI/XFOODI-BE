@@ -33,6 +33,7 @@ import { API_ROUTES } from './constants/routes';
 import { ENV } from './config/env';
 import { UploadQueueService } from './services/uploadQueue.service';
 import { startReservationCronJobs } from './cron/reservationCron';
+import { startStockReleaseCron } from './cron/stockReleaseCron';
 import { initOrderQueue } from './services/order.queue';
 import adminRoutes from './models/routes/admin';
 import announcementRoutes from './models/routes/announcements';
@@ -335,6 +336,8 @@ httpServer.listen(PORT, async () => {
   initOrderQueue();
   // Start reservation cron jobs (reminder + payment deadline enforcement)
   startReservationCronJobs();
+  // Auto-release reserved stock for abandoned orders (TTL)
+  startStockReleaseCron();
   console.log(`- Auth API:  http://localhost:${PORT}${API_ROUTES.AUTH.BASE}`);
   console.log(`- User API:  http://localhost:${PORT}${API_ROUTES.USERS.BASE}`);
   console.log(`- Tenant API: http://localhost:${PORT}${API_ROUTES.TENANTS.BASE}`);
