@@ -1,8 +1,8 @@
 import { prisma } from '../lib/prisma';
 import { Prisma } from '@prisma/client';
 import { getIO } from '../socket';
-import { loyaltyService } from './loyalty.service';
 import { reserveStockForItems, checkAndAlertLowStock, releaseStockForOrder } from './inventory.service';
+import { enqueueOrderCompletion } from './order.queue';
 
 export class OrderServiceError extends Error {
   constructor(
@@ -738,11 +738,11 @@ export class OrderService {
       estimatedReadyAt,
     });
 
-    // ── Loyalty Points: CHỈ khi lần đầu chuyển sang COMPLETED ──
-    // (Tồn kho đã được đặt-giữ atomic lúc tạo đơn, không trừ lại ở đây.)
+    // ── Hậu-xử-lý qua BullMQ: CHỈ khi lần đầu chuyển sang COMPLETED ──
+    // (Tồn kho đã đặt-giữ atomic lúc tạo đơn. Loyalty đẩy vào queue: async + retry + idempotent.)
     if (status.toUpperCase() === 'COMPLETED' && !alreadyCompleted) {
-      loyaltyService.calculateAndRewardPoints(orderId).catch((e) => {
-        console.warn('[OrderService] Loyalty points reward failed for order', orderId, ':', e.message);
+      enqueueOrderCompletion(orderId, restaurantId).catch((e) => {
+        console.warn('[OrderService] enqueue order completion lỗi', orderId, ':', e.message);
       });
     }
 

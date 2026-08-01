@@ -33,6 +33,7 @@ import { API_ROUTES } from './constants/routes';
 import { ENV } from './config/env';
 import { UploadQueueService } from './services/uploadQueue.service';
 import { startReservationCronJobs } from './cron/reservationCron';
+import { initOrderQueue } from './services/order.queue';
 import adminRoutes from './models/routes/admin';
 import announcementRoutes from './models/routes/announcements';
 import settingsRoutes from './models/routes/settings';
@@ -330,6 +331,8 @@ httpServer.listen(PORT, async () => {
   await ensureSystemRestaurant();
   // Initialize Background Upload Queue
   UploadQueueService.initialize();
+  // Initialize BullMQ order-completion queue (async loyalty + retry)
+  initOrderQueue();
   // Start reservation cron jobs (reminder + payment deadline enforcement)
   startReservationCronJobs();
   console.log(`- Auth API:  http://localhost:${PORT}${API_ROUTES.AUTH.BASE}`);
