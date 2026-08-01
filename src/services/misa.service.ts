@@ -59,15 +59,22 @@ class MisaService {
     return process.env.MISA_TAX_CODE || '2222222222-444';
   }
 
-  private get httpsAgent() {
+  private get proxyConfig() {
     const proxyUrl = process.env.QUOTAGUARDSTATIC_URL?.trim() || process.env.FIXIE_URL?.trim();
     if (proxyUrl) {
       try {
-        // eslint-disable-next-line @typescript-eslint/no-var-requires
-        const { HttpsProxyAgent } = require('https-proxy-agent');
-        return new HttpsProxyAgent(proxyUrl);
+        const parsed = new URL(proxyUrl);
+        return {
+          protocol: parsed.protocol.replace(':', ''),
+          host: parsed.hostname,
+          port: parseInt(parsed.port || '80', 10),
+          auth: parsed.username ? {
+            username: decodeURIComponent(parsed.username),
+            password: decodeURIComponent(parsed.password),
+          } : undefined,
+        };
       } catch (e: any) {
-        console.warn('[MISA] Proxy agent creation failed:', e?.message);
+        console.warn('[MISA] Proxy config parse error:', e?.message);
       }
     }
     return undefined;
@@ -87,7 +94,7 @@ class MisaService {
           'Content-Type': 'application/x-www-form-urlencoded',
         },
         timeout: 10000,
-        httpsAgent: this.httpsAgent,
+        proxy: this.proxyConfig,
       }
     );
 
@@ -124,7 +131,7 @@ class MisaService {
           'Content-Type': 'application/json',
         },
         timeout: 10000,
-        httpsAgent: this.httpsAgent,
+        proxy: this.proxyConfig,
       }
     );
 
@@ -236,7 +243,7 @@ class MisaService {
           'Content-Type': 'application/json',
         },
         timeout: 10000,
-        httpsAgent: this.httpsAgent,
+        proxy: this.proxyConfig,
       }
     );
 
