@@ -2,7 +2,7 @@ import { prisma } from '../lib/prisma';
 import { Prisma } from '@prisma/client';
 import { getIO } from '../socket';
 import { loyaltyService } from './loyalty.service';
-import { deductStockForOrder } from './inventory.service';
+import { reserveStockForItems, checkAndAlertLowStock, releaseStockForOrder } from './inventory.service';
 
 export class OrderServiceError extends Error {
   constructor(
@@ -206,7 +206,11 @@ export class OrderService {
       where: { tableId: data.tableId, isActive: true },
     });
 
-    return await prisma.$transaction(async (tx) => {
+    let reservedIngredientIds: string[] = [];
+    const broadcastPayload = await prisma.$transaction(async (tx) => {
+      // ── Đặt-giữ nguyên liệu NGAY (atomic) — chống oversell "món cuối" ──
+      reservedIngredientIds = await reserveStockForItems(tx, data.items);
+
       if (!activeSession) {
         // Create active session
         activeSession = await tx.tableSession.create({
@@ -363,6 +367,13 @@ export class OrderService {
 
       return broadcastPayload;
     });
+
+    // Sau khi commit: cảnh báo tồn thấp / tự tắt món hết nguyên liệu (best-effort)
+    checkAndAlertLowStock(restaurantId, reservedIngredientIds).catch((e) => {
+      console.warn('[OrderService] checkAndAlertLowStock lỗi:', e.message);
+    });
+
+    return broadcastPayload;
   }
 
   /**
@@ -727,15 +738,18 @@ export class OrderService {
       estimatedReadyAt,
     });
 
-    // ── Loyalty Points + trừ kho: CHỈ khi lần đầu chuyển sang COMPLETED ──
+    // ── Loyalty Points: CHỈ khi lần đầu chuyển sang COMPLETED ──
+    // (Tồn kho đã được đặt-giữ atomic lúc tạo đơn, không trừ lại ở đây.)
     if (status.toUpperCase() === 'COMPLETED' && !alreadyCompleted) {
       loyaltyService.calculateAndRewardPoints(orderId).catch((e) => {
         console.warn('[OrderService] Loyalty points reward failed for order', orderId, ':', e.message);
       });
+    }
 
-      // ── Tự trừ tồn kho theo công thức + cảnh báo hết hàng ──
-      deductStockForOrder(restaurantId, orderId).catch((e) => {
-        console.warn('[OrderService] Trừ kho thất bại cho đơn', orderId, ':', e.message);
+    // ── Hủy đơn → hoàn (release) nguyên liệu đã giữ ──
+    if (status.toUpperCase() === 'CANCELLED') {
+      releaseStockForOrder(orderId).catch((e) => {
+        console.warn('[OrderService] Release kho thất bại cho đơn', orderId, ':', e.message);
       });
     }
 

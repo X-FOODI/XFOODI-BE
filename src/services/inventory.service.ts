@@ -9,87 +9,87 @@ export interface LowStockItem {
   minStockLevel: number;
 }
 
-/**
- * Trừ tồn kho theo công thức khi đơn hoàn thành.
- * - Với mỗi món × số lượng → trừ nguyên liệu theo DishRecipe.
- * - Ghi StockTransaction (CONSUMPTION).
- * - Nguyên liệu ≤ minStockLevel → cảnh báo; = 0 → tự tắt các món cần nó.
- * - Phát socket LOW_STOCK_ALERT tới phòng nhà hàng.
- * Best-effort: không throw ra ngoài.
- */
-export async function deductStockForOrder(restaurantId: string, orderId: string): Promise<void> {
-  const details = await prisma.orderDetail.findMany({
-    where: { orderId, dishId: { not: null } },
-    select: { dishId: true, quantity: true },
-  });
-  if (details.length === 0) return;
+function stockError(message: string): Error {
+  const e: any = new Error(message);
+  e.statusCode = 409;
+  return e;
+}
 
-  const dishIds = [...new Set(details.map((d) => d.dishId!))];
-  const recipes = await prisma.dishRecipe.findMany({
+/**
+ * ĐẶT-GIỮ (reserve) nguyên liệu NGAY khi tạo đơn — chống oversell.
+ * Chạy TRONG transaction (tx) của createOrder. Với mỗi nguyên liệu cần dùng:
+ *   UPDATE ... SET qty = qty - need WHERE qty >= need   (atomic, có điều kiện)
+ * Nếu count = 0 → không đủ → throw → rollback cả đơn.
+ * Người chạy câu UPDATE thành công ĐẦU TIÊN là người thắng "món cuối".
+ * Trả về danh sách ingredientId đã trừ (để cảnh báo tồn thấp sau khi commit).
+ */
+export async function reserveStockForItems(
+  tx: any,
+  items: Array<{ dishId: string; quantity: number }>,
+): Promise<string[]> {
+  const dishIds = [...new Set(items.map((i) => i.dishId))];
+  const recipes = await tx.dishRecipe.findMany({
     where: { dishId: { in: dishIds } },
     select: { dishId: true, ingredientId: true, quantity: true },
   });
-  if (recipes.length === 0) return;
+  if (recipes.length === 0) return [];
 
-  // Tổng nguyên liệu cần trừ
   const needed = new Map<string, number>();
-  for (const d of details) {
+  for (const it of items) {
     for (const r of recipes) {
-      if (r.dishId !== d.dishId) continue;
-      needed.set(r.ingredientId, (needed.get(r.ingredientId) || 0) + Number(r.quantity) * d.quantity);
+      if (r.dishId !== it.dishId) continue;
+      needed.set(r.ingredientId, (needed.get(r.ingredientId) || 0) + Number(r.quantity) * it.quantity);
     }
   }
-  if (needed.size === 0) return;
 
+  const affected: string[] = [];
+  for (const [ingredientId, need] of needed) {
+    // Chỉ reserve nếu nhà hàng có theo dõi tồn kho cho nguyên liệu này
+    const stock = await tx.inventoryStock.findUnique({ where: { ingredientId }, select: { id: true } });
+    if (!stock) continue;
+
+    // Atomic có điều kiện: chỉ trừ khi còn đủ. count=0 nghĩa là hết hàng.
+    const res = await tx.inventoryStock.updateMany({
+      where: { ingredientId, currentQuantity: { gte: need } },
+      data: { currentQuantity: { decrement: need }, lastUpdated: new Date() },
+    });
+    if (res.count === 0) {
+      const ing = await tx.ingredient.findUnique({ where: { id: ingredientId }, select: { name: true } });
+      throw stockError(`Nguyên liệu "${ing?.name || 'không rõ'}" đã hết — không thể đặt món này.`);
+    }
+
+    await tx.stockTransaction.create({
+      data: { ingredientId, transactionType: 'RESERVE', quantity: need, unitPrice: 0, totalAmount: 0, reference: 'ORDER_RESERVE' },
+    });
+    affected.push(ingredientId);
+  }
+  return affected;
+}
+
+/** Sau khi commit đơn: kiểm tra tồn thấp, tự tắt món hết nguyên liệu, phát cảnh báo. */
+export async function checkAndAlertLowStock(restaurantId: string, ingredientIds: string[]): Promise<void> {
+  if (ingredientIds.length === 0) return;
   const lowStock: LowStockItem[] = [];
-  const outOfStockIngredientIds: string[] = [];
+  const outOfStockIds: string[] = [];
 
-  for (const [ingredientId, qty] of needed) {
-    const ingredient = await prisma.ingredient.findUnique({
+  for (const ingredientId of ingredientIds) {
+    const ing = await prisma.ingredient.findUnique({
       where: { id: ingredientId },
       include: { inventoryStock: true },
     });
-    if (!ingredient || !ingredient.inventoryStock) continue;
-
-    const before = Number(ingredient.inventoryStock.currentQuantity);
-    const after = Math.max(0, before - qty);
-
-    await prisma.inventoryStock.update({
-      where: { ingredientId },
-      data: { currentQuantity: after, lastUpdated: new Date() },
-    });
-
-    await prisma.stockTransaction.create({
-      data: {
-        ingredientId,
-        transactionType: 'CONSUMPTION',
-        quantity: qty,
-        unitPrice: 0,
-        totalAmount: 0,
-        reference: `ORDER:${orderId}`,
-      },
-    });
-
-    const min = Number(ingredient.minStockLevel);
-    if (after <= 0) outOfStockIngredientIds.push(ingredientId);
-    if (after <= min) {
-      lowStock.push({ id: ingredientId, name: ingredient.name, unit: ingredient.unit, currentQuantity: after, minStockLevel: min });
-    }
+    if (!ing || !ing.inventoryStock) continue;
+    const cur = Number(ing.inventoryStock.currentQuantity);
+    const min = Number(ing.minStockLevel);
+    if (cur <= 0) outOfStockIds.push(ingredientId);
+    if (cur <= min) lowStock.push({ id: ing.id, name: ing.name, unit: ing.unit, currentQuantity: cur, minStockLevel: min });
   }
 
-  // Tự tắt các món cần nguyên liệu đã hết
   let disabledDishIds: string[] = [];
-  if (outOfStockIngredientIds.length > 0) {
-    const affected = await prisma.dishRecipe.findMany({
-      where: { ingredientId: { in: outOfStockIngredientIds } },
-      select: { dishId: true },
-    });
+  if (outOfStockIds.length > 0) {
+    const affected = await prisma.dishRecipe.findMany({ where: { ingredientId: { in: outOfStockIds } }, select: { dishId: true } });
     disabledDishIds = [...new Set(affected.map((a) => a.dishId))];
     if (disabledDishIds.length > 0) {
-      await prisma.dish.updateMany({
-        where: { id: { in: disabledDishIds }, restaurantId, isActive: true },
-        data: { isActive: false },
-      });
+      await prisma.dish.updateMany({ where: { id: { in: disabledDishIds }, restaurantId, isActive: true }, data: { isActive: false } });
     }
   }
 
@@ -97,12 +97,42 @@ export async function deductStockForOrder(restaurantId: string, orderId: string)
     try {
       getIO().to(`restaurant_${restaurantId}`).emit('LOW_STOCK_ALERT', { lowStock, disabledDishIds });
     } catch {
-      /* socket chưa init — bỏ qua */
+      /* socket chưa init */
     }
   }
 }
 
-/** Danh sách nguyên liệu dưới ngưỡng tồn kho tối thiểu (cho dashboard cảnh báo). */
+/** Hoàn (release) nguyên liệu đã giữ khi đơn bị HỦY. */
+export async function releaseStockForOrder(orderId: string): Promise<void> {
+  const details = await prisma.orderDetail.findMany({
+    where: { orderId, dishId: { not: null } },
+    select: { dishId: true, quantity: true },
+  });
+  if (details.length === 0) return;
+
+  const dishIds = [...new Set(details.map((d) => d.dishId!))];
+  const recipes = await prisma.dishRecipe.findMany({ where: { dishId: { in: dishIds } }, select: { dishId: true, ingredientId: true, quantity: true } });
+  if (recipes.length === 0) return;
+
+  const back = new Map<string, number>();
+  for (const d of details) {
+    for (const r of recipes) {
+      if (r.dishId !== d.dishId) continue;
+      back.set(r.ingredientId, (back.get(r.ingredientId) || 0) + Number(r.quantity) * d.quantity);
+    }
+  }
+
+  for (const [ingredientId, qty] of back) {
+    const stock = await prisma.inventoryStock.findUnique({ where: { ingredientId }, select: { id: true } });
+    if (!stock) continue;
+    await prisma.inventoryStock.update({ where: { ingredientId }, data: { currentQuantity: { increment: qty }, lastUpdated: new Date() } });
+    await prisma.stockTransaction.create({
+      data: { ingredientId, transactionType: 'RELEASE', quantity: qty, unitPrice: 0, totalAmount: 0, reference: `ORDER_CANCEL:${orderId}` },
+    });
+  }
+}
+
+/** Danh sách nguyên liệu dưới ngưỡng tồn kho tối thiểu (cho dashboard). */
 export async function getLowStockIngredients(restaurantId: string): Promise<LowStockItem[]> {
   const ingredients = await prisma.ingredient.findMany({
     where: { restaurantId, isActive: true, inventoryStock: { isNot: null } },
