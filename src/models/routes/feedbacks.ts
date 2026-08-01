@@ -1,4 +1,5 @@
 import { Router, Response } from 'express';
+import { getFeedbackSentiment } from '../../services/sentiment.service';
 import { feedbackService } from '../../services/feedback.service';
 import { requireRole } from '../../middlewares/requireRole';
 import { authMiddleware } from './auth';
@@ -157,6 +158,19 @@ router.get('/', authMiddleware, requireRole('Owner', 'Admin', 'Staff'), async (r
     return res.json({ success: true, data: result });
   } catch (err: any) {
     return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// ── AI Sentiment analysis ────────────────────────────────────────────────────
+router.get('/sentiment', authMiddleware, requireRole('Owner', 'Admin', 'Staff'), async (req: any, res) => {
+  try {
+    const restaurantId = (req.query.restaurantId as string) || req.user?.restaurantId;
+    if (!restaurantId) return res.status(400).json({ success: false, message: 'Thiếu restaurantId' });
+    const data = await getFeedbackSentiment(restaurantId);
+    return res.json({ success: true, data });
+  } catch (err: any) {
+    console.error('[Feedbacks] sentiment error:', err?.message);
+    return res.status(500).json({ success: false, message: 'Lỗi khi phân tích cảm xúc đánh giá' });
   }
 });
 
