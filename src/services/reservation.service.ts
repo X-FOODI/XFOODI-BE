@@ -313,8 +313,8 @@ export class ReservationService {
       throw Object.assign(new Error(`Thời gian đặt ngoài giờ mở cửa của nhà hàng (${openStr} - ${closeStr})`), { statusCode: 400 });
     }
     if (isTooLate) {
-      let lastHour = Math.floor(lastOrderTime / 60);
-      let lastMin = lastOrderTime % 60;
+      const lastHour = Math.floor(lastOrderTime / 60);
+      const lastMin = lastOrderTime % 60;
       const lastHourStr = lastHour.toString().padStart(2, '0');
       const lastMinStr = lastMin.toString().padStart(2, '0');
       throw Object.assign(new Error(`Lượt đặt quá muộn. Thời gian đặt bàn muộn nhất là ${lastHourStr}:${lastMinStr}`), { statusCode: 400 });
@@ -914,6 +914,7 @@ export class ReservationService {
 
     // Broadcast status change to all listeners (restaurant staff + customer page)
     try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
       const { getIO } = require('../socket');
       const io = getIO();
       const payload = {
@@ -1287,6 +1288,7 @@ export class ReservationService {
 
     // Broadcast COMPLETED status to customer page (real-time)
     try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
       const { getIO } = require('../socket');
       const io = getIO();
       const payload = {
@@ -1479,6 +1481,7 @@ export class ReservationService {
 
     // 10. Emit socket event so restaurant dashboard + customer page refresh in real-time
     try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
       const { getIO } = require('../socket');
       const io = getIO();
       const socketPayload = {

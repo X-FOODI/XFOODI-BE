@@ -1,4 +1,4 @@
-import { prisma, centralPrisma } from '../../../lib/prisma';
+import { centralPrisma as prisma, centralPrisma } from '../../../lib/prisma';
 import { postInclude } from '../dto/post.dto';
 import type { CursorPayload } from '../utils/pagination.util';
 

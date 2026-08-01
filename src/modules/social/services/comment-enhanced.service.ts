@@ -20,7 +20,7 @@ export async function createCommentWithNotification(userId: string, body: Create
   }
 
   const meta = parseContentMeta(body.content);
-  const { prisma } = await import('../../../lib/prisma');
+  const { centralPrisma: prisma } = await import('../../../lib/prisma');
   for (const mention of meta.mentions) {
     const user = await prisma.user.findFirst({
       where: { userName: { equals: mention, mode: 'insensitive' } },

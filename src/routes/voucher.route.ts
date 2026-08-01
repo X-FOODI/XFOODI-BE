@@ -9,6 +9,7 @@ import {
   deleteVoucher,
   redeemVoucher,
   getMyVouchers,
+  getAllAdminVouchers,
 } from '../controllers/voucher.controller';
 
 const router: Router = Router();
@@ -19,6 +20,7 @@ router.post('/redeem', authMiddleware, redeemVoucher);
 router.get('/my', authMiddleware, getMyVouchers);
 
 // Admin/Owner actions
+router.get('/admin/all', authMiddleware, requireRole('Admin', 'SuperAdmin', 'System Admin'), getAllAdminVouchers);
 router.post('/', authMiddleware, requireRole('Owner', 'Admin', 'SuperAdmin', 'System Admin'), createVoucher);
 router.get('/restaurant/:restaurantId', authMiddleware, requireRole('Owner', 'Admin', 'SuperAdmin', 'System Admin'), getVouchersByRestaurant);
 router.put('/:id', authMiddleware, requireRole('Owner', 'Admin', 'SuperAdmin', 'System Admin'), updateVoucher);
