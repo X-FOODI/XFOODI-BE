@@ -18,6 +18,9 @@ function getPrisma(): PrismaClient {
 }
 
 // ── PayOS client (singleton) ──────────────────────────────────────────────────
+// NOTE: https-proxy-agent v9 is ESM-only and can't be require()'d in CJS.
+// Node.js native fetch also ignores the `agent` field in fetchOptions.
+// Solution: use `undici` (CJS-compatible) with ProxyAgent + undici.fetch as custom fetch.
 function getPayOS(): any | null {
   const clientId = process.env.PAYOS_CLIENT_ID?.trim();
   const apiKey = process.env.PAYOS_API_KEY?.trim();
@@ -28,11 +31,31 @@ function getPayOS(): any | null {
   try {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { PayOS } = require('@payos/node');
-    return new PayOS({ clientId, apiKey, checksumKey });
+    const proxyUrl = process.env.QUOTAGUARDSTATIC_URL?.trim() || process.env.FIXIE_URL?.trim();
+
+    let customFetch: any = undefined;
+    if (proxyUrl) {
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const { fetch: undiciF, ProxyAgent } = require('undici');
+        const dispatcher = new ProxyAgent(proxyUrl);
+        customFetch = (url: any, opts: any) => undiciF(url, { ...opts, dispatcher });
+      } catch (e: any) {
+        console.warn('[PayOS] undici ProxyAgent unavailable, falling back to no proxy:', e?.message);
+      }
+    }
+
+    return new PayOS({
+      clientId,
+      apiKey,
+      checksumKey,
+      ...(customFetch ? { fetch: customFetch } : {}),
+    });
   } catch {
     return null;
   }
 }
+
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 export interface WithdrawDto {
