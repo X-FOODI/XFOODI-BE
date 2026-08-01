@@ -1,4 +1,4 @@
-import { prisma } from '../../../lib/prisma';
+import { centralPrisma as prisma } from '../../../lib/prisma';
 import type { CreateNotificationPayload } from '../interfaces/community.types';
 import type { CursorPayload } from '../utils/pagination.util';
 

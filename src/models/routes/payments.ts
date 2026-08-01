@@ -85,7 +85,9 @@ router.post('/cash', authMiddleware, requireRole('Owner', 'Admin', 'Staff'), asy
 
     // Emit socket so checkout page (customer) can detect payment and show success screen
     try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
       const { getIO } = require('../../socket');
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
       const { prismaStorage } = require('../../lib/prisma');
       const io = getIO();
       if (io && orderId) {

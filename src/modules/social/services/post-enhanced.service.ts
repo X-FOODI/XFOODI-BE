@@ -63,7 +63,7 @@ export async function createPostEnhanced(authorId: string, body: CreatePostEnhan
 
   const meta = parseContentMeta(content);
   for (const mention of meta.mentions) {
-    const { prisma } = await import('../../../lib/prisma');
+    const { centralPrisma: prisma } = await import('../../../lib/prisma');
     const user = await prisma.user.findFirst({
       where: { userName: { equals: mention, mode: 'insensitive' } },
       select: { id: true },

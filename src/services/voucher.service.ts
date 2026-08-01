@@ -114,6 +114,25 @@ export class VoucherService {
   }
 
   /**
+   * Get all vouchers on the system for system administration.
+   */
+  async getAllAdminVouchers() {
+    const vouchers = await prisma.voucher.findMany({
+      orderBy: { createdAt: 'desc' },
+      include: {
+        _count: {
+          select: { userVouchers: true },
+        },
+      },
+    });
+
+    return vouchers.map(v => ({
+      ...v,
+      usedCount: v._count.userVouchers,
+    }));
+  }
+
+  /**
    * Legacy method: List vouchers for backwards compatibility.
    */
   async listVouchers(restaurantId: string, filters?: { isActive?: boolean }) {
@@ -132,7 +151,7 @@ export class VoucherService {
    * Legacy method: Update voucher settings.
    */
   async updateVoucher(
-    restaurantId: string | null,
+    restaurantId: string | null | undefined,
     id: string,
     data: {
       code?: string;
@@ -149,8 +168,12 @@ export class VoucherService {
       isActive?: boolean;
     }
   ) {
+    const whereClause: any = { id };
+    if (restaurantId !== undefined) {
+      whereClause.restaurantId = restaurantId;
+    }
     const voucher = await prisma.voucher.findFirst({
-      where: { id, restaurantId: restaurantId || null },
+      where: whereClause,
     });
 
     if (!voucher) {
@@ -158,12 +181,17 @@ export class VoucherService {
     }
 
     if (data.code && data.code.trim().toUpperCase() !== voucher.code) {
+      const codeCheckClause: any = {
+        code: data.code.trim().toUpperCase(),
+        id: { not: id }
+      };
+      if (restaurantId !== undefined) {
+        codeCheckClause.restaurantId = restaurantId;
+      } else {
+        codeCheckClause.restaurantId = voucher.restaurantId;
+      }
       const existing = await prisma.voucher.findFirst({
-        where: {
-          code: data.code.trim().toUpperCase(),
-          restaurantId: restaurantId || null,
-          id: { not: id },
-        },
+        where: codeCheckClause,
       });
       if (existing) {
         throw new Error('Mã voucher này đã tồn tại.');
@@ -192,9 +220,13 @@ export class VoucherService {
   /**
    * Legacy method: Delete voucher.
    */
-  async deleteVoucher(restaurantId: string | null, id: string) {
+  async deleteVoucher(restaurantId: string | null | undefined, id: string) {
+    const whereClause: any = { id };
+    if (restaurantId !== undefined) {
+      whereClause.restaurantId = restaurantId;
+    }
     const voucher = await prisma.voucher.findFirst({
-      where: { id, restaurantId: restaurantId || null },
+      where: whereClause,
     });
 
     if (!voucher) {

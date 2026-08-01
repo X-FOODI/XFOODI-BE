@@ -108,6 +108,7 @@ export class KnowledgeBaseService {
           text = parsed.text || '';
         } catch (pdfErr) {
           console.warn('[KBService] PDFParse constructor failed, using fallback pdf-parse:', pdfErr);
+          // eslint-disable-next-line @typescript-eslint/no-var-requires
           const pdfParse = require('pdf-parse');
           const data = await pdfParse(fileBuffer);
           text = data.text || '';
