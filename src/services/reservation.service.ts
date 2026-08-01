@@ -5,6 +5,9 @@ import { sendReservationReminderEmail } from '../lib/email';
 import { generateReservationQR } from './qr.service';
 
 // PayOS payout helper (supports QuotaGuard/Fixie static proxy on Render)
+// NOTE: https-proxy-agent v9 is ESM-only and can't be require()'d in CJS.
+// Node.js native fetch also ignores the `agent` field in fetchOptions.
+// Solution: use `undici` (CJS-compatible) with ProxyAgent + undici.fetch as custom fetch.
 function getPayOS(): any | null {
   const clientId = process.env.PAYOS_CLIENT_ID?.trim();
   const apiKey = process.env.PAYOS_API_KEY?.trim();
@@ -14,20 +17,24 @@ function getPayOS(): any | null {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { PayOS } = require('@payos/node');
     const proxyUrl = process.env.QUOTAGUARDSTATIC_URL?.trim() || process.env.FIXIE_URL?.trim();
-    
-    let fetchOptions: any = undefined;
+
+    let customFetch: any = undefined;
     if (proxyUrl) {
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const { HttpsProxyAgent } = require('https-proxy-agent');
-      const agent = new HttpsProxyAgent(proxyUrl);
-      fetchOptions = { agent };
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const { fetch: undiciF, ProxyAgent } = require('undici');
+        const dispatcher = new ProxyAgent(proxyUrl);
+        customFetch = (url: any, opts: any) => undiciF(url, { ...opts, dispatcher });
+      } catch (e: any) {
+        console.warn('[PayOS] undici ProxyAgent unavailable, falling back to no proxy:', e?.message);
+      }
     }
 
     return new PayOS({
       clientId,
       apiKey,
       checksumKey,
-      ...(fetchOptions ? { fetchOptions } : {})
+      ...(customFetch ? { fetch: customFetch } : {}),
     });
   } catch { return null; }
 }
