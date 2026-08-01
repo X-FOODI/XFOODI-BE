@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { getDailyInsight } from '../../services/insight.service';
 import type { Router as ExpressRouter } from 'express';
 import { prisma } from '../../lib/prisma';
 import { authMiddleware } from './auth';
@@ -67,6 +68,18 @@ async function getStatusIds() {
 }
 
 // ─── TENANT DASHBOARD ENDPOINTS ───────────────────────────────────────────────
+
+router.get('/restaurant/ai-insight', authMiddleware, async (req: any, res: any) => {
+  try {
+    const restaurantId = req.user?.restaurantId;
+    if (!restaurantId) return res.status(400).json({ success: false, message: 'Missing restaurantId in token' });
+    const data = await getDailyInsight(restaurantId);
+    return res.json({ success: true, data });
+  } catch (err: any) {
+    console.error('[Dashboard] ai-insight error:', err?.message);
+    return res.status(500).json({ success: false, message: 'Lỗi khi tạo báo cáo AI' });
+  }
+});
 
 router.get('/restaurant/summary', authMiddleware, async (req: any, res: any) => {
   try {

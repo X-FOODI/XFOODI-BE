@@ -3,6 +3,7 @@ import { authMiddleware } from './auth';
 import { tenantGuard } from '../../middlewares/tenantGuard';
 import { prismaStorage } from '../../lib/prisma';
 import type { PrismaClient } from '@prisma/client';
+import { getLowStockIngredients } from '../../services/inventory.service';
 
 const router: ExpressRouter = Router();
 
@@ -12,6 +13,19 @@ router.use(tenantGuard);
 function getDb() {
   return prismaStorage.getStore() as PrismaClient;
 }
+
+// ─── Cảnh báo tồn kho thấp ───────────────────────────────────────────────────
+router.get('/low-stock', async (req: any, res: any) => {
+  try {
+    const restaurantId = req.user.restaurantId;
+    if (!restaurantId) return res.status(400).json({ success: false, message: 'Thiếu restaurantId' });
+    const data = await getLowStockIngredients(restaurantId);
+    return res.json({ success: true, data });
+  } catch (err: any) {
+    console.error('[Ingredients] low-stock error:', err?.message);
+    return res.status(500).json({ success: false, message: 'Lỗi khi lấy cảnh báo tồn kho' });
+  }
+});
 
 // ─── Ingredients CRUD ────────────────────────────────────────────────────────
 router.get('/', async (req: any, res: any) => {

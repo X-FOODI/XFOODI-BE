@@ -108,7 +108,7 @@ export async function getFrequentlyBoughtTogether(
   const result: RecommendedDish[] = [];
   for (const g of grouped) {
     const dish = g.dishId ? dishMap.get(g.dishId) : undefined;
-    if (dish) result.push({ ...dish, coOccurrenceCount: g._count.orderId });
+    if (dish) result.push({ ...dish, coOccurrenceCount: g._count.orderId, flavors: computeFlavorsFromName(dish.name) });
   }
 
   await cacheSet(cacheKey, result);
@@ -141,22 +141,26 @@ function stripJsonFences(text: string): string {
  * Gợi ý món dựa trên giỏ hàng hiện tại, dùng Gemini.
  * Có fallback data-driven để không bao giờ trả về rỗng khi có lịch sử đơn.
  */
-function populateFallbackFlavors(dish: RecommendedDish): RecommendedDish {
-  const nameLower = dish.name.toLowerCase();
-  const isAlcohol = nameLower.includes('bia') || nameLower.includes('rượu') || nameLower.includes('wine') || nameLower.includes('beer');
-  const isDrink = isAlcohol || nameLower.includes('nước') || nameLower.includes('trà') || nameLower.includes('sinh tố') || nameLower.includes('juice') || nameLower.includes('sữa');
-  const isSpicy = nameLower.includes('cay') || nameLower.includes('lẩu thái') || nameLower.includes('ớt') || nameLower.includes('kim chi') || nameLower.includes('tứ xuyên');
-  const isSweet = nameLower.includes('chè') || nameLower.includes('kem') || nameLower.includes('sinh tố') || nameLower.includes('ngọt') || nameLower.includes('bánh') || nameLower.includes('juice');
+/** Suy luận hồ sơ hương vị từ tên món (dùng chung cho fallback + frequently-bought). */
+function computeFlavorsFromName(name: string): NonNullable<RecommendedDish['flavors']> {
+  const n = name.toLowerCase();
+  const isAlcohol = n.includes('bia') || n.includes('rượu') || n.includes('wine') || n.includes('beer');
+  const isDrink = isAlcohol || n.includes('nước') || n.includes('trà') || n.includes('sinh tố') || n.includes('juice') || n.includes('sữa');
+  const isSpicy = n.includes('cay') || n.includes('lẩu thái') || n.includes('ớt') || n.includes('kim chi') || n.includes('tứ xuyên');
+  const isSweet = n.includes('chè') || n.includes('kem') || n.includes('sinh tố') || n.includes('ngọt') || n.includes('bánh') || n.includes('juice');
+  return {
+    sweet: isSweet ? 4 : (isDrink ? 3 : 1),
+    spicy: isSpicy ? 4 : 1,
+    savory: isDrink ? 1 : 4,
+    alcohol: isAlcohol ? 5 : 1,
+  };
+}
 
+function populateFallbackFlavors(dish: RecommendedDish): RecommendedDish {
   return {
     ...dish,
     reason: `Món ngon chuẩn vị được nhiều khách hàng ưu chuộng đặt nhiều tại nhà hàng.`,
-    flavors: {
-      sweet: isSweet ? 4 : (isDrink ? 3 : 1),
-      spicy: isSpicy ? 4 : 1,
-      savory: isDrink ? 1 : 4,
-      alcohol: isAlcohol ? 5 : 1,
-    }
+    flavors: computeFlavorsFromName(dish.name),
   };
 }
 
@@ -199,13 +203,21 @@ export async function getAIRecommendations(
       .map((d) => `- id=${d.id} | ${d.name} | ${Number(d.price).toLocaleString('vi-VN')}đ | ${d.category?.name ?? 'Khác'}`)
       .join('\n');
 
+    const hour = new Date().getHours();
+    const timeContext =
+      hour < 10 ? 'buổi sáng (ưu tiên món nhẹ, cà phê, đồ điểm tâm)'
+      : hour < 14 ? 'buổi trưa (ưu tiên món chính no bụng)'
+      : hour < 17 ? 'buổi xế chiều (ưu tiên đồ uống, món ăn vặt)'
+      : 'buổi tối (ưu tiên món nhậu, lẩu, bia/rượu, món chia sẻ)';
+
     const prompt = `Bạn là trợ lý gợi ý món ăn cho một nhà hàng.
 Thực đơn hiện có:
 ${menuLines}
 
 Khách đang có trong giỏ: ${cartNames.length > 0 ? cartNames.join(', ') : '(giỏ trống)'}.
+Thời điểm hiện tại: ${timeContext}.
 
-Hãy gợi ý tối đa ${MAX_RESULTS} món phù hợp để ăn kèm hoặc gọi thêm (KHÔNG trùng món đã có trong giỏ).
+Hãy gợi ý tối đa ${MAX_RESULTS} món phù hợp để ăn kèm hoặc gọi thêm (KHÔNG trùng món đã có trong giỏ), có cân nhắc thời điểm trong ngày.
 Chỉ trả về JSON hợp lệ, KHÔNG kèm bất kỳ giải thích nào ngoài khối JSON, đúng định dạng:
 [{"dishId":"<id trong thực đơn>","reason":"giải thích sự hòa hợp hương vị lý thú tối đa 25 từ","flavors":{"sweet":1..5,"spicy":1..5,"savory":1..5,"alcohol":1..5}}]`;
 

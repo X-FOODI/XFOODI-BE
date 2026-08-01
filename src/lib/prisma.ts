@@ -114,6 +114,12 @@ export async function getSchemaName(restaurantId: string): Promise<string> {
   if (!restaurant) {
     throw new Error(`Restaurant with ID ${restaurantId} not found in central database.`);
   }
-  return `tenant_${restaurant.slug}`;
+  const schemaName = `tenant_${restaurant.slug}`;
+  // [BẢO MẬT] schemaName được nội suy trực tiếp vào raw SQL (rag.service...) nên
+  // phải khớp whitelist ký tự an toàn, chống SQL injection qua slug.
+  if (!/^tenant_[a-z0-9-]+$/.test(schemaName)) {
+    throw new Error(`Tên schema không hợp lệ: ${schemaName}`);
+  }
+  return schemaName;
 }
 

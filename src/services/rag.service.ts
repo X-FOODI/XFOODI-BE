@@ -99,7 +99,7 @@ export class RAGService {
     userPreferences?: string,
     sessionId?: string,
     cartItems?: any[]
-  ): AsyncGenerator<{ text?: string; done: boolean; securityTriggered?: boolean; error?: string }> {
+  ): AsyncGenerator<{ text?: string; done: boolean; securityTriggered?: boolean; error?: string; sources?: string[] }> {
     try {
       // 1. Manage session & Load history
       let chatSession: any = null;
@@ -440,7 +440,9 @@ Ví dụ:
         });
       }
 
-      yield { done: true };
+      // A1: Trích nguồn — trả về tên các tài liệu đã dùng để khách/chủ tin cậy
+      const sources = Array.from(new Set(topChunks.map((c: any) => c.filename).filter(Boolean)));
+      yield { done: true, sources };
     } catch (err: any) {
       console.error('[RAGService Stream] Error:', err);
       yield { error: err.message || 'Lỗi server khi streaming.', done: true };

@@ -1,7 +1,8 @@
 import { prisma } from '../lib/prisma';
 import { Prisma } from '@prisma/client';
 import { getIO } from '../socket';
-import { loyaltyService } from './loyalty.service';
+import { reserveStockForItems, checkAndAlertLowStock, releaseStockForOrder } from './inventory.service';
+import { enqueueOrderCompletion } from './order.queue';
 
 export class OrderServiceError extends Error {
   constructor(
@@ -205,7 +206,11 @@ export class OrderService {
       where: { tableId: data.tableId, isActive: true },
     });
 
-    return await prisma.$transaction(async (tx) => {
+    let reservedIngredientIds: string[] = [];
+    const broadcastPayload = await prisma.$transaction(async (tx) => {
+      // ── Đặt-giữ nguyên liệu NGAY (atomic) — chống oversell "món cuối" ──
+      reservedIngredientIds = await reserveStockForItems(tx, data.items);
+
       if (!activeSession) {
         // Create active session
         activeSession = await tx.tableSession.create({
@@ -362,6 +367,13 @@ export class OrderService {
 
       return broadcastPayload;
     });
+
+    // Sau khi commit: cảnh báo tồn thấp / tự tắt món hết nguyên liệu (best-effort)
+    checkAndAlertLowStock(restaurantId, reservedIngredientIds).catch((e) => {
+      console.warn('[OrderService] checkAndAlertLowStock lỗi:', e.message);
+    });
+
+    return broadcastPayload;
   }
 
   /**
@@ -607,6 +619,9 @@ export class OrderService {
       throw new OrderServiceError(400, 'Trạng thái đơn hàng không hợp lệ');
     }
 
+    // Idempotency: đơn đã COMPLETED trước đó → tránh cộng điểm / trừ kho lần 2
+    const alreadyCompleted = order.orderStatusId === statusMap['COMPLETED'];
+
     const updated = await prisma.order.update({
       where: { id: orderId },
       data: { orderStatusId: statusId },
@@ -723,10 +738,18 @@ export class OrderService {
       estimatedReadyAt,
     });
 
-    // ── Loyalty Points: Award on COMPLETED status change ──
-    if (status.toUpperCase() === 'COMPLETED') {
-      loyaltyService.calculateAndRewardPoints(orderId).catch((e) => {
-        console.warn('[OrderService] Loyalty points reward failed for order', orderId, ':', e.message);
+    // ── Hậu-xử-lý qua BullMQ: CHỈ khi lần đầu chuyển sang COMPLETED ──
+    // (Tồn kho đã đặt-giữ atomic lúc tạo đơn. Loyalty đẩy vào queue: async + retry + idempotent.)
+    if (status.toUpperCase() === 'COMPLETED' && !alreadyCompleted) {
+      enqueueOrderCompletion(orderId, restaurantId).catch((e) => {
+        console.warn('[OrderService] enqueue order completion lỗi', orderId, ':', e.message);
+      });
+    }
+
+    // ── Hủy đơn → hoàn (release) nguyên liệu đã giữ ──
+    if (status.toUpperCase() === 'CANCELLED') {
+      releaseStockForOrder(orderId).catch((e) => {
+        console.warn('[OrderService] Release kho thất bại cho đơn', orderId, ':', e.message);
       });
     }
 
