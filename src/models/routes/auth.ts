@@ -529,9 +529,9 @@ router.post(API_ROUTES.AUTH.LOGIN, async (req, res) => {
       }
     });
 
-  } catch (error) {
+  } catch (error: any) {
     console.error('Login Error:', error);
-    res.status(500).json({ success: false, message: 'Internal server error during login' });
+    res.status(500).json({ success: false, message: 'Internal server error during login', error: error.message || String(error) });
   }
 });
 

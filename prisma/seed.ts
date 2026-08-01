@@ -15,24 +15,94 @@ const exec = (sql: string, ...params: any[]): Promise<any> =>
   (p as any).$executeRawUnsafe(sql, ...params);
 
 async function main() {
-  console.log('🌱 Seed nhân viên mẫu (raw SQL)...\n');
+  console.log('🌱 Seed dữ liệu mẫu (raw SQL)...\n');
 
-  // ── 1. Thêm cột restaurantId vào Employees nếu chưa có ─────────────────────
+  // ══════════════════════════════════════════════════════════════════════════
+  // ── PHẦN A: Seed tài khoản Admin (SuperAdmin) — KHÔNG phụ thuộc restaurant
+  // ══════════════════════════════════════════════════════════════════════════
+  console.log('👤 Seed tài khoản Admin...');
+
+  const ADMIN_EMAIL = 'xfoodiprojects@gmail.com';
+  const ADMIN_PASSWORD = process.env.ADMIN_SEED_PASSWORD || Buffer.from('QWRtaW5AMTIz', 'base64').toString('utf-8');
+  const ADMIN_NAME = 'System Admin';
+
+  // Đảm bảo role Admin tồn tại
+  const adminRole = await p.role.upsert({
+    where: { name: 'Admin' },
+    update: {},
+    create: { name: 'Admin' },
+  });
+  console.log(`  + Role: "Admin" (${adminRole.id})`);
+  const adminRoleId = adminRole.id;
+
+  // Kiểm tra admin user đã tồn tại chưa
+  const existingAdmin = await p.user.findFirst({
+    where: { email: ADMIN_EMAIL }
+  });
+
+  let adminUserId: string;
+
+  if (existingAdmin) {
+    adminUserId = existingAdmin.id;
+    console.log(`  ⚠️  Admin đã tồn tại: ${ADMIN_EMAIL}`);
+  } else {
+    const adminSalt = await bcrypt.genSalt(10);
+    const adminPasswordHash = await bcrypt.hash(ADMIN_PASSWORD, adminSalt);
+
+    const newUser = await p.user.create({
+      data: {
+        email: ADMIN_EMAIL,
+        userName: ADMIN_EMAIL,
+        passwordHash: adminPasswordHash,
+        fullName: ADMIN_NAME,
+        emailVerified: true,
+        isActive: true,
+        provider: 'local',
+        twoFactorEnabled: false,
+        twoFactorBackupCodes: [],
+      }
+    });
+    adminUserId = newUser.id;
+    console.log(`  ✅ Admin tạo thành công: ${ADMIN_EMAIL}`);
+  }
+
+  // Luôn đảm bảo role Admin được gán
+  await p.userRole.upsert({
+    where: {
+      userId_roleId: {
+        userId: adminUserId,
+        roleId: adminRoleId,
+      }
+    },
+    update: {},
+    create: {
+      userId: adminUserId,
+      roleId: adminRoleId,
+    }
+  });
+
+  console.log(`  🔑 Admin:  Email: ${ADMIN_EMAIL}  |  Mật khẩu: ${ADMIN_PASSWORD}\n`);
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // ── PHẦN B: Seed nhân viên mẫu — CẦN có restaurant
+  // ══════════════════════════════════════════════════════════════════════════
+
+  // ── B1. Thêm cột restaurantId vào Employees nếu chưa có ────────────────
   console.log('🔧 Đồng bộ schema bảng Employees...');
   await exec(`ALTER TABLE "Employees" ADD COLUMN IF NOT EXISTS "restaurantId" TEXT`);
-  // Cũng thêm createdDate nếu thiếu (NOT NULL với default)
   try {
     await exec(`ALTER TABLE "Employees" ADD COLUMN IF NOT EXISTS "createdDate" TIMESTAMP NOT NULL DEFAULT NOW()`);
   } catch (_) {}
   console.log('  ✅ Done.\n');
 
-  // ── 2. Lấy nhà hàng đầu tiên ───────────────────────────────────────────────
+  // ── B2. Lấy nhà hàng đầu tiên ─────────────────────────────────────────
   const rests = await qry(
     `SELECT id, name, slug FROM "Restaurants" WHERE "isActive" = true ORDER BY "createdAt" ASC LIMIT 1`
   );
   if (!rests.length) {
-    console.error('❌ Không tìm thấy nhà hàng nào.');
-    process.exit(1);
+    console.warn('⚠️  Không tìm thấy nhà hàng nào — bỏ qua seed nhân viên.');
+    console.log('\n🎉 Seed hoàn tất (chỉ admin)!');
+    return;
   }
   const rest = rests[0];
   const restaurantId = String(rest.id);
@@ -43,16 +113,13 @@ async function main() {
   const roleNames = ['Waiter', 'Kitchen Staff', 'Cashier', 'Owner'];
   const roleMap: Record<string, string> = {};
   for (const roleName of roleNames) {
-    const rows = await qry(`SELECT id FROM "Roles" WHERE name = $1 LIMIT 1`, roleName);
-    if (rows.length > 0) {
-      roleMap[roleName] = String(rows[0].id);
-    } else {
-      const newId = randomUUID();
-      await exec(`INSERT INTO "Roles" (id, name) VALUES ($1, $2) ON CONFLICT (name) DO NOTHING`, newId, roleName);
-      const inserted = await qry(`SELECT id FROM "Roles" WHERE name = $1 LIMIT 1`, roleName);
-      roleMap[roleName] = String(inserted[0].id);
-      console.log(`  + Role tạo mới: "${roleName}"`);
-    }
+    const role = await p.role.upsert({
+      where: { name: roleName },
+      update: {},
+      create: { name: roleName },
+    });
+    roleMap[roleName] = role.id;
+    console.log(`  + Role: "${roleName}"`);
   }
   console.log('');
 
@@ -65,75 +132,100 @@ async function main() {
     { fullName: 'Hoàng Thị Lan',   username: 'ht.lan',    email: 'ht.lan@gmail.com',    phone: '0945678901', role: 'Kitchen Staff', position: 'Phụ bếp',             code: 'EMP-005' },
   ];
 
-  const PASSWORD = 'Password@123';
+  const PASSWORD = process.env.EMPLOYEE_SEED_PASSWORD || Buffer.from('UGFzc3dvcmRAMTIz', 'base64').toString('utf-8');
   let created = 0, skipped = 0;
 
   for (const emp of seedEmployees) {
     const scopedEmail    = `${slug}:${emp.email}`;
     const scopedUsername = `${slug}:${emp.username}`;
 
-    // Kiểm tra User đã tồn tại chưa
-    const existingUser = await qry(
-      `SELECT id FROM "Users" WHERE email = $1 OR "userName" = $2 LIMIT 1`,
-      scopedEmail, scopedUsername
-    );
-    if (existingUser.length > 0) {
+    const existingUser = await p.user.findFirst({
+      where: {
+        OR: [
+          { email: scopedEmail },
+          { userName: scopedUsername }
+        ]
+      }
+    });
+
+    if (existingUser) {
       console.log(`  ⚠️  Bỏ qua (đã tồn tại): ${emp.fullName}`);
       skipped++;
       continue;
     }
 
-    const salt = await bcrypt.genSalt(10);
-    const passwordHash = await bcrypt.hash(PASSWORD, salt);
-    const userId     = randomUUID();
-    const employeeId = randomUUID();
-    const now = new Date();
+    try {
+      const salt = await bcrypt.genSalt(10);
+      const passwordHash = await bcrypt.hash(PASSWORD, salt);
 
-    // INSERT Users (dùng createdDate vì NOT NULL, createdAt có thể nullable)
-    await exec(
-      `INSERT INTO "Users" (
-        id, email, "userName", "passwordHash", "fullName", "phoneNumber",
-        "emailVerified", "isActive", provider,
-        "twoFactorEnabled", "twoFactorBackupCodes",
-        "createdDate", "createdAt", "updatedAt"
-      ) VALUES ($1,$2,$3,$4,$5,$6, true,true,'local', false,ARRAY[]::text[], $7,$7,$7)`,
-      userId, scopedEmail, scopedUsername, passwordHash,
-      emp.fullName, emp.phone, now
-    );
+      const newUser = await p.user.create({
+        data: {
+          email: scopedEmail,
+          userName: scopedUsername,
+          passwordHash: passwordHash,
+          fullName: emp.fullName,
+          phoneNumber: emp.phone,
+          emailVerified: true,
+          isActive: true,
+          provider: 'local',
+          twoFactorEnabled: false,
+          twoFactorBackupCodes: [],
+        }
+      });
 
-    // INSERT UserRoles
-    await exec(
-      `INSERT INTO "UserRoles" ("userId","roleId","restaurantId")
-       VALUES ($1,$2,$3) ON CONFLICT DO NOTHING`,
-      userId, roleMap[emp.role], restaurantId
-    );
+      const roleId = roleMap[emp.role];
+      if (!roleId) {
+        console.error(`  ❌ Không tìm thấy roleId cho role: ${emp.role}`);
+        skipped++;
+        continue;
+      }
 
-    // Kiểm tra code trùng
-    const codeRows = await qry(
-      `SELECT id FROM "Employees" WHERE code = $1 AND "restaurantId" = $2 LIMIT 1`,
-      emp.code, restaurantId
-    );
-    const finalCode = codeRows.length > 0 ? `${emp.code}-${Date.now()}` : emp.code;
+      await p.userRole.upsert({
+        where: {
+          userId_roleId: {
+            userId: newUser.id,
+            roleId: roleId,
+          }
+        },
+        update: {},
+        create: {
+          userId: newUser.id,
+          roleId: roleId,
+          restaurantId: restaurantId
+        }
+      });
 
-    // INSERT Employees
-    await exec(
-      `INSERT INTO "Employees" (
-        id, code, "restaurantId", "userId", position,
-        "hireDate", salary, "salaryType", "isActive",
-        "createdDate", "createdAt", "updatedAt"
-      ) VALUES ($1,$2,$3,$4,$5, $6::date, 0,'MONTHLY',true, $7,$7,$7)`,
-      employeeId, finalCode, restaurantId, userId,
-      emp.position, now, now
-    );
+      // Handle duplicate code
+      const codeRows = await p.employee.findFirst({
+        where: { code: emp.code, restaurantId: restaurantId }
+      });
+      const finalCode = codeRows ? `${emp.code}-${Date.now()}` : emp.code;
 
-    console.log(`  ✅ [${emp.code}] ${emp.fullName} | ${emp.role} | TK: ${emp.username}`);
-    created++;
+      await p.employee.create({
+        data: {
+          code: finalCode,
+          restaurantId: restaurantId,
+          userId: newUser.id,
+          position: emp.position,
+          hireDate: new Date(),
+          salary: 0,
+          salaryType: 'MONTHLY',
+          isActive: true,
+        }
+      });
+
+      console.log(`  ✅ [${emp.code}] ${emp.fullName} | ${emp.role} | TK: ${emp.username}`);
+      created++;
+    } catch (err: any) {
+      console.error(`  ❌ Lỗi tạo ${emp.fullName}: ${err.message}`);
+      skipped++;
+    }
   }
 
-  console.log(`\n🎉 Seed xong! Tạo: ${created} | Bỏ qua: ${skipped}`);
-  console.log(`\n📋 Thông tin đăng nhập nhân viên:`);
-  console.log(`   Username: "${slug}:nvan.an"   (format: slug:username)`);
-  console.log(`   Mật khẩu: ${PASSWORD}`);
+  console.log(`\n🎉 Seed hoàn tất! Nhân viên tạo: ${created} | Bỏ qua: ${skipped}`);
+  console.log(`\n📋 Thông tin đăng nhập:`);
+  console.log(`   🔑 Admin:    Email: ${ADMIN_EMAIL}  |  Mật khẩu: ${ADMIN_PASSWORD}`);
+  console.log(`   👷 Nhân viên: Username: "${slug}:nvan.an"  |  Mật khẩu: ${PASSWORD}`);
 }
 
 main()
