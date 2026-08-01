@@ -2,16 +2,19 @@ import { prisma } from '../lib/prisma';
 import redisClient from '../lib/redis';
 import { AIService } from './ai.service';
 import { ENV } from '../config/env';
+import { getLowStockIngredients } from './inventory.service';
 
 export interface DailyInsight {
   summary: string;
   suggestions: string[];
+  anomaly: string | null;
   metrics: {
     todayOrders: number;
     todayRevenue: number;
     yesterdayRevenue: number;
     revenueChangePercent: number;
     topDish: string | null;
+    lowStockCount: number;
   };
 }
 
@@ -71,21 +74,39 @@ export async function getDailyInsight(restaurantId: string): Promise<DailyInsigh
     }
   }
 
+  // Nguyên liệu sắp hết → gợi ý nhập kho (best-effort)
+  let lowStock: { name: string; unit: string; currentQuantity: number; minStockLevel: number }[] = [];
+  try {
+    lowStock = await getLowStockIngredients(restaurantId);
+  } catch {
+    /* bỏ qua */
+  }
+
+  // Phát hiện bất thường: doanh thu sụt mạnh so với hôm qua
+  const anomaly =
+    yesterdayRevenue > 0 && revenueChangePercent <= -30
+      ? `Doanh thu hôm nay giảm mạnh ${Math.abs(revenueChangePercent)}% so với hôm qua — cần rà soát nguyên nhân.`
+      : null;
+
   const metrics = {
     todayOrders: todayOrdersList.length,
     todayRevenue,
     yesterdayRevenue,
     revenueChangePercent,
     topDish,
+    lowStockCount: lowStock.length,
   };
 
   // Fallback không AI
   const fallback = (): DailyInsight => ({
     summary: `Hôm nay có ${metrics.todayOrders} đơn, doanh thu ${todayRevenue.toLocaleString('vi-VN')}đ (${revenueChangePercent >= 0 ? '+' : ''}${revenueChangePercent}% so với hôm qua).${topDish ? ` Món bán chạy nhất: ${topDish}.` : ''}`,
     suggestions: [
-      'Kiểm tra tồn kho các món bán chạy để tránh hết hàng.',
+      lowStock.length > 0
+        ? `Nhập thêm nguyên liệu sắp hết: ${lowStock.slice(0, 3).map((l) => l.name).join(', ')}.`
+        : 'Kiểm tra tồn kho các món bán chạy để tránh hết hàng.',
       'Xem lại khung giờ cao điểm để bố trí nhân sự hợp lý.',
     ],
+    anomaly,
     metrics,
   });
 
@@ -95,8 +116,10 @@ export async function getDailyInsight(restaurantId: string): Promise<DailyInsigh
 - Doanh thu hoàn thành: ${todayRevenue.toLocaleString('vi-VN')}đ
 - Doanh thu hôm qua: ${yesterdayRevenue.toLocaleString('vi-VN')}đ (thay đổi ${revenueChangePercent}%)
 - Món bán chạy nhất: ${topDish ?? 'chưa có'}
+- Nguyên liệu sắp hết: ${lowStock.length > 0 ? lowStock.slice(0, 5).map((l) => l.name).join(', ') : 'không có'}
+${anomaly ? `- CẢNH BÁO: ${anomaly}` : ''}
 
-Hãy trả về JSON: {"summary":"nhận xét ngắn ≤40 từ, tiếng Việt","suggestions":["2-3 gợi ý hành động cụ thể, mỗi cái ≤20 từ"]}`;
+Hãy trả về JSON: {"summary":"nhận xét ngắn ≤40 từ, tiếng Việt","suggestions":["2-3 gợi ý hành động cụ thể (ưu tiên nhập kho nếu có nguyên liệu sắp hết), mỗi cái ≤20 từ"]}`;
 
     const response = await AIService.generateContent({
       model: ENV.AI.DEFAULT_MODEL,
@@ -110,6 +133,7 @@ Hãy trả về JSON: {"summary":"nhận xét ngắn ≤40 từ, tiếng Việt"
     const result: DailyInsight = {
       summary: parsed.summary || fallback().summary,
       suggestions: Array.isArray(parsed.suggestions) && parsed.suggestions.length > 0 ? parsed.suggestions.slice(0, 3) : fallback().suggestions,
+      anomaly,
       metrics,
     };
     try {
