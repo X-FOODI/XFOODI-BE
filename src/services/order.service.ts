@@ -2,6 +2,7 @@ import { prisma } from '../lib/prisma';
 import { Prisma } from '@prisma/client';
 import { getIO } from '../socket';
 import { loyaltyService } from './loyalty.service';
+import { deductStockForOrder } from './inventory.service';
 
 export class OrderServiceError extends Error {
   constructor(
@@ -727,6 +728,11 @@ export class OrderService {
     if (status.toUpperCase() === 'COMPLETED') {
       loyaltyService.calculateAndRewardPoints(orderId).catch((e) => {
         console.warn('[OrderService] Loyalty points reward failed for order', orderId, ':', e.message);
+      });
+
+      // ── Tự trừ tồn kho theo công thức + cảnh báo hết hàng ──
+      deductStockForOrder(restaurantId, orderId).catch((e) => {
+        console.warn('[OrderService] Trừ kho thất bại cho đơn', orderId, ':', e.message);
       });
     }
 
