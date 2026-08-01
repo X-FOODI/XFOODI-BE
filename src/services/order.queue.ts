@@ -39,7 +39,8 @@ export function initOrderQueue(): void {
     worker = new Worker(
       'order-completion',
       async (job: InstanceType<typeof Job>) => {
-        await runOrderCompletion(job.data.orderId, job.data.restaurantId);
+        const data = job.data as any;
+        await runOrderCompletion(data.orderId, data.restaurantId);
       },
       { connection },
     );
