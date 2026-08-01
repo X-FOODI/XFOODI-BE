@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import type { Router as ExpressRouter } from 'express';
-import { prisma } from '../../lib/prisma';
+import { prisma, centralPrisma, getTenantPrisma, getTenantConnectionUrl } from '../../lib/prisma';
+import { ENV } from '../../config/env';
 import { authMiddleware } from './auth';
 import { tenantGuard } from '../../middlewares/tenantGuard';
 
@@ -207,18 +208,20 @@ router.put('/me', authMiddleware, async (req: any, res: any) => {
       metadata, // expected to contain coverImage, operatingHours, socialLinks, gallery
     } = req.body;
 
-    const updatedRestaurant = await prisma.restaurant.update({
+    const updatePayload = {
+      ...(name && { name }),
+      ...(description !== undefined && { description }),
+      ...(address !== undefined && { address }),
+      ...(phone !== undefined && { phone }),
+      ...(email !== undefined && { email }),
+      ...(logoUrl !== undefined && { logoUrl }),
+      ...(primaryColor !== undefined && { primaryColor }),
+      ...(metadata !== undefined && { metadata }),
+    };
+
+    const updatedRestaurant = await centralPrisma.restaurant.update({
       where: { id: restaurantId },
-      data: {
-        ...(name && { name }),
-        ...(description !== undefined && { description }),
-        ...(address !== undefined && { address }),
-        ...(phone !== undefined && { phone }),
-        ...(email !== undefined && { email }),
-        ...(logoUrl !== undefined && { logoUrl }),
-        ...(primaryColor !== undefined && { primaryColor }),
-        ...(metadata !== undefined && { metadata }),
-      },
+      data: updatePayload,
       select: {
         id: true,
         name: true,
@@ -232,6 +235,20 @@ router.put('/me', authMiddleware, async (req: any, res: any) => {
         metadata: true,
       },
     });
+
+    // Also sync the update to the tenant DB schema to ensure tenant queries read fresh metadata
+    if (updatedRestaurant.slug) {
+      try {
+        const tenantDbUrl = getTenantConnectionUrl(ENV.DATABASE_URL, updatedRestaurant.slug);
+        const tenantClient = getTenantPrisma(tenantDbUrl);
+        await tenantClient.restaurant.update({
+          where: { id: restaurantId },
+          data: updatePayload,
+        });
+      } catch (tenantSyncErr) {
+        console.warn(`[RestaurantRoute] Could not sync update to tenant schema for ${updatedRestaurant.slug}:`, tenantSyncErr);
+      }
+    }
 
     return res.json({
       success: true,
