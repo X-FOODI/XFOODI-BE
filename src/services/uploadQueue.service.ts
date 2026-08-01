@@ -8,8 +8,8 @@ import { KnowledgeBaseService } from './knowledgeBase.service';
 import redisClient from '../lib/redis';
 
 export class UploadQueueService {
-  private static queue: Queue | null = null;
-  private static worker: Worker | null = null;
+  private static queue: any = null;
+  private static worker: any = null;
   private static isBullMQActive = false;
 
   private static inMemoryTasks: Array<{
@@ -51,7 +51,7 @@ export class UploadQueueService {
         }
       });
 
-      this.worker = new Worker('document-uploads', async (job) => {
+      this.worker = new Worker('document-uploads', async (job: any) => {
         const { documentId, restaurantId, filename, fileUrl, fileType, chunkingStrategy, chunkSize, chunkOverlap, isCentralDb } = job.data;
         await this.processJob(documentId, restaurantId, filename, fileUrl, fileType, chunkingStrategy, chunkSize, chunkOverlap, isCentralDb);
       }, {
@@ -62,11 +62,11 @@ export class UploadQueueService {
         }
       });
 
-      this.worker.on('completed', (job) => {
+      this.worker.on('completed', (job: any) => {
         console.log(`[UploadQueue] Job ${job.id} completed successfully`);
       });
 
-      this.worker.on('failed', (job, err) => {
+      this.worker.on('failed', (job: any, err: any) => {
         console.error(`[UploadQueue] Job ${job?.id} failed:`, err);
       });
 

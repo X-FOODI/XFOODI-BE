@@ -4,7 +4,7 @@ import { randomBytes } from 'crypto';
 import { sendReservationReminderEmail } from '../lib/email';
 import { generateReservationQR } from './qr.service';
 
-// PayOS payout helper (reuses env vars already set for wallet service)
+// PayOS payout helper (supports QuotaGuard/Fixie static proxy on Render)
 function getPayOS(): any | null {
   const clientId = process.env.PAYOS_CLIENT_ID?.trim();
   const apiKey = process.env.PAYOS_API_KEY?.trim();
@@ -13,7 +13,22 @@ function getPayOS(): any | null {
   try {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { PayOS } = require('@payos/node');
-    return new PayOS({ clientId, apiKey, checksumKey });
+    const proxyUrl = process.env.QUOTAGUARDSTATIC_URL?.trim() || process.env.FIXIE_URL?.trim();
+    
+    let fetchOptions: any = undefined;
+    if (proxyUrl) {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { HttpsProxyAgent } = require('https-proxy-agent');
+      const agent = new HttpsProxyAgent(proxyUrl);
+      fetchOptions = { agent };
+    }
+
+    return new PayOS({
+      clientId,
+      apiKey,
+      checksumKey,
+      ...(fetchOptions ? { fetchOptions } : {})
+    });
   } catch { return null; }
 }
 
@@ -296,6 +311,19 @@ export class ReservationService {
       const lastHourStr = lastHour.toString().padStart(2, '0');
       const lastMinStr = lastMin.toString().padStart(2, '0');
       throw Object.assign(new Error(`Lượt đặt quá muộn. Thời gian đặt bàn muộn nhất là ${lastHourStr}:${lastMinStr}`), { statusCode: 400 });
+    }
+
+    // Validate FIXED_SLOTS requirement if configured by restaurant
+    if (config.time_slot_mode === "FIXED_SLOTS" && Array.isArray(config.fixed_time_slots) && config.fixed_time_slots.length > 0) {
+      const selectedHourStr = String(hour).padStart(2, '0');
+      const selectedMinStr = String(minutes).padStart(2, '0');
+      const selectedTimeSlotStr = `${selectedHourStr}:${selectedMinStr}`;
+      if (!config.fixed_time_slots.includes(selectedTimeSlotStr)) {
+        throw Object.assign(
+          new Error(`Khung giờ ${selectedTimeSlotStr} không thuộc danh sách khung giờ nhận đặt bàn của nhà hàng. Vui lòng chọn khung giờ khả dụng.`),
+          { statusCode: 400 }
+        );
+      }
     }
 
     // 4. Prevent double booking (same customer booking at same time, buffer = dining duration)
@@ -1531,7 +1559,13 @@ export class ReservationService {
     // Validate bank refund info is present when cọc needs to be refunded
     let finalBankRefund = bankRefund;
     if (refundAmount > 0) {
-      // If not passed in body, try fetching from customer profile
+      // 1. Try reading bankRefund attached specifically to this reservation's metadata (set during booking)
+      const resMetaBankRefund = existingMeta.bankRefund;
+      if (resMetaBankRefund && resMetaBankRefund.accountNumber && resMetaBankRefund.bankBin) {
+        finalBankRefund = resMetaBankRefund;
+      }
+
+      // 2. Fallback to customer metadata if not found in reservation metadata or body
       if (!finalBankRefund || !finalBankRefund.accountNumber || !finalBankRefund.bankBin) {
         const customerRecord = await prisma.customer.findUnique({
           where: { id: reservation.customerId },
@@ -1545,30 +1579,6 @@ export class ReservationService {
 
       if (!finalBankRefund || !finalBankRefund.accountNumber || !finalBankRefund.bankBin) {
         throw Object.assign(new Error('Vui lòng cung cấp thông tin tài khoản ngân hàng để nhận tiền hoàn cọc.'), { statusCode: 400 });
-      }
-
-      // Save/update it to customer metadata
-      if (bankRefund && bankRefund.accountNumber && bankRefund.bankBin) {
-        const customerRecord = await prisma.customer.findUnique({
-          where: { id: reservation.customerId },
-          select: { metadata: true }
-        });
-        const currentCustMeta = (customerRecord?.metadata as any) ?? {};
-        await prisma.customer.update({
-          where: { id: reservation.customerId },
-          data: {
-            metadata: {
-              ...currentCustMeta,
-              bankRefund: {
-                bankBin: bankRefund.bankBin,
-                bankCode: bankRefund.bankCode ?? '',
-                bankName: bankRefund.bankName ?? '',
-                accountNumber: bankRefund.accountNumber,
-                accountName: bankRefund.accountName
-              }
-            }
-          }
-        });
       }
     }
 
@@ -1685,6 +1695,10 @@ export class ReservationService {
                   referenceId
                 );
                 // Update refund record to COMPLETED
+                // Mask account number for security & privacy before storing in history
+                const rawAcc = finalBankRefund.accountNumber || '';
+                const maskedAcc = rawAcc.length > 4 ? '*'.repeat(rawAcc.length - 4) + rawAcc.slice(-4) : rawAcc;
+
                 await prisma.refund.update({
                   where: { id: refundRecord.id },
                   data: {
@@ -1699,13 +1713,13 @@ export class ReservationService {
                         bankBin: finalBankRefund.bankBin,
                         bankCode: finalBankRefund.bankCode ?? '',
                         bankName: finalBankRefund.bankName ?? '',
-                        accountNumber: finalBankRefund.accountNumber,
+                        accountNumber: maskedAcc,
                         accountName: finalBankRefund.accountName,
                       }
                     }
                   }
                 });
-                console.log(`[Cancel] Auto-payout SUCCESS for reservation ${id}: ${refundAmount}đ → ${finalBankRefund.accountNumber}`);
+                console.log(`[Cancel] Auto-payout SUCCESS for reservation ${id}: ${refundAmount}đ → ${maskedAcc}`);
               } catch (payoutErr: any) {
                 // Payout failed → mark FAILED and create notification
                 await prisma.refund.update({
