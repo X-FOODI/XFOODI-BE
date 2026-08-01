@@ -17,6 +17,11 @@ interface ModuleState {
 // Ngưỡng circuit breaker
 const CB_THRESHOLD = Number(process.env.CB_ERROR_THRESHOLD || 5); // số lỗi 500
 const CB_WINDOW = Number(process.env.CB_WINDOW_SEC || 60);        // trong bao nhiêu giây
+export const CB_CONFIG = {
+  threshold: CB_THRESHOLD,
+  windowSec: CB_WINDOW,
+  cooldownSec: Number(process.env.CB_COOLDOWN_SEC || 180),
+};
 
 const CACHE_TTL = 60;
 const settingKey = (moduleKey: string) => `moduleMaintenance.${moduleKey}`;
