@@ -43,8 +43,14 @@ export class VatInvoiceService {
     });
     if (existing) throw new Error('VAT invoice already requested for this payment');
 
-    // Build invoice description
-    const amount = Number(payment.amount);
+    // Build invoice description and determine total amount (prefer full order value)
+    let amount = Number(payment.amount);
+    if (payment.order?.totalAmount && Number(payment.order.totalAmount) > 0) {
+      amount = Number(payment.order.totalAmount);
+    } else if (payment.reservation?.depositAmount && Number(payment.reservation.depositAmount) > 0) {
+      amount = Number(payment.reservation.depositAmount);
+    }
+
     let description = 'Dịch vụ ăn uống nhà hàng';
     if (payment.order?.reference) {
       description = `Dịch vụ ăn uống - Đơn hàng ${payment.order.reference}`;
