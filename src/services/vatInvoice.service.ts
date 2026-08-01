@@ -88,7 +88,13 @@ export class VatInvoiceService {
           misaSuccess = true;
           console.log('[VatInvoice] MISA publish success:', misaLookupCode);
         } catch (misaErr: any) {
-          console.warn('[VatInvoice] MISA publish failed, using demo mode:', misaErr.message);
+          // Log full error details for debugging
+          console.error('[VatInvoice] MISA publish FAILED:');
+          console.error('  message:', misaErr?.message);
+          console.error('  code:', misaErr?.code);
+          console.error('  status:', misaErr?.response?.status);
+          console.error('  response data:', JSON.stringify(misaErr?.response?.data));
+          console.error('  stack:', misaErr?.stack?.split('\n').slice(0, 5).join('\n'));
         }
       } else {
         console.log('[VatInvoice] MISA not configured, using demo mode');
