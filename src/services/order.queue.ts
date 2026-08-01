@@ -38,12 +38,12 @@ export function initOrderQueue(): void {
     queue = new Queue('order-completion', { connection });
     worker = new Worker(
       'order-completion',
-      async (job: Job) => {
+      async (job: InstanceType<typeof Job>) => {
         await runOrderCompletion(job.data.orderId, job.data.restaurantId);
       },
       { connection },
     );
-    worker.on('failed', (job: Job | undefined, err: Error) => console.error(`[OrderQueue] Job ${job?.id} failed:`, err?.message));
+    worker.on('failed', (job: InstanceType<typeof Job> | undefined, err: Error) => console.error(`[OrderQueue] Job ${job?.id} failed:`, err?.message));
     active = true;
     console.log('[OrderQueue] BullMQ order-completion đã khởi tạo.');
   } catch (e: any) {
