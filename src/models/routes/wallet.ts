@@ -5,24 +5,9 @@ import { authMiddleware } from './auth';
 
 const router: Router = Router();
 
-// ── Public Test Endpoint: Direct PayOS Payout (For Postman testing) ──────────
-router.post('/test-direct-payout', async (req: any, res) => {
-  try {
-    const { amount, bankBin, accountNumber, description } = req.body;
-    if (!amount || !bankBin || !accountNumber) {
-      return res.status(400).json({ success: false, message: 'Thiếu amount, bankBin, hoặc accountNumber trong body.' });
-    }
-    const data = await walletService.directPayout({
-      amount: Number(amount),
-      bankBin,
-      accountNumber,
-      description,
-    });
-    return res.json({ success: true, message: 'Yêu cầu chuyển tiền qua PayOS thành công!', data });
-  } catch (err: any) {
-    return res.status(400).json({ success: false, message: err.message });
-  }
-});
+// [BẢO MẬT] Đã gỡ endpoint công khai POST /test-direct-payout — nó gọi directPayout
+// (chuyển tiền PayOS thật) mà KHÔNG có auth → bất kỳ ai cũng rút được tiền.
+// Chuyển tiền chỉ được thực hiện qua luồng duyệt rút tiền có auth admin bên dưới.
 
 router.use(authMiddleware);
 
