@@ -1,4 +1,4 @@
-import { prisma } from '../../../lib/prisma';
+import { centralPrisma as prisma } from '../../../lib/prisma';
 import type { ReactionType } from '../interfaces/social.types';
 
 export const reactionRepository = {

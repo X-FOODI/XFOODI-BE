@@ -1,4 +1,4 @@
-import { prisma, centralPrisma } from '../../../lib/prisma';
+import { centralPrisma as prisma, centralPrisma } from '../../../lib/prisma';
 import { postInclude } from '../dto/post.dto';
 import type { PostVisibility } from '../interfaces/community.types';
 
@@ -10,7 +10,7 @@ export const postEnhancedRepository = {
     visibility: PostVisibility = 'public',
     repostOfId?: string
   ) {
-    return centralPrisma.$transaction(async (tx) => {
+    return prisma.$transaction(async (tx) => {
       return tx.socialPost.create({
         data: {
           authorId,

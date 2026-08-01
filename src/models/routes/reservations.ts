@@ -308,7 +308,9 @@ router.get('/check-conflict', async (req, res) => {
         const userId = decoded.sub || decoded.id;
         const customer = await db.customer.findFirst({ where: { userId } });
         if (customer) customerId = customer.id;
-      } catch (e) {}
+      } catch (e) {
+        /* ignore invalid or expired token */
+      }
     }
 
     // 2. Resolve customer by email if provided and not yet resolved

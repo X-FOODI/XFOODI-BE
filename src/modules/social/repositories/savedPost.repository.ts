@@ -1,4 +1,4 @@
-import { prisma } from '../../../lib/prisma';
+import { centralPrisma as prisma } from '../../../lib/prisma';
 
 export const savedPostRepository = {
   findByPostAndUser(postId: string, userId: string) {
