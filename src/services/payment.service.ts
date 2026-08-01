@@ -131,7 +131,7 @@ export class PaymentService {
       };
     }
 
-    const resFormat = content.match(/XFOODI\s+([A-Za-z0-9-]+)\s+RES\s+([A-Z0-9-]+)/i);
+    const resFormat = content.match(/XFOODI\s+([A-Za-z0-9-]+)\s+RES\s+([A-Z0-9]{4,12})/i);
     if (resFormat) {
       return {
         slug: resFormat[1].toLowerCase(),
@@ -150,7 +150,7 @@ export class PaymentService {
       return { type: 'ORD', refOrCode: compactOrdAnywhere[1].toUpperCase() };
     }
 
-    const resMatch = content.match(/RES\s+([A-Z0-9-]+)/i);
+    const resMatch = content.match(/RES\s+([A-Z0-9]{4,12})/i);
     if (resMatch) {
       return { type: 'RES', refOrCode: resMatch[1].toUpperCase() };
     }
@@ -710,7 +710,7 @@ export class PaymentService {
       const reservation = pendingReservations.find(r => {
         if (!r.confirmationCode) return false;
         const codeNorm = r.confirmationCode.replace(/[^A-Z0-9]/ig, '').toUpperCase();
-        return codeNorm === normalizedCode;
+        return codeNorm === normalizedCode || normalizedCode.startsWith(codeNorm) || codeNorm.startsWith(normalizedCode);
       });
 
       if (reservation && reservation.payments.length > 0) {
