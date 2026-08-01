@@ -1,5 +1,6 @@
 import axios from 'axios';
 import crypto from 'crypto';
+import { HttpsProxyAgent } from 'https-proxy-agent';
 
 interface MisaToken {
   access_token: string;
@@ -59,6 +60,18 @@ class MisaService {
     return process.env.MISA_TAX_CODE || '2222222222-444';
   }
 
+  private get httpsAgent() {
+    const proxyUrl = process.env.QUOTAGUARDSTATIC_URL?.trim() || process.env.FIXIE_URL?.trim();
+    if (proxyUrl) {
+      try {
+        return new HttpsProxyAgent(proxyUrl);
+      } catch (e: any) {
+        console.warn('[MISA] Proxy agent creation failed:', e?.message);
+      }
+    }
+    return undefined;
+  }
+
   private async getToken(): Promise<MisaToken> {
     if (this.token && Date.now() < this.token.expiresAt) {
       return this.token;
@@ -72,6 +85,8 @@ class MisaService {
           'taxcode': this.taxCode,
           'Content-Type': 'application/x-www-form-urlencoded',
         },
+        timeout: 10000,
+        httpsAgent: this.httpsAgent,
       }
     );
 
@@ -107,6 +122,8 @@ class MisaService {
           'TaxCode': activeTaxCode,
           'Content-Type': 'application/json',
         },
+        timeout: 10000,
+        httpsAgent: this.httpsAgent,
       }
     );
 
@@ -217,6 +234,8 @@ class MisaService {
           'TaxCode': activeTaxCode,
           'Content-Type': 'application/json',
         },
+        timeout: 10000,
+        httpsAgent: this.httpsAgent,
       }
     );
 
