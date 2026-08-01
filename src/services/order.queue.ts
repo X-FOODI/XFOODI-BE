@@ -1,4 +1,4 @@
-import { Queue, Worker } from 'bullmq';
+import { Queue, Worker, Job } from 'bullmq';
 import { ENV } from '../config/env';
 import { centralPrisma, getTenantPrisma, getTenantConnectionUrl, prismaStorage } from '../lib/prisma';
 import { loyaltyService } from './loyalty.service';
@@ -15,8 +15,8 @@ import { loyaltyService } from './loyalty.service';
 const redisUrl = ENV.REDIS_URL || 'redis://localhost:6379';
 const connection = { url: redisUrl, connectTimeout: 5000, maxRetriesPerRequest: null } as any;
 
-let queue: Queue | null = null;
-let worker: Worker | null = null;
+let queue: InstanceType<typeof Queue> | null = null;
+let worker: InstanceType<typeof Worker> | null = null;
 let active = false;
 
 /** Chạy hậu-xử-lý trong đúng tenant schema (worker nền không có request context). */
@@ -38,12 +38,12 @@ export function initOrderQueue(): void {
     queue = new Queue('order-completion', { connection });
     worker = new Worker(
       'order-completion',
-      async (job) => {
+      async (job: Job) => {
         await runOrderCompletion(job.data.orderId, job.data.restaurantId);
       },
       { connection },
     );
-    worker.on('failed', (job, err) => console.error(`[OrderQueue] Job ${job?.id} failed:`, err?.message));
+    worker.on('failed', (job: Job | undefined, err: Error) => console.error(`[OrderQueue] Job ${job?.id} failed:`, err?.message));
     active = true;
     console.log('[OrderQueue] BullMQ order-completion đã khởi tạo.');
   } catch (e: any) {
