@@ -1,6 +1,7 @@
 import { prisma, getSchemaName } from '../lib/prisma';
 import { AIService } from './ai.service';
 import { ENV } from '../config/env';
+import redisClient from '../lib/redis';
 
 export interface ChatMessage {
   role: 'user' | 'model' | 'system';
@@ -176,80 +177,81 @@ Tóm tắt ngắn gọn:`;
       const rewrittenQuery = await AIService.rewriteQuery(userQuery, historyForRewriter);
       console.log(`[RAGService] Rewritten: "${rewrittenQuery}"`);
 
-      // 4. Anti-Injection check
-      const isSafe = await AIService.checkPromptInjection(rewrittenQuery);
+      // ── TỐI ƯU: chạy SONG SONG injection-check + truy hồi tài liệu + nạp menu ──
+      // (đều chỉ phụ thuộc rewrittenQuery). Trước đây tuần tự → chậm.
+
+      // #2 Guard: bỏ qua embedding/search/rerank nếu nhà hàng CHƯA có tài liệu KB
+      const runRetrieval = async (): Promise<{ contextText: string; topChunks: any[] }> => {
+        const docCount = await prisma.restaurantDocument.count({ where: { restaurantId, status: 'INDEXED' } });
+        if (docCount === 0) {
+          return { contextText: 'Không có tài liệu tham khảo đặc thù nào.', topChunks: [] };
+        }
+        const queryEmbedding = await AIService.generateEmbedding(rewrittenQuery);
+        const queryVectorStr = `[${queryEmbedding.join(',')}]`;
+        const dbChunks = await hybridSearchChunks(
+          restaurantId,
+          queryVectorStr,
+          rewrittenQuery,
+          `AND (rd."bucketId" IS NULL OR rb."isChatEnabled" = true)`,
+        );
+        let reranked = dbChunks || [];
+        if (reranked.length > 0) {
+          try {
+            const texts = reranked.map((c: any) => c.content);
+            const results = await AIService.cohereRerank(rewrittenQuery, texts, ENV.AI.RAG_MAX_CHUNKS || 5);
+            reranked = results
+              .map((r: any) => { const ch = reranked[r.index]; return ch ? { ...ch, cohere_score: r.score } : null; })
+              .filter((c: any): c is any => !!c);
+          } catch (rerankErr) {
+            console.warn('[RAGService] Cohere Rerank failed, using RRF order:', rerankErr);
+          }
+        }
+        const top = reranked.slice(0, ENV.AI.RAG_MAX_CHUNKS);
+        const ctx = top.length > 0
+          ? top.map((c: any) => `[Tài liệu: ${c.filename}]\n${c.content}`).join('\n\n---\n\n')
+          : 'Không có tài liệu tham khảo đặc thù nào.';
+        return { contextText: ctx, topChunks: top };
+      };
+
+      // #3 Cache menu context (Redis, TTL 5 phút) — tránh findMany mỗi request
+      const runMenuContext = async (): Promise<string> => {
+        if (restaurantId === 'system') return '';
+        const cacheKey = `menu_ctx:${restaurantId}`;
+        try { const cached = await redisClient.get(cacheKey); if (cached !== null) return cached; } catch { /* redis down */ }
+        const [activeDishes, activeCombos] = await Promise.all([
+          prisma.dish.findMany({ where: { restaurantId, isActive: true }, select: { id: true, name: true, price: true, unit: true }, take: 50 }),
+          prisma.mealCombo.findMany({ where: { restaurantId, isActive: true }, select: { id: true, name: true, price: true }, take: 20 }),
+        ]);
+        let text = '';
+        if (activeDishes.length > 0 || activeCombos.length > 0) {
+          const menuList = [
+            ...activeDishes.map((d: any) => ({ type: 'dish', id: d.id, name: d.name, price: Number(d.price), unit: d.unit })),
+            ...activeCombos.map((c: any) => ({ type: 'combo', id: c.id, name: c.name, price: Number(c.price), unit: 'phần' })),
+          ];
+          text = `\nDanh sách món ăn & combo có sẵn tại nhà hàng:\n${JSON.stringify(menuList, null, 2)}`;
+        }
+        try { await redisClient.setEx(cacheKey, 300, text); } catch { /* redis down */ }
+        return text;
+      };
+
+      // #1 Song song hóa 3 việc độc lập
+      const [isSafe, retrieval, menuContextText] = await Promise.all([
+        AIService.checkPromptInjection(rewrittenQuery),
+        runRetrieval(),
+        runMenuContext(),
+      ]);
+
       if (!isSafe) {
         yield {
           text: 'Hệ thống phát hiện nội dung truy vấn không an toàn. Vui lòng đặt câu hỏi khác.',
           done: true,
-          securityTriggered: true
+          securityTriggered: true,
         };
         return;
       }
 
-      // 5. Generate Vector Embedding
-      const queryEmbedding = await AIService.generateEmbedding(rewrittenQuery);
-      const queryVectorStr = `[${queryEmbedding.join(',')}]`;
-
-      // 6. Hybrid Search (RRF vector+text, with text-only fallback if pgvector unavailable)
-      const dbChunks = await hybridSearchChunks(
-        restaurantId,
-        queryVectorStr,
-        rewrittenQuery,
-        `AND (rd."bucketId" IS NULL OR rb."isChatEnabled" = true)`
-      );
-
-      // 6.5. Cohere Rerank
-      let rerankedChunks = dbChunks || [];
-      if (rerankedChunks.length > 0) {
-        try {
-          const documentTexts = rerankedChunks.map(c => c.content);
-          const rerankedResults = await AIService.cohereRerank(
-            rewrittenQuery,
-            documentTexts,
-            ENV.AI.RAG_MAX_CHUNKS || 5
-          );
-          rerankedChunks = rerankedResults.map(r => {
-            const chunk = rerankedChunks[r.index];
-            if (chunk) {
-              return { ...chunk, cohere_score: r.score };
-            }
-            return null;
-          }).filter((c): c is any => !!c);
-        } catch (rerankErr) {
-          console.warn('[RAGService] Cohere Rerank failed, using database RRF order:', rerankErr);
-        }
-      }
-
-      // 7. Get Context and Menu/Dish list
-      const topChunks = rerankedChunks.slice(0, ENV.AI.RAG_MAX_CHUNKS);
-      const contextText = topChunks.length > 0
-        ? topChunks.map((c) => `[Tài liệu: ${c.filename}]\n${c.content}`).join('\n\n---\n\n')
-        : 'Không có tài liệu tham khảo đặc thù nào.';
-
-      // Active menu integration
-      let menuContextText = '';
-      if (restaurantId !== 'system') {
-        const activeDishes = await prisma.dish.findMany({
-          where: { restaurantId, isActive: true },
-          select: { id: true, name: true, price: true, unit: true },
-          take: 50
-        });
-
-        const activeCombos = await prisma.mealCombo.findMany({
-          where: { restaurantId, isActive: true },
-          select: { id: true, name: true, price: true },
-          take: 20
-        });
-
-        if (activeDishes.length > 0 || activeCombos.length > 0) {
-          const menuList = [
-            ...activeDishes.map(d => ({ type: 'dish', id: d.id, name: d.name, price: Number(d.price), unit: d.unit })),
-            ...activeCombos.map(c => ({ type: 'combo', id: c.id, name: c.name, price: Number(c.price), unit: 'phần' }))
-          ];
-          menuContextText = `\nDanh sách món ăn & combo có sẵn tại nhà hàng:\n${JSON.stringify(menuList, null, 2)}`;
-        }
-      }
+      const topChunks = retrieval.topChunks;
+      const contextText = retrieval.contextText;
 
       // 8. Fetch AI Configuration from DB
       const restaurant = await prisma.restaurant.findUnique({
