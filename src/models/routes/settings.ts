@@ -26,7 +26,7 @@ router.put('/admin/modules', authMiddleware, requireAdmin, async (req: any, res)
     if (!MODULES.some((m) => m.key === key)) {
       return res.status(400).json({ success: false, message: 'Module không hợp lệ' });
     }
-    await setModuleState(key, { enabled: !!enabled, message: message || undefined, estimatedFinish: estimatedFinish || undefined });
+    await setModuleState(key, { enabled: !!enabled, auto: false, message: message || undefined, estimatedFinish: estimatedFinish || undefined });
     recordAudit({
       action: enabled ? 'MODULE_MAINTENANCE_ON' : 'MODULE_MAINTENANCE_OFF',
       adminId: req.user?.sub || req.user?.userId || 'unknown-admin',
