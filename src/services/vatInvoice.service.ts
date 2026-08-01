@@ -71,6 +71,7 @@ export class VatInvoiceService {
       let misaSuccess = false;
       let misaRefId = `DEMO-${record.id.slice(0, 8).toUpperCase()}`;
       let misaLookupCode = `DEMO-${Date.now()}`;
+      let misaFailReason: string | null = null;
 
       if (process.env.MISA_USERNAME && process.env.MISA_PASSWORD) {
         try {
@@ -88,6 +89,7 @@ export class VatInvoiceService {
           misaSuccess = true;
           console.log('[VatInvoice] MISA publish success:', misaLookupCode);
         } catch (misaErr: any) {
+          misaFailReason = misaErr?.message || 'MISA publish failed';
           // Log full error details for debugging
           console.error('[VatInvoice] MISA publish FAILED:');
           console.error('  message:', misaErr?.message);
@@ -97,6 +99,7 @@ export class VatInvoiceService {
           console.error('  stack:', misaErr?.stack?.split('\n').slice(0, 5).join('\n'));
         }
       } else {
+        misaFailReason = 'Demo mode - MISA credentials not configured';
         console.log('[VatInvoice] MISA not configured, using demo mode');
       }
 
@@ -106,7 +109,7 @@ export class VatInvoiceService {
           status: 'COMPLETED',
           misaRefId,
           misaLookupCode,
-          errorMessage: misaSuccess ? null : 'Demo mode - MISA credentials not configured',
+          errorMessage: misaSuccess ? null : misaFailReason,
         },
       });
 
