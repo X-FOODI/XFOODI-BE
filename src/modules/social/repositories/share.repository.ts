@@ -1,4 +1,4 @@
-import { prisma } from '../../../lib/prisma';
+import { centralPrisma as prisma } from '../../../lib/prisma';
 
 export const shareRepository = {
   create(postId: string, userId: string) {

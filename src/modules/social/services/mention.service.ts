@@ -1,4 +1,4 @@
-import { prisma } from '../../../lib/prisma';
+import { centralPrisma as prisma } from '../../../lib/prisma';
 import { parseContentMeta } from '../utils/content.util';
 import { SocialServiceError } from '../middlewares/social.errors';
 

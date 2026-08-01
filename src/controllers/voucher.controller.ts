@@ -157,13 +157,36 @@ export async function getVouchersByRestaurant(req: any, res: Response) {
 }
 
 /**
+ * GET /api/vouchers/admin/all — Admin: get ALL vouchers regardless of status
+ */
+export async function getAllAdminVouchers(req: any, res: Response) {
+  try {
+    const vouchers = await voucherService.getAllAdminVouchers();
+    return res.json({ success: true, data: vouchers });
+  } catch (error: any) {
+    console.error('[VoucherController] getAllAdminVouchers error:', error);
+    return res.status(500).json({ success: false, message: error.message || 'Lỗi hệ thống.' });
+  }
+}
+
+/**
  * Legacy methods kept for backwards compatibility (e.g. updating, deleting, redeeming)
  */
 export async function updateVoucher(req: any, res: Response) {
   try {
     const { id } = req.params;
     const { restaurantId } = req.body;
-    const voucher = await voucherService.updateVoucher(restaurantId || null, id, req.body);
+
+    const userRoles = Array.isArray(req.user?.roles)
+      ? req.user.roles
+      : req.user?.role
+      ? [req.user.role]
+      : [];
+    const isAdmin = userRoles.some((r: string) => ['Admin', 'SuperAdmin', 'System Admin'].includes(r));
+
+    const checkRestaurantId = isAdmin ? undefined : (restaurantId || null);
+
+    const voucher = await voucherService.updateVoucher(checkRestaurantId, id, req.body);
 
     return res.json({
       success: true,
@@ -180,7 +203,17 @@ export async function deleteVoucher(req: any, res: Response) {
   try {
     const { id } = req.params;
     const { restaurantId } = req.body;
-    await voucherService.deleteVoucher(restaurantId || null, id);
+
+    const userRoles = Array.isArray(req.user?.roles)
+      ? req.user.roles
+      : req.user?.role
+      ? [req.user.role]
+      : [];
+    const isAdmin = userRoles.some((r: string) => ['Admin', 'SuperAdmin', 'System Admin'].includes(r));
+
+    const checkRestaurantId = isAdmin ? undefined : (restaurantId || null);
+
+    await voucherService.deleteVoucher(checkRestaurantId, id);
 
     return res.json({
       success: true,

@@ -1,6 +1,6 @@
 import { profileRepository } from '../repositories/profile.repository';
 import { followRepository } from '../repositories/follow.repository';
-import { prisma } from '../../../lib/prisma';
+import { centralPrisma as prisma } from '../../../lib/prisma';
 import { SocialServiceError } from '../middlewares/social.errors';
 import type { UpdateSocialProfileBody } from '../interfaces/community.types';
 
