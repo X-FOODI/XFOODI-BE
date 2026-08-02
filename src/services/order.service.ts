@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import { getIO } from '../socket';
 import { reserveStockForItems, checkAndAlertLowStock, releaseStockForOrder } from './inventory.service';
 import { enqueueOrderCompletion } from './order.queue';
+import { PaymentStatus, PaymentPurpose } from '../enums/payment.enum';
 
 export class OrderServiceError extends Error {
   constructor(
@@ -813,7 +814,10 @@ export class OrderService {
   ) {
     const order = await prisma.order.findFirst({
       where: { id: orderId, restaurantId },
-      include: { orderDetails: true }
+      include: {
+        orderDetails: true,
+        payments: { where: { status: PaymentStatus.COMPLETED, purpose: PaymentPurpose.ORDER } }
+      }
     });
 
     if (!order) {
@@ -824,10 +828,12 @@ export class OrderService {
     const statusValues = await prisma.statusValue.findMany({
       where: { statusType: { code: 'ORDER' } }
     });
-    const completedStatus = statusValues.find(s => s.code === 'COMPLETED');
     const cancelledStatus = statusValues.find(s => s.code === 'CANCELLED');
 
-    if (completedStatus && order.orderStatusId === completedStatus.id) {
+    // Chặn nếu đã có payment hoàn tất (đã trả tiền thực sự)
+    // COMPLETED status chỉ là "đã chốt bill, chờ thanh toán" — vẫn cho phép áp voucher
+    const isPaid = (order as any).payments?.length > 0;
+    if (isPaid) {
       throw new OrderServiceError(400, 'Đơn hàng đã thanh toán, không thể áp dụng voucher');
     }
     if (cancelledStatus && order.orderStatusId === cancelledStatus.id) {
@@ -854,16 +860,17 @@ export class OrderService {
         }
       });
 
-      // Notify clients
+      // Notify clients — chỉ cập nhật tổng tiền, KHÔNG thay đổi trạng thái
+      // (order vẫn ở COMPLETED nếu đã chốt bill, chỉ totalAmount thay đổi)
       try {
         const io = getIO();
-        io.to(`restaurant_${restaurantId}`).emit('ORDER_STATUS_CHANGED', {
+        io.to(`restaurant_${restaurantId}`).emit('ORDER_TOTAL_UPDATED', {
           orderId,
-          status: 'PENDING',
-          isPaid: false,
+          totalAmount: totalAmount,
+          discountAmount: 0,
         });
       } catch (e) {
-        console.warn('[OrderService] Failed to broadcast ORDER_STATUS_CHANGED on voucher removal:', e);
+        console.warn('[OrderService] Failed to broadcast ORDER_TOTAL_UPDATED on voucher removal:', e);
       }
 
       return updated;
@@ -932,16 +939,16 @@ export class OrderService {
       }
     });
 
-    // Notify clients
+    // Notify clients — chỉ cập nhật tổng tiền, KHÔNG thay đổi trạng thái
     try {
       const io = getIO();
-      io.to(`restaurant_${restaurantId}`).emit('ORDER_STATUS_CHANGED', {
+      io.to(`restaurant_${restaurantId}`).emit('ORDER_TOTAL_UPDATED', {
         orderId,
-        status: 'PENDING',
-        isPaid: false,
+        totalAmount,
+        discountAmount: discount,
       });
     } catch (e) {
-      console.warn('[OrderService] Failed to broadcast ORDER_STATUS_CHANGED on voucher application:', e);
+      console.warn('[OrderService] Failed to broadcast ORDER_TOTAL_UPDATED on voucher application:', e);
     }
 
     return updated;
