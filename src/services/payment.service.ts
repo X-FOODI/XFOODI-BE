@@ -277,18 +277,24 @@ export class PaymentService {
         }
       }
 
-      // Mark voucher as used if there is one applied
-      const orderMeta = order?.metadata as any;
-      if (orderMeta?.appliedVoucher?.userVoucherId) {
-        await prisma.userVoucher.update({
+    });
+
+    // Mark voucher as used AFTER tenant transaction commits (UserVoucher is in central DB)
+    const orderMeta = order?.metadata as any;
+    if (orderMeta?.appliedVoucher?.userVoucherId) {
+      try {
+        await centralPrisma.userVoucher.update({
           where: { id: orderMeta.appliedVoucher.userVoucherId },
           data: {
             isUsed: true,
             usedAt: new Date()
           }
         });
+      } catch (e) {
+        console.warn('[PaymentService] Failed to mark voucher as used (central DB):', e);
       }
-    });
+    }
+
 
     // ── Side effects after the data is durably committed ──
     for (const session of activeSessions) {
