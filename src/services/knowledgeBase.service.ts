@@ -78,6 +78,27 @@ export class KnowledgeBaseService {
   }
 
   /**
+   * Đảm bảo bảng "DocumentChunks" tồn tại trong schema tenant trước khi insert.
+   * Idempotent (IF NOT EXISTS) — an toàn khi gọi lại. Vá cho các tenant cũ chưa được provision bảng RAG.
+   */
+  private static async ensureDocumentChunksTable(db: any, schemaName: string): Promise<void> {
+    await db.$executeRawUnsafe(`CREATE EXTENSION IF NOT EXISTS vector`);
+    await db.$executeRawUnsafe(
+      `CREATE TABLE IF NOT EXISTS "${schemaName}"."DocumentChunks" (
+        "id" TEXT PRIMARY KEY,
+        "documentId" TEXT NOT NULL,
+        "content" TEXT NOT NULL,
+        "embedding" public.vector,
+        "metadata" JSONB,
+        "createdAt" TIMESTAMP NOT NULL DEFAULT NOW()
+      )`
+    );
+    await db.$executeRawUnsafe(
+      `CREATE INDEX IF NOT EXISTS "DocumentChunks_documentId_idx" ON "${schemaName}"."DocumentChunks" ("documentId")`
+    );
+  }
+
+  /**
    * Processes the document chunks, generates embeddings, and inserts them into pgvector.
    * This is executed in the background by the queue worker.
    */
@@ -142,6 +163,9 @@ export class KnowledgeBaseService {
 
       // 4. Generate embeddings and save chunks in pgvector database
       const schemaName = await getSchemaName(restaurantId);
+
+      // Đảm bảo bảng DocumentChunks tồn tại trong schema tenant (một số tenant cũ chưa được provision bảng RAG này)
+      await this.ensureDocumentChunksTable(db, schemaName);
 
       for (let i = 0; i < chunks.length; i++) {
         const chunkText = chunks[i];
