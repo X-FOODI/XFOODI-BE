@@ -67,6 +67,13 @@ export const prisma = new Proxy({} as PrismaClient, {
       'userSession',
       'restaurantApplication',
       'userLoyaltyPoint',
+      // Knowledge Base sống ở schema public, phân tách theo cột restaurantId
+      // (không theo schema-per-tenant) — thống nhất với path system KB đang chạy đúng.
+      // Nhờ vậy mọi route KB dù đi qua host admin hay subdomain đều ghi/đọc cùng một chỗ,
+      // khớp với chunk-write & retrieval (đều dùng schema 'public').
+      'restaurantBucket',
+      'restaurantDocument',
+      'restaurantKBSnapshot',
       // Voucher & UserVoucher live in the central (public) schema
       // because they FK-reference Restaurant which is a central model.
       'voucher',
