@@ -1,4 +1,4 @@
-import { prisma, getSchemaName } from '../lib/prisma';
+import { prisma } from '../lib/prisma';
 import { AIService } from './ai.service';
 import { ENV } from '../config/env';
 import redisClient from '../lib/redis';
@@ -19,7 +19,8 @@ export async function hybridSearchChunks(
   extraWhere = '',  // e.g. "AND (rd.\"bucketId\" IS NULL OR rb.\"isChatEnabled\" = true)"
   bucketId?: string // exact-match a single bucket (used by the KB test endpoints)
 ): Promise<any[]> {
-  const schemaName = await getSchemaName(restaurantId);
+  // KB nằm ở schema public, phân tách theo cột restaurantId (WHERE rd."restaurantId" = $2).
+  const schemaName = 'public';
   const bucketFilter = bucketId ? `AND rd."bucketId" = $4` : '';
   const hybridParams = bucketId
     ? [queryVectorStr, restaurantId, rewrittenQuery, bucketId]

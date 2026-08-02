@@ -1,4 +1,4 @@
-import { prisma, centralPrisma, getSchemaName } from '../lib/prisma';
+import { prisma, centralPrisma } from '../lib/prisma';
 import { AIService } from './ai.service';
 import { PDFParse } from 'pdf-parse';
 import mammoth from 'mammoth';
@@ -162,7 +162,9 @@ export class KnowledgeBaseService {
       console.log(`[KBService] Created ${chunks.length} chunks for document: ${filename} using strategy ${chunkingStrategy}`);
 
       // 4. Generate embeddings and save chunks in pgvector database
-      const schemaName = await getSchemaName(restaurantId);
+      // KB nằm ở schema public, phân tách theo restaurantId (thống nhất với RestaurantDocuments
+      // và retrieval trong rag.service). Chunk của document được ghi cùng schema với document.
+      const schemaName = 'public';
 
       // Đảm bảo bảng DocumentChunks tồn tại trong schema tenant (một số tenant cũ chưa được provision bảng RAG này)
       await this.ensureDocumentChunksTable(db, schemaName);
