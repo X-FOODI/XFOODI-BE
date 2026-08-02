@@ -470,8 +470,10 @@ export class PaymentService {
 
     const slug = restaurant.slug || 'default';
 
-    // Generate transfer content that SePay can match
+    // Generate transfer content and calculate exact payable amount from DB
     let transferContent = '';
+    let payableAmount = Number(params.amount);
+
     if (params.reservationId) {
       const res = await prisma.reservation.findUnique({
         where: { id: params.reservationId },
@@ -481,13 +483,28 @@ export class PaymentService {
     } else if (params.orderId) {
       const order = await prisma.order.findUnique({
         where: { id: params.orderId },
-        select: { reference: true },
+        select: { reference: true, totalAmount: true, reservationId: true },
       });
-      transferContent = `XFOODI ${slug} ORD ${order?.reference ?? params.orderId.slice(0, 8).toUpperCase()}`;
+      if (order) {
+        transferContent = `XFOODI ${slug} ORD ${order.reference ?? params.orderId.slice(0, 8).toUpperCase()}`;
+        let depositPaid = 0;
+        if (order.reservationId) {
+          const completedDeposits = await prisma.payment.findMany({
+            where: { reservationId: order.reservationId, status: PaymentStatus.COMPLETED },
+            select: { amount: true },
+          });
+          depositPaid = completedDeposits.reduce((sum, p) => sum + Number(p.amount), 0);
+        }
+        const calculatedAmount = Math.max(0, Number(order.totalAmount) - depositPaid);
+        if (calculatedAmount > 0) {
+          payableAmount = calculatedAmount;
+        }
+      }
     }
 
-    // Build SePay QR URL (VietQR format)
-    const sePayQR = `https://qr.sepay.vn/img?bank=${encodeURIComponent(bankInfo.bankCode)}&acc=${encodeURIComponent(bankInfo.accountNumber)}&template=compact&amount=${Math.round(Number(params.amount))}&des=${encodeURIComponent(transferContent)}`;
+    // Build SePay QR URL (VietQR format) with the authoritative payableAmount
+    const sePayQR = `https://qr.sepay.vn/img?bank=${encodeURIComponent(bankInfo.bankCode)}&acc=${encodeURIComponent(bankInfo.accountNumber)}&template=compact&amount=${Math.round(Number(payableAmount))}&des=${encodeURIComponent(transferContent)}`;
+
 
     // Mark a pending payment record (reuse existing pending payment for same order/reservation)
     const method = await this.getTransferMethod();
@@ -510,7 +527,7 @@ export class PaymentService {
       payment = await prisma.payment.update({
         where: { id: payment.id },
         data: {
-          amount: params.amount,
+          amount: payableAmount,
           metadata: { transferContent, sePayQR, bankInfo } as any,
         },
         select: { id: true, amount: true, status: true, metadata: true },
@@ -521,7 +538,7 @@ export class PaymentService {
           orderId: params.orderId,
           reservationId: params.reservationId,
           paymentMethodId: method.id,
-          amount: params.amount,
+          amount: payableAmount,
           cashReceive: 0,
           cashback: 0,
           status: PaymentStatus.PENDING,
